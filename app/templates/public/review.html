@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}Leave a Review — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
+
+{% block content %}
+<section class="review-form">
+    <div class="review-form__container">
+        {% if error == 'invalid' or error == 'expired' %}
+            <h1 class="review-form__title">Invalid Link</h1>
+            <p class="review-form__message">This review link is {{ 'expired' if error == 'expired' else 'invalid' }}. Please contact the site owner for a new invitation.</p>
+        {% elif error == 'used' %}
+            <h1 class="review-form__title">Already Submitted</h1>
+            <p class="review-form__message">A review has already been submitted with this link. Thank you!</p>
+        {% else %}
+            <h1 class="review-form__title">
+                {% if token_data.type == 'client_review' %}
+                    Leave a Client Review
+                {% else %}
+                    Leave a Recommendation
+                {% endif %}
+            </h1>
+
+            <form method="POST" class="review-form__form">
+                <div class="form-group">
+                    <label for="reviewer_name" class="form-label">Your Name *</label>
+                    <input type="text" id="reviewer_name" name="reviewer_name"
+                           class="form-input"
+                           value="{{ token_data.name if token_data.name else '' }}"
+                           required>
+                </div>
+
+                <div class="form-group">
+                    <label for="reviewer_title" class="form-label">Title / Role</label>
+                    <input type="text" id="reviewer_title" name="reviewer_title" class="form-input"
+                           placeholder="e.g., Senior Engineer at Acme Corp">
+                </div>
+
+                <div class="form-group">
+                    <label for="relationship" class="form-label">Relationship</label>
+                    <input type="text" id="relationship" name="relationship" class="form-input"
+                           placeholder="e.g., Direct manager, Colleague, Client">
+                </div>
+
+                <div class="form-group">
+                    <label for="message" class="form-label">Your Review *</label>
+                    <textarea id="message" name="message" class="form-input form-textarea" rows="6" required></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Rating (optional)</label>
+                    <div class="star-rating" id="starRating">
+                        <input type="hidden" name="rating" id="ratingInput" value="">
+                        {% for i in range(1, 6) %}
+                        <button type="button" class="star-rating__star" data-value="{{ i }}" aria-label="{{ i }} star{{ 's' if i > 1 else '' }}">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                        </button>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn--primary btn--full">Submit Review</button>
+            </form>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

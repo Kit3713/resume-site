@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}Certifications — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <div class="page-header__container">
+        <h1 class="page-header__title">Certifications</h1>
+        <p class="page-header__subtitle">Professional credentials and certifications</p>
+    </div>
+</section>
+
+{% if certifications %}
+<section class="section">
+    <div class="section__container">
+        <div class="certs__grid">
+            {% for cert in certifications %}
+            <div class="cert-card {% if cert.date_expires and cert.date_expires < now %}cert-card--expired{% endif %}">
+                {% if cert.badge_image %}
+                <div class="cert-card__badge">
+                    <img src="{{ url_for('public.serve_photo', storage_name=cert.badge_image) }}" alt="{{ cert.name }}" loading="lazy">
+                </div>
+                {% endif %}
+                <div class="cert-card__info">
+                    <h3 class="cert-card__name">{{ cert.name }}</h3>
+                    {% if cert.issuer %}
+                    <p class="cert-card__issuer">{{ cert.issuer }}</p>
+                    {% endif %}
+                    {% if cert.description %}
+                    <p class="cert-card__desc">{{ cert.description }}</p>
+                    {% endif %}
+                    <div class="cert-card__dates">
+                        {% if cert.date_earned %}
+                        <span>Earned: {{ cert.date_earned }}</span>
+                        {% endif %}
+                        {% if cert.date_expires %}
+                        <span>Expires: {{ cert.date_expires }}</span>
+                        {% endif %}
+                    </div>
+                    {% if cert.credential_url %}
+                    <a href="{{ cert.credential_url }}" class="cert-card__verify-link" target="_blank" rel="noopener noreferrer">Verify &rarr;</a>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+{% else %}
+<section class="section">
+    <div class="section__container">
+        <div class="empty-state">
+            <svg class="empty-state__icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 15l-2 5l9-11h-5l2-5l-9 11h5z"/></svg>
+            <p class="empty-state__text">Certifications coming soon.</p>
+        </div>
+    </div>
+</section>
+{% endif %}
+{% endblock %}

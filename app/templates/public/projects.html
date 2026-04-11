@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Projects — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <div class="page-header__container">
+        <h1 class="page-header__title">Projects</h1>
+        <p class="page-header__subtitle">Technical projects and experiments</p>
+    </div>
+</section>
+
+{% if projects %}
+<section class="section">
+    <div class="section__container">
+        <div class="projects__grid">
+            {% for project in projects %}
+            <div class="project-card">
+                {% if project.screenshot %}
+                <div class="project-card__screenshot">
+                    <img src="{{ url_for('public.serve_photo', storage_name=project.screenshot) }}" alt="{{ project.title }}" loading="lazy">
+                </div>
+                {% endif %}
+                <div class="project-card__body">
+                    <h3 class="project-card__title">{{ project.title }}</h3>
+                    {% if project.summary %}
+                    <p class="project-card__summary">{{ project.summary }}</p>
+                    {% endif %}
+                    {% if project.tech_stack %}
+                    <div class="project-card__tech">
+                        {% for tech in project.tech_stack.split(',') %}
+                        <span class="tag tag--sm">{{ tech.strip() }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    <div class="project-card__actions">
+                        {% if project.github_url %}
+                        <a href="{{ project.github_url }}" class="btn btn--secondary btn--sm" target="_blank" rel="noopener noreferrer">GitHub</a>
+                        {% endif %}
+                        {% if project.has_detail_page %}
+                        <a href="{{ url_for('public.project_detail', slug=project.slug) }}" class="btn btn--primary btn--sm">View Details</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+{% else %}
+<section class="section">
+    <div class="section__container">
+        <div class="empty-state">
+            <svg class="empty-state__icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
+            <p class="empty-state__text">Projects coming soon.</p>
+        </div>
+    </div>
+</section>
+{% endif %}
+{% endblock %}

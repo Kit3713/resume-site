@@ -36,7 +36,11 @@
 
             <ul class="navbar__menu" id="navMenu">
                 <li><a href="{{ url_for('public.index') }}#about">About</a></li>
-                <li><a href="{{ url_for('public.index') }}#services">Services</a></li>
+                <li><a href="{{ url_for('public.services') }}">Services</a></li>
+                <li><a href="{{ url_for('public.portfolio') }}">Portfolio</a></li>
+                <li><a href="{{ url_for('public.projects') }}">Projects</a></li>
+                <li><a href="{{ url_for('public.testimonials') }}">Testimonials</a></li>
+                <li><a href="{{ url_for('contact.contact_page') }}">Contact</a></li>
                 {% block nav_extra %}{% endblock %}
                 <li>
                     <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark/light mode">

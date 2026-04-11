@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}{{ study.title }} — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <div class="page-header__container">
+        <a href="{{ url_for('public.portfolio') }}" class="page-header__back">&larr; Back to Portfolio</a>
+        <h1 class="page-header__title">{{ study.title }}</h1>
+        {% if study.summary %}
+        <p class="page-header__subtitle">{{ study.summary }}</p>
+        {% endif %}
+    </div>
+</section>
+
+{% if photo %}
+<section class="section">
+    <div class="section__container">
+        <div class="case-study__hero-image">
+            <img src="{{ url_for('public.serve_photo', storage_name=photo.storage_name) }}" alt="{{ study.title }}" loading="lazy">
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<section class="section">
+    <div class="section__container">
+        <div class="case-study__grid">
+            {% if study.problem %}
+            <div class="case-study__card">
+                <h3 class="case-study__card-title">Problem</h3>
+                <div class="case-study__card-content">{{ study.problem | safe }}</div>
+            </div>
+            {% endif %}
+            {% if study.solution %}
+            <div class="case-study__card">
+                <h3 class="case-study__card-title">Solution</h3>
+                <div class="case-study__card-content">{{ study.solution | safe }}</div>
+            </div>
+            {% endif %}
+            {% if study.result %}
+            <div class="case-study__card">
+                <h3 class="case-study__card-title">Result</h3>
+                <div class="case-study__card-content">{{ study.result | safe }}</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</section>
+{% endblock %}
