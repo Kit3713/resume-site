@@ -1,6 +1,6 @@
 # resume-site
 
-> **Status: Early development (Phase 1 — Foundation)**
+> **Status: Phase 2 complete — Public pages and services implemented. Admin panel (Phase 3) is next.**
 
 A self-hosted, containerized resume and portfolio website engine built with Flask. Apple-inspired design, admin panel for content management, and zero personal data in the repo.
 
@@ -8,32 +8,37 @@ A self-hosted, containerized resume and portfolio website engine built with Flas
 
 resume-site is a configurable portfolio website designed around the idea that **you are the product**. It ships as a container image you deploy behind your reverse proxy, with all personal content managed through a local-access-only admin panel or a private configuration file.
 
-### Current State
+### What's Working
 
-The foundation is in place: Flask app factory, YAML config loading, SQLite schema, base template with dark/light mode, a hero-only landing page, Containerfile, admin IP restriction + login/logout, CLI tools (`init-db`, `hash-password`), and basic test scaffolding. See the [Roadmap](ROADMAP.md) for what's next.
+- All public-facing pages: landing (hero, about, stats, services, featured portfolio, featured testimonials, CTA), portfolio gallery with case study detail pages, services with expandable skill cards, projects with optional detail pages, testimonials, certifications, contact form, and resume PDF download
+- Contact form with honeypot spam protection and SMTP relay
+- Invite-only review submission via token-authenticated URLs
+- GSAP scroll animations: hero entrance, section reveals, card staggers, animated stat counters, page header reveals
+- Dark/light mode toggle with CSS custom properties
+- Built-in analytics: page view tracking to SQLite (no cookies, no third parties)
+- Photo serving from configurable storage directory
+- Admin login with IP restriction (private/Tailscale networks only)
+- Database models for all content types (settings, content blocks, stats, services, skills, photos, reviews, projects, certifications, contacts, tokens)
+- CI pipeline via GitHub Actions (pytest + flake8 + container build)
 
-### Planned Features
+### What's Next (Phase 3 — Admin Panel)
 
-- **Admin panel** — Manage all content, photos, reviews, and settings from a browser. Local/VPN access only.
-- **Dynamic photo gallery** — Upload photos via admin. Originals stored, optimized versions served automatically.
-- **Invite-only testimonials** — Generate tokens for trusted contacts to submit reviews. Approve, feature, or hide from admin.
-- **Configurable everything** — Toggle contact methods, pages, stats, availability status, dark/light mode, and more. No code changes needed.
-- **GSAP animations** — Scroll-triggered reveals, parallax, animated counters, page transitions.
-- **Dark/light mode** — Visitor toggle with admin-configurable default. *(toggle implemented)*
-- **Built-in analytics** — Simple page view tracking stored in SQLite. No cookies, no third parties.
-- **Contact form** — Honeypot spam protection, SMTP relay to your personal email. Visitors never see your address.
-- **SEO ready** — Meta tags, Open Graph for rich link previews, auto-generated sitemap.
-- **Mobile-first responsive** — Equal priority desktop and mobile experience.
-- **Zero personal data in repo** — All private info lives in your config file and database, never committed.
+- Content editor (Quill.js rich text)
+- Photo upload with Pillow processing (originals + optimized)
+- Photo manager (categories, metadata, tiers)
+- Review manager (approve/reject, set tiers and types)
+- Token generator for review invites
+- Settings panel (all toggles and configuration)
 
 ## Tech Stack
 
 - **Backend:** Python, Flask, Gunicorn
 - **Database:** SQLite
-- **Frontend:** Jinja2, CSS custom properties, GSAP, Quill.js (admin editor)
-- **Image Processing:** Pillow
+- **Frontend:** Jinja2, CSS custom properties, GSAP, Quill.js (admin editor — planned)
+- **Image Processing:** Pillow (serving implemented, upload processing planned)
 - **Container:** Podman / Docker (OCI-compliant)
 - **Reverse Proxy:** Caddy (not bundled)
+- **CI:** GitHub Actions (pytest, flake8, container build verification)
 
 ## Project Structure
 
@@ -47,53 +52,54 @@ resume-site/
 ├── Containerfile               # Container build instructions
 ├── schema.sql                  # Database schema
 ├── manage.py                   # CLI tools (init-db, hash-password)
+├── .github/
+│   ├── workflows/ci.yml        # GitHub Actions CI pipeline
+│   ├── ISSUE_TEMPLATE/         # Bug report + feature request templates
+│   └── PULL_REQUEST_TEMPLATE.md
 ├── app/
-│   ├── __init__.py             # App factory
-│   ├── models.py               # Database models (AdminUser)
+│   ├── __init__.py             # App factory + blueprint registration
+│   ├── models.py               # Database models and queries
 │   ├── routes/
-│   │   ├── public.py           # Public-facing pages (index only)
-│   │   ├── admin.py            # Admin panel routes (login, dashboard)
-│   │   ├── review.py *         # Token-based review submission
-│   │   └── contact.py *        # Contact form handling
+│   │   ├── public.py           # All public page routes
+│   │   ├── admin.py            # Admin login, dashboard, IP restriction
+│   │   ├── contact.py          # Contact form with honeypot + SMTP
+│   │   └── review.py           # Token-based review submission
 │   ├── services/
 │   │   ├── config.py           # YAML config loader
-│   │   ├── photos.py *         # Image upload + Pillow processing
-│   │   ├── mail.py *           # SMTP relay
-│   │   ├── analytics.py *      # Page view tracking
-│   │   └── tokens.py *         # Review token generation
+│   │   ├── photos.py           # Photo file serving
+│   │   ├── mail.py             # SMTP relay for contact form
+│   │   ├── analytics.py        # Page view tracking middleware
+│   │   └── tokens.py           # Review token validation
 │   ├── templates/
 │   │   ├── base.html           # Layout, nav, footer, dark/light toggle
 │   │   ├── public/
-│   │   │   ├── index.html      # Landing page (hero section only)
-│   │   │   ├── portfolio.html *
-│   │   │   ├── case_study.html *
-│   │   │   ├── services.html *
-│   │   │   ├── skills.html *
-│   │   │   ├── projects.html *
-│   │   │   ├── project.html *
-│   │   │   ├── testimonials.html *
-│   │   │   ├── certifications.html *
-│   │   │   ├── contact.html *
-│   │   │   └── resume.html *
-│   │   ├── admin/
-│   │   │   ├── dashboard.html  # Basic admin dashboard shell
-│   │   │   ├── login.html      # Admin login form
-│   │   │   ├── content.html *
-│   │   │   ├── photos.html *
-│   │   │   ├── reviews.html *
-│   │   │   ├── tokens.html *
-│   │   │   └── settings.html *
-│   │   └── review/
-│   │       └── submit.html *
+│   │   │   ├── index.html      # Landing page (hero, about, stats, featured, CTA)
+│   │   │   ├── portfolio.html  # Photo gallery (masonry grid, category filter)
+│   │   │   ├── case_study.html # Case study detail (problem/solution/result)
+│   │   │   ├── services.html   # Services + expandable skill cards
+│   │   │   ├── projects.html   # Technical projects list
+│   │   │   ├── project_detail.html # Individual project detail page
+│   │   │   ├── testimonials.html   # Reviews (featured + standard tiers)
+│   │   │   ├── certifications.html # Cert badges with images and dates
+│   │   │   ├── contact.html    # Contact form
+│   │   │   └── review.html     # Token-based review submission form
+│   │   └── admin/
+│   │       ├── dashboard.html  # Admin dashboard shell
+│   │       ├── login.html      # Admin login form
+│   │       ├── content.html *  # Rich text content editor
+│   │       ├── photos.html *   # Photo manager
+│   │       ├── reviews.html *  # Review manager
+│   │       ├── tokens.html *   # Token generator
+│   │       └── settings.html * # All toggles and config
 │   └── static/
 │       ├── css/
-│       │   └── style.css       # Custom properties, dark/light themes
+│       │   └── style.css       # Full dark/light theming, responsive layout
 │       └── js/
-│           ├── main.js         # Dark/light toggle, basic interactions
+│           ├── main.js         # GSAP animations, dark/light toggle, interactions
 │           └── admin.js *      # Admin panel interactions
 └── tests/
-    ├── conftest.py             # Pytest fixtures
-    └── test_app.py             # Basic smoke tests
+    ├── conftest.py             # Pytest fixtures (temp DB, test client)
+    └── test_app.py             # Route, auth, IP restriction, and page tests
 ```
 
 ## Quick Start
@@ -170,7 +176,7 @@ admin:
 
 ### Admin panel (everything else)
 
-All content, display settings, contact visibility, page toggles, photo management, review moderation, and site appearance are managed through the admin panel. No container rebuild needed for content changes.
+All content, display settings, contact visibility, page toggles, photo management, review moderation, and site appearance will be managed through the admin panel (Phase 3). No container rebuild needed for content changes.
 
 ## CLI Tools
 

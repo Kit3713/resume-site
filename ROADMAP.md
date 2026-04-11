@@ -218,9 +218,10 @@ portfolio.yourdomain.com {
 
 ---
 
+
 ## Build Phases
 
-### Phase 1 — Foundation *(in progress)*
+### Phase 1 — Foundation *(complete)*
 
 - [x] Flask app skeleton with Gunicorn
 - [x] YAML config loading
@@ -232,23 +233,23 @@ portfolio.yourdomain.com {
 - [x] Admin IP restriction middleware
 - [x] Admin login (Flask-Login, single user)
 
-### Phase 2 — Public Pages (Day 1 afternoon)
+### Phase 2 — Public Pages *(complete)*
 
-- [ ] About section with configurable content
-- [ ] Services page with expandable skill cards
-- [ ] Stats bar with GSAP animated counters
-- [ ] Portfolio gallery (masonry grid, three-tier interaction)
-- [ ] Testimonials page (featured + standard display)
-- [ ] Contact page with form + honeypot
-- [ ] SMTP relay for contact form
-- [ ] Certifications display with badge images
-- [ ] Projects page (GitHub links + optional detail pages)
-- [ ] Resume PDF download with visibility toggle
-- [ ] GSAP scroll animations throughout
-- [ ] Page transition animations
-- [ ] Responsive / mobile layout pass
+- [x] About section with configurable content
+- [x] Services page with expandable skill cards
+- [x] Stats bar with GSAP animated counters
+- [x] Portfolio gallery (masonry grid, three-tier interaction)
+- [x] Testimonials page (featured + standard display)
+- [x] Contact page with form + honeypot
+- [x] SMTP relay for contact form
+- [x] Certifications display with badge images
+- [x] Projects page (GitHub links + optional detail pages)
+- [x] Resume PDF download with visibility toggle
+- [x] GSAP scroll animations throughout
+- [x] Page transition animations
+- [x] Responsive / mobile layout pass
 
-### Phase 3 — Admin Panel (Day 2 morning)
+### Phase 3 — Admin Panel *(next up)*
 
 - [ ] Admin dashboard with analytics overview
 - [ ] Content editor (Quill.js rich text for section content)
@@ -258,11 +259,11 @@ portfolio.yourdomain.com {
 - [ ] Token generator for review invites
 - [ ] Settings panel (all toggles)
 
-### Phase 4 — Polish (Day 2 afternoon)
+### Phase 4 — Polish
 
+- [x] Case study detail pages
+- [x] Project detail pages
 - [ ] SEO meta tags, Open Graph, sitemap.xml
-- [ ] Case study detail pages
-- [ ] Project detail pages
 - [ ] Analytics auto-purge
 - [ ] Final mobile/responsive QA
 - [ ] README + documentation polish
