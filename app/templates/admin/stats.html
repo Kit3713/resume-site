@@ -1,0 +1,64 @@
+{% extends "admin/base_admin.html" %}
+
+{% block title %}Stats{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+    <div class="admin-page__header">
+        <h1 class="admin-page__title">Stats</h1>
+    </div>
+
+    <!-- Add Stat -->
+    <div class="admin-section">
+        <h2 class="admin-section__title">Add Stat Counter</h2>
+        <form method="POST" action="{{ url_for('admin.stats_add') }}" class="admin-form admin-form--inline">
+            <div class="form-group">
+                <input type="text" name="label" class="form-input" placeholder="Label (e.g., Projects)" required>
+            </div>
+            <div class="form-group">
+                <input type="number" name="value" class="form-input" placeholder="Value" value="0" required>
+            </div>
+            <div class="form-group">
+                <input type="text" name="suffix" class="form-input" placeholder="Suffix (+, %, k)" style="width:80px">
+            </div>
+            <div class="form-group">
+                <input type="number" name="sort_order" class="form-input" placeholder="Order" value="0" style="width:80px">
+            </div>
+            <button type="submit" class="btn btn--primary btn--sm">Add</button>
+        </form>
+    </div>
+
+    <!-- Stats List -->
+    {% if stats %}
+    <div class="admin-section">
+        <h2 class="admin-section__title">All Stats</h2>
+        <table class="admin-table">
+            <thead>
+                <tr><th>Label</th><th>Value</th><th>Suffix</th><th>Order</th><th>Visible</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+                {% for stat in stats %}
+                <tr>
+                    <form method="POST" action="{{ url_for('admin.stats_edit', stat_id=stat.id) }}">
+                    <td><input type="text" name="label" value="{{ stat.label }}" class="form-input"></td>
+                    <td><input type="number" name="value" value="{{ stat.value }}" class="form-input" style="width:100px"></td>
+                    <td><input type="text" name="suffix" value="{{ stat.suffix }}" class="form-input" style="width:60px"></td>
+                    <td><input type="number" name="sort_order" value="{{ stat.sort_order }}" class="form-input" style="width:70px"></td>
+                    <td><input type="checkbox" name="visible" {{ 'checked' if stat.visible }}></td>
+                    <td>
+                        <button type="submit" class="btn btn--secondary btn--sm">Save</button>
+                    </form>
+                        <form method="POST" action="{{ url_for('admin.stats_delete', stat_id=stat.id) }}" style="display:inline">
+                            <button type="submit" class="btn btn--danger btn--sm" onclick="return confirm('Delete?')">Del</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="admin-empty">No stats yet. Add counters to display on the landing page.</p>
+    {% endif %}
+</div>
+{% endblock %}

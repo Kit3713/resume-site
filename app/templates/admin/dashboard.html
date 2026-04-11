@@ -1,38 +1,65 @@
-{% extends "base.html" %}
+{% extends "admin/base_admin.html" %}
 
-{% block title %}Dashboard — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
+{% block title %}Dashboard{% endblock %}
 
 {% block content %}
-<section class="admin-dashboard">
-    <div class="admin-dashboard__container">
-        <div class="admin-dashboard__header">
-            <h1 class="admin-dashboard__title">Dashboard</h1>
-            <a href="{{ url_for('admin.logout') }}" class="btn btn--secondary btn--sm">Logout</a>
+<div class="admin-page">
+    <h1 class="admin-page__title">Dashboard</h1>
+
+    <div class="admin-dashboard__grid">
+        <div class="admin-card">
+            <h3 class="admin-card__title">Total Page Views</h3>
+            <p class="admin-card__value">{{ total_views }}</p>
         </div>
-
-        <div class="admin-dashboard__grid">
-            <div class="admin-card">
-                <h3 class="admin-card__title">Site Status</h3>
-                <p class="admin-card__value">Online</p>
-                <p class="admin-card__label">{{ site_settings.get('site_title', 'Portfolio') }}</p>
-            </div>
-
-            <div class="admin-card">
-                <h3 class="admin-card__title">Theme Default</h3>
-                <p class="admin-card__value">{{ 'Dark' if site_settings.get('dark_mode_default', 'true') == 'true' else 'Light' }}</p>
-                <p class="admin-card__label">Visitor default mode</p>
-            </div>
-
-            <div class="admin-card">
-                <h3 class="admin-card__title">Availability</h3>
-                <p class="admin-card__value">{{ site_settings.get('availability_status', 'available') | title }}</p>
-                <p class="admin-card__label">Current status</p>
-            </div>
+        <div class="admin-card">
+            <h3 class="admin-card__title">Views (7 days)</h3>
+            <p class="admin-card__value">{{ recent_views }}</p>
         </div>
-
-        <p class="admin-dashboard__note">
-            Full admin panel (content editor, photo manager, settings) coming in Phase 3.
-        </p>
+        <div class="admin-card">
+            <h3 class="admin-card__title">Pending Reviews</h3>
+            <p class="admin-card__value">{{ pending_reviews }}</p>
+        </div>
+        <div class="admin-card">
+            <h3 class="admin-card__title">Unread Messages</h3>
+            <p class="admin-card__value">{{ unread_contacts }}</p>
+        </div>
     </div>
-</section>
+
+    {% if popular_pages %}
+    <div class="admin-section">
+        <h2 class="admin-section__title">Popular Pages</h2>
+        <table class="admin-table">
+            <thead>
+                <tr><th>Page</th><th>Views</th></tr>
+            </thead>
+            <tbody>
+                {% for page in popular_pages %}
+                <tr><td>{{ page.path }}</td><td>{{ page.cnt }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if recent_contacts %}
+    <div class="admin-section">
+        <h2 class="admin-section__title">Recent Messages</h2>
+        <table class="admin-table">
+            <thead>
+                <tr><th>Name</th><th>Email</th><th>Message</th><th>Date</th></tr>
+            </thead>
+            <tbody>
+                {% for msg in recent_contacts %}
+                <tr>
+                    <td>{{ msg.name }}</td>
+                    <td>{{ msg.email }}</td>
+                    <td>{{ msg.message[:80] }}{{ '...' if msg.message|length > 80 else '' }}</td>
+                    <td>{{ msg.created_at[:10] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
 {% endblock %}

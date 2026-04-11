@@ -1,0 +1,70 @@
+{% extends "admin/base_admin.html" %}
+
+{% block title %}Tokens{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+    <div class="admin-page__header">
+        <h1 class="admin-page__title">Review Tokens</h1>
+    </div>
+
+    <!-- Generate Token -->
+    <div class="admin-section">
+        <h2 class="admin-section__title">Generate New Token</h2>
+        <form method="POST" action="{{ url_for('admin.tokens_generate') }}" class="admin-form admin-form--inline">
+            <div class="form-group">
+                <input type="text" name="name" class="form-input" placeholder="Recipient name (optional)">
+            </div>
+            <div class="form-group">
+                <select name="type" class="form-input">
+                    <option value="recommendation">Recommendation</option>
+                    <option value="client_review">Client Review</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn--primary btn--sm">Generate</button>
+        </form>
+    </div>
+
+    <!-- Token List -->
+    {% if tokens %}
+    <div class="admin-section">
+        <h2 class="admin-section__title">All Tokens</h2>
+        <table class="admin-table">
+            <thead>
+                <tr><th>Name</th><th>Type</th><th>Status</th><th>URL</th><th>Created</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+                {% for token in tokens %}
+                <tr>
+                    <td>{{ token.name or '—' }}</td>
+                    <td><span class="tag tag--sm">{{ token.type | replace('_', ' ') | title }}</span></td>
+                    <td>
+                        {% if token.used %}
+                            <span class="tag tag--sm" style="background: rgba(48,209,88,0.2); color: #30d158;">Used</span>
+                        {% else %}
+                            <span class="tag tag--sm" style="background: rgba(255,159,10,0.2); color: #ff9f0a;">Pending</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if not token.used %}
+                        <code class="admin-token-url">/review/{{ token.token }}</code>
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                    <td>{{ token.created_at[:10] }}</td>
+                    <td>
+                        <form method="POST" action="{{ url_for('admin.tokens_delete', token_id=token.id) }}" style="display:inline">
+                            <button type="submit" class="btn btn--danger btn--sm" onclick="return confirm('Delete this token?')">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="admin-empty">No tokens generated yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

@@ -52,6 +52,71 @@ def hash_password(args):
     print(f'  password_hash: "{pw_hash}"')
 
 
+def generate_token(args):
+    """Generate a review invite token."""
+    import secrets
+    from app import create_app
+
+    app = create_app()
+    db_path = app.config['DATABASE_PATH']
+
+    conn = sqlite3.connect(db_path)
+    token_string = secrets.token_urlsafe(32)
+    conn.execute(
+        'INSERT INTO review_tokens (token, name, type) VALUES (?, ?, ?)',
+        (token_string, args.name or '', args.type),
+    )
+    conn.commit()
+    conn.close()
+
+    print(f"Token generated for: {args.name or 'anonymous'}")
+    print(f"Type: {args.type}")
+    print(f"URL path: /review/{token_string}")
+
+
+def list_reviews(args):
+    """List reviews by status."""
+    from app import create_app
+
+    app = create_app()
+    db_path = app.config['DATABASE_PATH']
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        'SELECT * FROM reviews WHERE status = ? ORDER BY created_at DESC',
+        (args.status,),
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        print(f"No {args.status} reviews.")
+        return
+
+    for row in rows:
+        rating = f" [{row['rating']}/5]" if row['rating'] else ""
+        print(f"  [{row['id']}] {row['reviewer_name']}{rating} — {row['message'][:60]}...")
+
+
+def purge_analytics(args):
+    """Purge analytics data older than N days."""
+    from app import create_app
+
+    app = create_app()
+    db_path = app.config['DATABASE_PATH']
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.execute(
+        "DELETE FROM page_views WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)",
+        (f'-{args.days} days',),
+    )
+    conn.commit()
+    count = cursor.rowcount
+    conn.close()
+
+    print(f"Purged {count} page view records older than {args.days} days.")
+
+
 def main():
     parser = argparse.ArgumentParser(description='resume-site management CLI')
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
@@ -59,12 +124,32 @@ def main():
     subparsers.add_parser('init-db', help='Initialize the database')
     subparsers.add_parser('hash-password', help='Generate an admin password hash')
 
+    token_parser = subparsers.add_parser('generate-token', help='Generate a review invite token')
+    token_parser.add_argument('--name', default='', help='Recipient name')
+    token_parser.add_argument('--type', default='recommendation',
+                              choices=['recommendation', 'client_review'],
+                              help='Token type')
+
+    reviews_parser = subparsers.add_parser('list-reviews', help='List reviews by status')
+    reviews_parser.add_argument('--status', default='pending',
+                                choices=['pending', 'approved', 'rejected'],
+                                help='Filter by status')
+
+    purge_parser = subparsers.add_parser('purge-analytics', help='Purge old analytics data')
+    purge_parser.add_argument('--days', type=int, default=90, help='Days to retain')
+
     args = parser.parse_args()
 
     if args.command == 'init-db':
         init_db(args)
     elif args.command == 'hash-password':
         hash_password(args)
+    elif args.command == 'generate-token':
+        generate_token(args)
+    elif args.command == 'list-reviews':
+        list_reviews(args)
+    elif args.command == 'purge-analytics':
+        purge_analytics(args)
     else:
         parser.print_help()
         sys.exit(1)
