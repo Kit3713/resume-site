@@ -1,0 +1,41 @@
+# Personal configuration (contains SMTP creds, admin password)
+config.yaml
+
+# Database
+*.db
+data/
+
+# Photos (personal assets)
+photos/
+
+# Uploaded resume PDF
+uploads/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+.flaskenv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Container build artifacts
+*.tar
