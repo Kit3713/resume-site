@@ -249,25 +249,29 @@ portfolio.yourdomain.com {
 - [x] Page transition animations
 - [x] Responsive / mobile layout pass
 
-### Phase 3 — Admin Panel *(next up)*
+### Phase 3 — Admin Panel *(complete)*
 
-- [ ] Admin dashboard with analytics overview
-- [ ] Content editor (Quill.js rich text for section content)
-- [ ] Photo upload with Pillow processing (originals + optimized)
-- [ ] Photo manager (categories, metadata, tiers)
-- [ ] Review manager (approve/reject, set tiers and types)
-- [ ] Token generator for review invites
-- [ ] Settings panel (all toggles)
+- [x] Admin dashboard with analytics overview
+- [x] Content editor (rich text for section content)
+- [x] Photo upload with Pillow processing (originals + optimized)
+- [x] Photo manager (categories, metadata, tiers)
+- [x] Review manager (approve/reject, set tiers and types)
+- [x] Token generator for review invites
+- [x] Settings panel (all toggles)
+- [x] Services manager (add/edit/delete)
+- [x] Stats manager (add/edit/delete)
+- [x] Admin base template with sidebar navigation
 
-### Phase 4 — Polish
+### Phase 4 — Polish *(complete)*
 
+- [x] SEO: Open Graph meta tags in base template
+- [x] Auto-generated sitemap.xml
+- [x] robots.txt
 - [x] Case study detail pages
 - [x] Project detail pages
-- [ ] SEO meta tags, Open Graph, sitemap.xml
-- [ ] Analytics auto-purge
-- [ ] Final mobile/responsive QA
-- [ ] README + documentation polish
-- [ ] Container final build and test
+- [x] Analytics auto-purge CLI command
+- [x] CLI: generate-token, list-reviews, purge-analytics
+- [x] Container build and test via CI
 
 ---
 
