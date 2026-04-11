@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
+
+{% block content %}
+<section class="admin-dashboard">
+    <div class="admin-dashboard__container">
+        <div class="admin-dashboard__header">
+            <h1 class="admin-dashboard__title">Dashboard</h1>
+            <a href="{{ url_for('admin.logout') }}" class="btn btn--secondary btn--sm">Logout</a>
+        </div>
+
+        <div class="admin-dashboard__grid">
+            <div class="admin-card">
+                <h3 class="admin-card__title">Site Status</h3>
+                <p class="admin-card__value">Online</p>
+                <p class="admin-card__label">{{ site_settings.get('site_title', 'Portfolio') }}</p>
+            </div>
+
+            <div class="admin-card">
+                <h3 class="admin-card__title">Theme Default</h3>
+                <p class="admin-card__value">{{ 'Dark' if site_settings.get('dark_mode_default', 'true') == 'true' else 'Light' }}</p>
+                <p class="admin-card__label">Visitor default mode</p>
+            </div>
+
+            <div class="admin-card">
+                <h3 class="admin-card__title">Availability</h3>
+                <p class="admin-card__value">{{ site_settings.get('availability_status', 'available') | title }}</p>
+                <p class="admin-card__label">Current status</p>
+            </div>
+        </div>
+
+        <p class="admin-dashboard__note">
+            Full admin panel (content editor, photo manager, settings) coming in Phase 3.
+        </p>
+    </div>
+</section>
+{% endblock %}
