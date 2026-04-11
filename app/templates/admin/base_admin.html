@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Admin{% endblock %} — {{ site_settings.get('site_title', 'Portfolio') }}</title>
+    <script>
+        (function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block head_extra %}{% endblock %}
+</head>
+<body>
+    <div class="admin-layout">
+        <aside class="admin-sidebar">
+            <div class="admin-sidebar__brand">
+                <a href="{{ url_for('admin.dashboard') }}">Admin</a>
+            </div>
+            <nav class="admin-sidebar__nav">
+                <a href="{{ url_for('admin.dashboard') }}" class="admin-sidebar__link {% if request.endpoint == 'admin.dashboard' %}admin-sidebar__link--active{% endif %}">Dashboard</a>
+                <a href="{{ url_for('admin.content') }}" class="admin-sidebar__link {% if 'content' in request.endpoint %}admin-sidebar__link--active{% endif %}">Content</a>
+                <a href="{{ url_for('admin.photos') }}" class="admin-sidebar__link {% if 'photos' in request.endpoint %}admin-sidebar__link--active{% endif %}">Photos</a>
+                <a href="{{ url_for('admin.services') }}" class="admin-sidebar__link {% if request.endpoint == 'admin.services' %}admin-sidebar__link--active{% endif %}">Services</a>
+                <a href="{{ url_for('admin.stats') }}" class="admin-sidebar__link {% if 'stats' in request.endpoint %}admin-sidebar__link--active{% endif %}">Stats</a>
+                <a href="{{ url_for('admin.reviews') }}" class="admin-sidebar__link {% if 'reviews' in request.endpoint %}admin-sidebar__link--active{% endif %}">Reviews</a>
+                <a href="{{ url_for('admin.tokens') }}" class="admin-sidebar__link {% if 'tokens' in request.endpoint %}admin-sidebar__link--active{% endif %}">Tokens</a>
+                <a href="{{ url_for('admin.settings') }}" class="admin-sidebar__link {% if request.endpoint == 'admin.settings' %}admin-sidebar__link--active{% endif %}">Settings</a>
+            </nav>
+            <div class="admin-sidebar__footer">
+                <a href="{{ url_for('public.index') }}" class="admin-sidebar__link">View Site</a>
+                <a href="{{ url_for('admin.logout') }}" class="admin-sidebar__link">Logout</a>
+            </div>
+        </aside>
+
+        <main class="admin-main">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="flash-messages">
+                        {% for category, message in messages %}
+                            <div class="flash flash--{{ category }}">{{ message }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    {% block scripts_extra %}{% endblock %}
+</body>
+</html>

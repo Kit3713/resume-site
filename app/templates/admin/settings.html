@@ -1,0 +1,155 @@
+{% extends "admin/base_admin.html" %}
+
+{% block title %}Settings{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+    <h1 class="admin-page__title">Settings</h1>
+
+    <form method="POST" class="admin-form">
+        <!-- Site Identity -->
+        <div class="admin-section">
+            <h2 class="admin-section__title">Site Identity</h2>
+            <div class="admin-form-grid">
+                <div class="form-group">
+                    <label class="form-label">Site Title</label>
+                    <input type="text" name="site_title" class="form-input" value="{{ settings.get('site_title', '') }}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Site Tagline</label>
+                    <input type="text" name="site_tagline" class="form-input" value="{{ settings.get('site_tagline', '') }}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Footer Text</label>
+                    <input type="text" name="footer_text" class="form-input" value="{{ settings.get('footer_text', '') }}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Accent Color</label>
+                    <input type="color" name="accent_color" class="form-input form-input--color" value="{{ settings.get('accent_color', '#0071e3') }}">
+                </div>
+            </div>
+        </div>
+
+        <!-- Hero Section -->
+        <div class="admin-section">
+            <h2 class="admin-section__title">Hero Section</h2>
+            <div class="admin-form-grid">
+                <div class="form-group">
+                    <label class="form-label">Heading (your name)</label>
+                    <input type="text" name="hero_heading" class="form-input" value="{{ settings.get('hero_heading', '') }}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Subheading (your title)</label>
+                    <input type="text" name="hero_subheading" class="form-input" value="{{ settings.get('hero_subheading', '') }}">
+                </div>
+                <div class="form-group form-group--full">
+                    <label class="form-label">Tagline (value proposition)</label>
+                    <input type="text" name="hero_tagline" class="form-input" value="{{ settings.get('hero_tagline', '') }}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Availability Status</label>
+                    <select name="availability_status" class="form-input">
+                        <option value="available" {{ 'selected' if settings.get('availability_status') == 'available' }}>Available</option>
+                        <option value="open" {{ 'selected' if settings.get('availability_status') == 'open' }}>Open to Opportunities</option>
+                        <option value="unavailable" {{ 'selected' if settings.get('availability_status') == 'unavailable' }}>Not Available</option>
+                        <option value="off" {{ 'selected' if settings.get('availability_status') == 'off' }}>Hidden</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Display Settings -->
+        <div class="admin-section">
+            <h2 class="admin-section__title">Display Settings</h2>
+            <div class="admin-form-grid">
+                <div class="form-group">
+                    <label class="form-label">Default Theme</label>
+                    <select name="dark_mode_default" class="form-input">
+                        <option value="true" {{ 'selected' if settings.get('dark_mode_default') == 'true' }}>Dark</option>
+                        <option value="false" {{ 'selected' if settings.get('dark_mode_default') == 'false' }}>Light</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Logo Mode</label>
+                    <select name="logo_mode" class="form-input">
+                        <option value="title" {{ 'selected' if settings.get('logo_mode') == 'title' }}>Site Title</option>
+                        <option value="initials" {{ 'selected' if settings.get('logo_mode') == 'initials' }}>Initials</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Testimonial Display</label>
+                    <select name="testimonial_display_mode" class="form-input">
+                        <option value="mixed" {{ 'selected' if settings.get('testimonial_display_mode') == 'mixed' }}>Mixed with Labels</option>
+                        <option value="separate" {{ 'selected' if settings.get('testimonial_display_mode') == 'separate' }}>Separate Sections</option>
+                        <option value="all" {{ 'selected' if settings.get('testimonial_display_mode') == 'all' }}>All Together</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Case Studies</label>
+                    <select name="case_studies_enabled" class="form-input">
+                        <option value="true" {{ 'selected' if settings.get('case_studies_enabled') == 'true' }}>Enabled</option>
+                        <option value="false" {{ 'selected' if settings.get('case_studies_enabled') == 'false' }}>Disabled</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Contact & Social -->
+        <div class="admin-section">
+            <h2 class="admin-section__title">Contact & Social</h2>
+            <div class="admin-form-grid">
+                <div class="form-group">
+                    <label class="form-label">Contact Form</label>
+                    <select name="contact_form_enabled" class="form-input">
+                        <option value="true" {{ 'selected' if settings.get('contact_form_enabled') == 'true' }}>Enabled</option>
+                        <option value="false" {{ 'selected' if settings.get('contact_form_enabled') == 'false' }}>Disabled</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Show Email</label>
+                    <select name="contact_email_visible" class="form-input">
+                        <option value="true" {{ 'selected' if settings.get('contact_email_visible') == 'true' }}>Visible</option>
+                        <option value="false" {{ 'selected' if settings.get('contact_email_visible') == 'false' }}>Hidden</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Show Phone</label>
+                    <select name="contact_phone_visible" class="form-input">
+                        <option value="true" {{ 'selected' if settings.get('contact_phone_visible') == 'true' }}>Visible</option>
+                        <option value="false" {{ 'selected' if settings.get('contact_phone_visible') == 'false' }}>Hidden</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Resume Visibility</label>
+                    <select name="resume_visibility" class="form-input">
+                        <option value="public" {{ 'selected' if settings.get('resume_visibility') == 'public' }}>Public</option>
+                        <option value="private" {{ 'selected' if settings.get('resume_visibility') == 'private' }}>Private Link</option>
+                        <option value="off" {{ 'selected' if settings.get('resume_visibility') == 'off' }}>Disabled</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">GitHub URL</label>
+                    <input type="url" name="contact_github_url" class="form-input" value="{{ settings.get('contact_github_url', '') }}" placeholder="https://github.com/username">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">LinkedIn URL</label>
+                    <input type="url" name="contact_linkedin_url" class="form-input" value="{{ settings.get('contact_linkedin_url', '') }}" placeholder="https://linkedin.com/in/username">
+                </div>
+            </div>
+        </div>
+
+        <!-- Analytics -->
+        <div class="admin-section">
+            <h2 class="admin-section__title">Analytics</h2>
+            <div class="admin-form-grid">
+                <div class="form-group">
+                    <label class="form-label">Retention Days</label>
+                    <input type="number" name="analytics_retention_days" class="form-input" value="{{ settings.get('analytics_retention_days', '90') }}" min="7" max="365">
+                </div>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn--primary">Save Settings</button>
+    </form>
+</div>
+{% endblock %}

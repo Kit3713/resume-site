@@ -1,0 +1,69 @@
+{% extends "admin/base_admin.html" %}
+
+{% block title %}Reviews{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+    <div class="admin-page__header">
+        <h1 class="admin-page__title">Review Manager</h1>
+    </div>
+
+    {% if pending %}
+    <div class="admin-section">
+        <h2 class="admin-section__title">Pending ({{ pending|length }})</h2>
+        {% for review in pending %}
+        <div class="admin-review-card admin-review-card--pending">
+            <div class="admin-review-card__content">
+                <strong>{{ review.reviewer_name }}</strong>
+                {% if review.reviewer_title %}<span class="admin-review-card__meta"> — {{ review.reviewer_title }}</span>{% endif %}
+                <span class="tag tag--sm">{{ review.type | replace('_', ' ') | title }}</span>
+                {% if review.rating %}
+                <span class="admin-review-card__rating">
+                    {% for i in range(review.rating) %}&#9733;{% endfor %}
+                </span>
+                {% endif %}
+                <p class="admin-review-card__message">{{ review.message }}</p>
+                <small>{{ review.created_at[:10] }}</small>
+            </div>
+            <form method="POST" action="{{ url_for('admin.reviews_update', review_id=review.id) }}" class="admin-review-card__actions">
+                <select name="display_tier" class="form-input">
+                    <option value="standard">Standard</option>
+                    <option value="featured">Featured</option>
+                </select>
+                <button type="submit" name="action" value="approve" class="btn btn--primary btn--sm">Approve</button>
+                <button type="submit" name="action" value="reject" class="btn btn--danger btn--sm">Reject</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if approved %}
+    <div class="admin-section">
+        <h2 class="admin-section__title">Approved ({{ approved|length }})</h2>
+        {% for review in approved %}
+        <div class="admin-review-card">
+            <div class="admin-review-card__content">
+                <strong>{{ review.reviewer_name }}</strong>
+                <span class="tag tag--sm">{{ review.display_tier }}</span>
+                <span class="tag tag--sm">{{ review.type | replace('_', ' ') | title }}</span>
+                <p class="admin-review-card__message">{{ review.message[:120] }}{{ '...' if review.message|length > 120 else '' }}</p>
+            </div>
+            <form method="POST" action="{{ url_for('admin.reviews_update', review_id=review.id) }}" class="admin-review-card__actions">
+                <select name="display_tier" class="form-input">
+                    <option value="standard" {{ 'selected' if review.display_tier == 'standard' }}>Standard</option>
+                    <option value="featured" {{ 'selected' if review.display_tier == 'featured' }}>Featured</option>
+                    <option value="hidden" {{ 'selected' if review.display_tier == 'hidden' }}>Hidden</option>
+                </select>
+                <button type="submit" name="action" value="update_tier" class="btn btn--secondary btn--sm">Update</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if not pending and not approved and not rejected %}
+    <p class="admin-empty">No reviews yet. Generate tokens to invite reviewers.</p>
+    {% endif %}
+</div>
+{% endblock %}

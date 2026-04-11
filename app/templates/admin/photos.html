@@ -1,0 +1,72 @@
+{% extends "admin/base_admin.html" %}
+
+{% block title %}Photos{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+    <div class="admin-page__header">
+        <h1 class="admin-page__title">Photo Manager</h1>
+    </div>
+
+    <!-- Upload Form -->
+    <div class="admin-section">
+        <h2 class="admin-section__title">Upload New Photo</h2>
+        <form method="POST" action="{{ url_for('admin.photos_upload') }}" enctype="multipart/form-data" class="admin-form admin-form--inline">
+            <div class="form-group">
+                <input type="file" name="photo" accept="image/*" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <input type="text" name="title" class="form-input" placeholder="Title (optional)">
+            </div>
+            <div class="form-group">
+                <input type="text" name="category" class="form-input" placeholder="Category">
+            </div>
+            <div class="form-group">
+                <select name="display_tier" class="form-input">
+                    <option value="grid">Grid</option>
+                    <option value="featured">Featured</option>
+                    <option value="hidden">Hidden</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn--primary btn--sm">Upload</button>
+        </form>
+    </div>
+
+    <!-- Photo Grid -->
+    {% if photos %}
+    <div class="admin-section">
+        <h2 class="admin-section__title">All Photos ({{ photos|length }})</h2>
+        <div class="admin-photos-grid">
+            {% for photo in photos %}
+            <div class="admin-photo-card">
+                <div class="admin-photo-card__img">
+                    <img src="{{ url_for('public.serve_photo', storage_name=photo.storage_name) }}" alt="{{ photo.title }}" loading="lazy">
+                    <span class="admin-photo-card__tier">{{ photo.display_tier }}</span>
+                </div>
+                <form method="POST" action="{{ url_for('admin.photos_edit', photo_id=photo.id) }}" class="admin-photo-card__form">
+                    <input type="text" name="title" value="{{ photo.title }}" class="form-input" placeholder="Title">
+                    <input type="text" name="description" value="{{ photo.description }}" class="form-input" placeholder="Description">
+                    <input type="text" name="tech_used" value="{{ photo.tech_used }}" class="form-input" placeholder="Tech used">
+                    <input type="text" name="category" value="{{ photo.category }}" class="form-input" placeholder="Category">
+                    <select name="display_tier" class="form-input">
+                        <option value="grid" {{ 'selected' if photo.display_tier == 'grid' }}>Grid</option>
+                        <option value="featured" {{ 'selected' if photo.display_tier == 'featured' }}>Featured</option>
+                        <option value="hidden" {{ 'selected' if photo.display_tier == 'hidden' }}>Hidden</option>
+                    </select>
+                    <input type="number" name="sort_order" value="{{ photo.sort_order }}" class="form-input" placeholder="Sort order">
+                    <div class="admin-photo-card__actions">
+                        <button type="submit" class="btn btn--secondary btn--sm">Save</button>
+                    </div>
+                </form>
+                <form method="POST" action="{{ url_for('admin.photos_delete', photo_id=photo.id) }}" class="admin-photo-card__delete">
+                    <button type="submit" class="btn btn--danger btn--sm" onclick="return confirm('Delete this photo?')">Delete</button>
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% else %}
+    <p class="admin-empty">No photos uploaded yet.</p>
+    {% endif %}
+</div>
+{% endblock %}
