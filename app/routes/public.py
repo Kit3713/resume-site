@@ -1,6 +1,6 @@
 import os
 
-from flask import Blueprint, render_template, abort, send_from_directory, current_app
+from flask import Blueprint, render_template, abort, send_from_directory, current_app, request, Response, make_response
 
 from app import get_db
 from app.models import (
@@ -121,3 +121,57 @@ def resume_download():
 def serve_photo(storage_name):
     from app.services.photos import serve_photo as _serve
     return _serve(storage_name)
+
+
+@public_bp.route('/sitemap.xml')
+def sitemap():
+    """Generate sitemap.xml dynamically from active pages."""
+    db = get_db()
+    base_url = request.url_root.rstrip('/')
+
+    pages = [
+        ('/', '1.0'),
+        ('/portfolio', '0.9'),
+        ('/services', '0.8'),
+        ('/projects', '0.8'),
+        ('/testimonials', '0.7'),
+        ('/certifications', '0.7'),
+        ('/contact', '0.8'),
+    ]
+
+    # Add project detail pages
+    projects = get_visible_projects(db)
+    for p in projects:
+        if p['has_detail_page']:
+            pages.append((f"/projects/{p['slug']}", '0.6'))
+
+    # Add case study pages if enabled
+    if get_setting(db, 'case_studies_enabled', 'false') == 'true':
+        studies = db.execute("SELECT slug FROM case_studies WHERE published = 1").fetchall()
+        for s in studies:
+            pages.append((f"/portfolio/{s['slug']}", '0.6'))
+
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    xml += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    for path, priority in pages:
+        xml += f'  <url><loc>{base_url}{path}</loc><priority>{priority}</priority></url>\n'
+    xml += '</urlset>'
+
+    response = make_response(xml)
+    response.headers['Content-Type'] = 'application/xml'
+    return response
+
+
+@public_bp.route('/robots.txt')
+def robots():
+    """Serve robots.txt."""
+    base_url = request.url_root.rstrip('/')
+    txt = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /admin\n"
+        f"Sitemap: {base_url}/sitemap.xml\n"
+    )
+    response = make_response(txt)
+    response.headers['Content-Type'] = 'text/plain'
+    return response

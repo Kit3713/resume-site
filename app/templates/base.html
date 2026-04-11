@@ -6,6 +6,12 @@
     <title>{% block title %}{{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}</title>
     <meta name="description" content="{% block meta_description %}{{ site_settings.get('site_tagline', '') }}{% endblock %}">
 
+    <!-- Open Graph -->
+    <meta property="og:title" content="{% block og_title %}{{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}">
+    <meta property="og:description" content="{{ site_settings.get('site_tagline', '') }}">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="{{ site_settings.get('site_title', 'Portfolio') }}">
+
     <!-- Prevent theme flash -->
     <script>
         (function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();
