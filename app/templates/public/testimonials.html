@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Testimonials — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <div class="page-header__container">
+        <h1 class="page-header__title">Testimonials</h1>
+        <p class="page-header__subtitle">What people are saying</p>
+    </div>
+</section>
+
+{% if featured or standard %}
+    {% if featured %}
+    <section class="section">
+        <div class="section__container">
+            <div class="testimonials__featured">
+                {% for review in featured %}
+                <div class="testimonial-card testimonial-card--featured">
+                    <div class="testimonial-card__quote">&ldquo;</div>
+                    <p class="testimonial-card__message">{{ review.message }}</p>
+                    {% if review.rating %}
+                    <div class="testimonial-card__rating">
+                        {% for i in range(5) %}
+                        <span class="star {{ 'star--filled' if i < review.rating else '' }}">&#9733;</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    <div class="testimonial-card__author">{{ review.reviewer_name }}</div>
+                    {% if review.reviewer_title %}
+                    <div class="testimonial-card__title">{{ review.reviewer_title }}</div>
+                    {% endif %}
+                    {% if review.relationship %}
+                    <div class="testimonial-card__relationship">{{ review.relationship }}</div>
+                    {% endif %}
+                    {% if display_mode != 'all' %}
+                    <span class="testimonial-card__type-badge">{{ review.type | replace('_', ' ') | title }}</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+    {% endif %}
+
+    {% if standard %}
+    <section class="section {% if featured %}section--alt{% endif %}">
+        <div class="section__container">
+            <div class="testimonials__grid">
+                {% for review in standard %}
+                <div class="testimonial-card">
+                    <div class="testimonial-card__quote">&ldquo;</div>
+                    <p class="testimonial-card__message">{{ review.message }}</p>
+                    {% if review.rating %}
+                    <div class="testimonial-card__rating">
+                        {% for i in range(5) %}
+                        <span class="star {{ 'star--filled' if i < review.rating else '' }}">&#9733;</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    <div class="testimonial-card__author">{{ review.reviewer_name }}</div>
+                    {% if review.reviewer_title %}
+                    <div class="testimonial-card__title">{{ review.reviewer_title }}</div>
+                    {% endif %}
+                    {% if display_mode != 'all' %}
+                    <span class="testimonial-card__type-badge">{{ review.type | replace('_', ' ') | title }}</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+    {% endif %}
+{% else %}
+    <section class="section">
+        <div class="section__container">
+            <div class="empty-state">
+                <svg class="empty-state__icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                <p class="empty-state__text">Testimonials coming soon.</p>
+            </div>
+        </div>
+    </section>
+{% endif %}
+{% endblock %}

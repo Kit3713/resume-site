@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.title }} — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <div class="page-header__container">
+        <a href="{{ url_for('public.projects') }}" class="page-header__back">&larr; Back to Projects</a>
+        <h1 class="page-header__title">{{ project.title }}</h1>
+        {% if project.summary %}
+        <p class="page-header__subtitle">{{ project.summary }}</p>
+        {% endif %}
+    </div>
+</section>
+
+{% if project.screenshot %}
+<section class="section">
+    <div class="section__container">
+        <div class="project-detail__screenshot">
+            <img src="{{ url_for('public.serve_photo', storage_name=project.screenshot) }}" alt="{{ project.title }}" loading="lazy">
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<section class="section">
+    <div class="section__container">
+        <div class="project-detail__content">
+            {% if project.tech_stack %}
+            <div class="project-detail__tech">
+                {% for tech in project.tech_stack.split(',') %}
+                <span class="tag">{{ tech.strip() }}</span>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if project.description %}
+            <div class="project-detail__body">
+                {{ project.description | safe }}
+            </div>
+            {% endif %}
+
+            <div class="project-detail__actions">
+                {% if project.github_url %}
+                <a href="{{ project.github_url }}" class="btn btn--secondary" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

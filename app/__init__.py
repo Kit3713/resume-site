@@ -13,6 +13,7 @@ def get_db():
         g.db = sqlite3.connect(g.db_path)
         g.db.row_factory = sqlite3.Row
         g.db.execute('PRAGMA foreign_keys=ON')
+        g.db.execute('PRAGMA busy_timeout=5000')
     return g.db
 
 
@@ -60,9 +61,17 @@ def create_app(config_path=None):
     # Register blueprints
     from app.routes.public import public_bp
     from app.routes.admin import admin_bp
+    from app.routes.contact import contact_bp
+    from app.routes.review import review_bp
 
     app.register_blueprint(public_bp)
     app.register_blueprint(admin_bp, url_prefix='/admin')
+    app.register_blueprint(contact_bp)
+    app.register_blueprint(review_bp)
+
+    # Analytics middleware
+    from app.services.analytics import track_page_view
+    app.before_request(track_page_view)
 
     # Template context processor — inject settings into all templates
     @app.context_processor

@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}Services — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
+
+{% block content %}
+<section class="page-header">
+    <div class="page-header__container">
+        <h1 class="page-header__title">Services</h1>
+        <p class="page-header__subtitle">What I can do for you</p>
+    </div>
+</section>
+
+{% if services %}
+<section class="section">
+    <div class="section__container">
+        <div class="services__grid">
+            {% for service in services %}
+            <div class="service-card">
+                {% if service.icon %}
+                <div class="service-card__icon">{{ service.icon }}</div>
+                {% endif %}
+                <h3 class="service-card__title">{{ service.title }}</h3>
+                <div class="service-card__desc">{{ service.description | safe }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+{% else %}
+<section class="section">
+    <div class="section__container">
+        <div class="empty-state">
+            <svg class="empty-state__icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+            <p class="empty-state__text">Services information coming soon.</p>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+{% if domains %}
+<section class="section section--alt">
+    <div class="section__container">
+        <h2 class="section__heading">Skills</h2>
+        <div class="skills__list">
+            {% for item in domains %}
+            <div class="skill-domain">
+                <button class="skill-domain__header" aria-expanded="false">
+                    <h3 class="skill-domain__title">{{ item.domain.name }}</h3>
+                    <svg class="skill-domain__chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="skill-domain__body">
+                    {% for skill in item.skills %}
+                    <div class="skill-item">
+                        <h4 class="skill-item__name">{{ skill.name }}</h4>
+                        {% if skill.experience %}
+                        <p class="skill-item__experience">{{ skill.experience }}</p>
+                        {% endif %}
+                        {% if skill.tools %}
+                        <div class="skill-item__tools">
+                            {% for tool in skill.tools.split(',') %}
+                            <span class="tag">{{ tool.strip() }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+{% endif %}
+{% endblock %}
