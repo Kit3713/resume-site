@@ -220,17 +220,17 @@ portfolio.yourdomain.com {
 
 ## Build Phases
 
-### Phase 1 — Foundation (Day 1 morning)
+### Phase 1 — Foundation *(in progress)*
 
-- [ ] Flask app skeleton with Gunicorn
-- [ ] YAML config loading
-- [ ] SQLite database schema and initialization
-- [ ] Base template with nav, footer, dark/light mode toggle
-- [ ] CSS custom properties for theming (dark + light)
-- [ ] Landing page hero section (split layout)
-- [ ] Containerfile + basic Podman deployment
-- [ ] Admin IP restriction middleware
-- [ ] Admin login (Flask-Login, single user)
+- [x] Flask app skeleton with Gunicorn
+- [x] YAML config loading
+- [x] SQLite database schema and initialization
+- [x] Base template with nav, footer, dark/light mode toggle
+- [x] CSS custom properties for theming (dark + light)
+- [x] Landing page hero section (split layout)
+- [x] Containerfile + basic Podman deployment
+- [x] Admin IP restriction middleware
+- [x] Admin login (Flask-Login, single user)
 
 ### Phase 2 — Public Pages (Day 1 afternoon)
 
