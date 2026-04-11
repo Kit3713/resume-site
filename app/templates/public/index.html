@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}{{ site_settings.get('site_title', 'Portfolio') }} — {{ site_settings.get('site_tagline', '') }}{% endblock %}
+
+{% block content %}
+
+<!-- Hero Section -->
+<section class="hero" id="hero">
+    <div class="hero__container">
+        <div class="hero__content">
+            {% set status = site_settings.get('availability_status', 'available') %}
+            {% if status and status != 'off' %}
+            <div class="hero__badge hero__badge--{{ status }}">
+                <span class="hero__badge-dot"></span>
+                {% if status == 'available' %}
+                    Available for hire
+                {% elif status == 'open' %}
+                    Open to opportunities
+                {% else %}
+                    Not currently available
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <h1 class="hero__heading">
+                {{ site_settings.get('hero_heading', 'Your Name') }}
+            </h1>
+            <p class="hero__subheading">
+                {{ site_settings.get('hero_subheading', 'Your Title') }}
+            </p>
+            <p class="hero__tagline">
+                {{ site_settings.get('hero_tagline', 'Your value proposition goes here.') }}
+            </p>
+
+            <div class="hero__actions">
+                <a href="#contact" class="btn btn--primary">Get in Touch</a>
+                <a href="#portfolio" class="btn btn--secondary">View Work</a>
+            </div>
+        </div>
+
+        <div class="hero__image">
+            <div class="hero__image-placeholder">
+                <div class="hero__image-glow"></div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- About Section (stub for Phase 2) -->
+<section class="section" id="about">
+    <div class="section__container">
+        <h2 class="section__heading">About</h2>
+        <p class="section__text">Content managed through admin panel.</p>
+    </div>
+</section>
+
+<!-- Services Section (stub for Phase 2) -->
+<section class="section section--alt" id="services">
+    <div class="section__container">
+        <h2 class="section__heading">Services</h2>
+        <p class="section__text">Content managed through admin panel.</p>
+    </div>
+</section>
+
+<!-- Contact CTA (stub for Phase 2) -->
+<section class="section" id="contact">
+    <div class="section__container">
+        <h2 class="section__heading">Get in Touch</h2>
+        <p class="section__text">Contact form coming soon.</p>
+    </div>
+</section>
+
+{% endblock %}

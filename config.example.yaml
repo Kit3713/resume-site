@@ -1,0 +1,32 @@
+# resume-site configuration
+# Copy this file to config.yaml and edit with your settings.
+# config.yaml is gitignored — never commit it.
+
+# Required: generate a random key (e.g., python -c "import secrets; print(secrets.token_hex(32))")
+secret_key: "CHANGE-ME-generate-a-random-key"
+
+# Database location (relative to project root, or absolute path)
+database_path: "data/site.db"
+
+# Photo storage directory
+photo_storage: "photos"
+
+# SMTP relay for contact form emails
+smtp:
+  host: "smtp.gmail.com"
+  port: 587
+  user: "your@email.com"
+  password: "app-password"
+  recipient: "your@email.com"
+
+# Admin panel access
+admin:
+  username: "admin"
+  # Generate with: python manage.py hash-password
+  password_hash: ""
+  # IP networks allowed to access /admin (CIDR notation)
+  allowed_networks:
+    - "127.0.0.0/8"
+    - "10.0.0.0/8"
+    - "192.168.0.0/16"
+    - "100.64.0.0/10"    # Tailscale
