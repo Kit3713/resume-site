@@ -1,0 +1,39 @@
+# =============================================================
+# resume-site.container — Podman Quadlet unit file
+#
+# Install:
+#   cp resume-site.container ~/.config/containers/systemd/
+#   systemctl --user daemon-reload
+#   systemctl --user start resume-site
+#   systemctl --user enable resume-site
+#
+# Requires config.yaml at ~/resume-site/config.yaml
+# =============================================================
+
+[Unit]
+Description=resume-site portfolio engine
+After=network-online.target
+
+[Container]
+Image=ghcr.io/kit3713/resume-site:latest
+ContainerName=resume-site
+AutoUpdate=registry
+
+PublishPort=8080:8080
+
+Volume=%h/resume-site/config.yaml:/app/config.yaml:ro,Z
+Volume=resume-site-data:/app/data:Z
+Volume=resume-site-photos:/app/photos:Z
+
+HealthCmd=curl -f http://localhost:8080/ || exit 1
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=10s
+
+[Service]
+Restart=on-failure
+TimeoutStartSec=30
+
+[Install]
+WantedBy=default.target
