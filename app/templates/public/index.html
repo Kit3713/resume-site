@@ -26,11 +26,11 @@
             <div class="hero__badge hero__badge--{{ status }}">
                 <span class="hero__badge-dot"></span>
                 {% if status == 'available' %}
-                    Available for hire
+                    {{ _('Available for hire') }}
                 {% elif status == 'open' %}
-                    Open to opportunities
+                    {{ _('Open to opportunities') }}
                 {% else %}
-                    Not currently available
+                    {{ _('Not currently available') }}
                 {% endif %}
             </div>
             {% endif %}
@@ -46,8 +46,8 @@
             </p>
 
             <div class="hero__actions">
-                <a href="{{ url_for('contact.contact_page') }}" class="btn btn--primary">Get in Touch</a>
-                <a href="{{ url_for('public.portfolio') }}" class="btn btn--secondary">View Work</a>
+                <a href="{{ url_for('contact.contact_page') }}" class="btn btn--primary">{{ _('Get in Touch') }}</a>
+                <a href="{{ url_for('public.portfolio') }}" class="btn btn--secondary">{{ _('View Work') }}</a>
             </div>
         </div>
 
@@ -62,11 +62,11 @@
 <!-- About Section -->
 <section class="section" id="about">
     <div class="section__container">
-        <h2 class="section__heading">About</h2>
+        <h2 class="section__heading">{{ _('About') }}</h2>
         {% if about_block and about_block.content %}
         <div class="section__text section__text--wide">{{ about_block.content | safe }}</div>
         {% else %}
-        <p class="section__text">Content managed through admin panel.</p>
+        <p class="section__text">{{ _('Content managed through admin panel.') }}</p>
         {% endif %}
     </div>
 </section>
@@ -91,7 +91,7 @@
 {% if services %}
 <section class="section section--alt" id="services">
     <div class="section__container">
-        <h2 class="section__heading">Services</h2>
+        <h2 class="section__heading">{{ _('Services') }}</h2>
         <div class="services__grid services__grid--preview">
             {% for service in services[:4] %}
             <div class="service-card">
@@ -104,7 +104,7 @@
             {% endfor %}
         </div>
         <div class="section__cta">
-            <a href="{{ url_for('public.services') }}" class="btn btn--secondary">View All Services</a>
+            <a href="{{ url_for('public.services') }}" class="btn btn--secondary">{{ _('View All Services') }}</a>
         </div>
     </div>
 </section>
@@ -114,11 +114,11 @@
 {% if featured_photos %}
 <section class="section" id="portfolio">
     <div class="section__container">
-        <h2 class="section__heading">Featured Work</h2>
+        <h2 class="section__heading">{{ _('Featured Work') }}</h2>
         <div class="portfolio__featured portfolio__featured--home">
             {% for photo in featured_photos %}
             <div class="portfolio__item portfolio__item--featured">
-                <img class="portfolio__img" src="{{ url_for('public.serve_photo', storage_name=photo.storage_name) }}" alt="{{ photo.title or 'Portfolio image' }}" loading="lazy">
+                <img class="portfolio__img" src="{{ url_for('public.serve_photo', storage_name=photo.storage_name) }}" alt="{{ photo.title or _('Portfolio image') }}" loading="lazy">
                 {% if photo.title or photo.description %}
                 <div class="portfolio__overlay">
                     {% if photo.title %}<h3 class="portfolio__overlay-title">{{ photo.title }}</h3>{% endif %}
@@ -129,7 +129,7 @@
             {% endfor %}
         </div>
         <div class="section__cta">
-            <a href="{{ url_for('public.portfolio') }}" class="btn btn--secondary">View Full Portfolio</a>
+            <a href="{{ url_for('public.portfolio') }}" class="btn btn--secondary">{{ _('View Full Portfolio') }}</a>
         </div>
     </div>
 </section>
@@ -139,7 +139,7 @@
 {% if featured_reviews %}
 <section class="section section--alt" id="testimonials">
     <div class="section__container">
-        <h2 class="section__heading">What People Say</h2>
+        <h2 class="section__heading">{{ _('What People Say') }}</h2>
         <div class="testimonials__featured">
             {% for review in featured_reviews %}
             <div class="testimonial-card testimonial-card--featured">
@@ -160,7 +160,7 @@
             {% endfor %}
         </div>
         <div class="section__cta">
-            <a href="{{ url_for('public.testimonials') }}" class="btn btn--secondary">View All Testimonials</a>
+            <a href="{{ url_for('public.testimonials') }}" class="btn btn--secondary">{{ _('View All Testimonials') }}</a>
         </div>
     </div>
 </section>
@@ -169,10 +169,10 @@
 <!-- Contact CTA -->
 <section class="section" id="contact">
     <div class="section__container section__container--center">
-        <h2 class="section__heading">Let's Work Together</h2>
-        <p class="section__text">Have a project in mind or want to discuss opportunities? I'd love to hear from you.</p>
+        <h2 class="section__heading">{{ _("Let's Work Together") }}</h2>
+        <p class="section__text">{{ _("Have a project in mind or want to discuss opportunities? I'd love to hear from you.") }}</p>
         <div class="section__cta">
-            <a href="{{ url_for('contact.contact_page') }}" class="btn btn--primary">Get in Touch</a>
+            <a href="{{ url_for('contact.contact_page') }}" class="btn btn--primary">{{ _('Get in Touch') }}</a>
         </div>
     </div>
 </section>

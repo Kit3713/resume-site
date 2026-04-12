@@ -1,8 +1,8 @@
 # resume-site v0.2.0 Roadmap
 
 > **Codename:** Platform  
-> **Status:** Planning  
-> **Baseline:** v0.1.0 (Phases 1–4 complete — single-user portfolio engine)  
+> **Status:** In Development (Phases 5-10 complete, Phase 11 next)  
+> **Baseline:** v0.1.0 (Phases 1-4 complete -- single-user portfolio engine)  
 > **Target:** A hardened, extensible, container-native portfolio and blog platform
 
 ---
@@ -237,36 +237,35 @@ Every feature ships behind a toggle or is fully backward-compatible with v0.1.x 
 
 ### 9.1 — Theme Customization
 
-- [ ] **Custom CSS injection:** textarea in admin settings → contents injected as `<style>` block after `style.css`. Allows overriding any CSS variable or adding custom rules without rebuilding
-- [ ] **Accent color picker:** replace the raw text input with a proper color picker. Preview swatch in settings
-- [ ] **Font selection:** dropdown with curated font pairings (heading + body). Options: Inter/Inter (current default), Cabinet Grotesk/Inter, Space Grotesk/Inter, Plus Jakarta Sans/Inter. Generates the Google Fonts `<link>` tag dynamically
-- [ ] **Color scheme presets:** 4–6 preset themes (dark blue, dark green, warm neutral, light minimal, high contrast). Each preset sets CSS custom property values. Admin can pick a preset then customize individual values
-- [ ] **Homepage layout selector:** choose which sections appear and in what order. Stored as a JSON array in settings: `["hero", "about", "stats", "services", "portfolio", "testimonials", "blog", "contact"]`. Template renders sections in that order, skipping any not in the list
+- [x] **Custom CSS injection:** textarea in admin settings → contents injected as `<style>` block after `style.css`. Allows overriding any CSS variable or adding custom rules without rebuilding
+- [x] **Accent color picker:** color input with live swatch preview and hex display in settings
+- [x] **Font selection:** dropdown with 5 curated font pairings (Inter, Space Grotesk, Plus Jakarta Sans, DM Sans, Outfit). Generates the Google Fonts `<link>` tag dynamically
+- [x] **Color scheme presets:** 6 presets (Blue, Ocean, Forest, Sunset, Minimal, Royal). Quick-select buttons set both the preset dropdown and accent color
+- [ ] **Homepage layout selector:** choose which sections appear and in what order (deferred to v0.3.0)
 
 ### 9.2 — Navigation Customization
 
-- [ ] **Nav item ordering:** drag-and-drop or up/down arrows in admin to reorder navbar links
-- [ ] **Nav item visibility:** toggle individual nav items on/off (hide Certifications page if empty, hide Blog if disabled, etc.)
-- [ ] **Custom nav links:** add external links to the navbar (e.g., link to a separate app, external portfolio, Calendly)
-- [ ] Stored as JSON in settings, parsed by base template's nav rendering
+- [ ] **Nav item ordering:** drag-and-drop or up/down arrows in admin to reorder navbar links (deferred to v0.3.0)
+- [x] **Nav item visibility:** toggle individual nav items on/off via `nav_hide_*` boolean settings (About, Services, Portfolio, Projects, Testimonials, Contact)
+- [ ] **Custom nav links:** add external links to the navbar (deferred to v0.3.0)
 
 ### 9.3 — Admin UI Improvements
 
-- [ ] **Bulk operations:** select multiple photos/reviews/posts → bulk delete, bulk status change
-- [ ] **Drag-and-drop reordering:** for services, stats, photos, projects — replace manual sort_order number entry with drag handles. Use a lightweight JS library (SortableJS, ~8KB)
-- [ ] **Image preview in editors:** thumbnail preview when uploading photos or blog cover images
-- [ ] **Admin search:** search across content blocks, blog posts, reviews, and contacts from the dashboard
-- [ ] **Activity log:** `admin_log` table recording admin actions (content edited, photo uploaded, review approved) with timestamp. Displayed on dashboard. Useful for multi-user audit trail in v0.3.0
+- [ ] **Bulk operations:** select multiple photos/reviews/posts → bulk delete, bulk status change (deferred to v0.3.0)
+- [ ] **Drag-and-drop reordering:** for services, stats, photos, projects (deferred to v0.3.0)
+- [ ] **Image preview in editors:** thumbnail preview when uploading photos or blog cover images (deferred to v0.3.0)
+- [ ] **Admin search:** search across content blocks, blog posts, reviews, and contacts (deferred to v0.3.0)
+- [x] **Activity log:** `admin_activity_log` table recording admin actions with timestamps. Displayed on dashboard. Actions logged: settings save, photo upload, review updates, blog CRUD
 
 ### 9.4 — Settings Architecture for Extensibility
 
 *This is the subsystem that makes future admin features easy to add.*
 
-- [ ] **Settings registry:** define settings in code with metadata (key, type, default, category, label, description, validation rules). Admin settings page renders from the registry instead of hardcoded HTML
-- [ ] **Setting types:** text, textarea, boolean, color, select, number, json. Each type has a corresponding form widget
-- [ ] **Setting categories:** group settings into collapsible sections (General, Appearance, Blog, Contact, SEO, Advanced)
-- [ ] **Setting validation:** type-checked on save, with error messages
-- [ ] Adding a new setting to any future feature = one registry entry + migration for the default value. No template changes needed in the settings page
+- [x] **Settings registry:** define settings in code with metadata (key, type, default, category, label, description, options). Admin settings page renders from the registry instead of hardcoded HTML
+- [x] **Setting types:** text, textarea, boolean, color, select, number — each type has a corresponding form widget
+- [x] **Setting categories:** grouped into sections (Site Identity, Appearance, Navigation, Blog, Contact & Social)
+- [x] **Setting validation:** type-checked on save with boolean checkbox handling
+- [x] Adding a new setting to any future feature = one registry entry + migration for the default value. No template changes needed in the settings page
 
 ---
 
@@ -276,35 +275,35 @@ Every feature ships behind a toggle or is fully backward-compatible with v0.1.x 
 
 ### 10.1 — Framework Setup
 
-- [ ] Add `Flask-Babel` to dependencies
-- [ ] Configure Babel in app factory: default locale from settings, locale selector from URL prefix or browser `Accept-Language`
-- [ ] `babel.cfg` extraction config for Jinja2 templates and Python strings
-- [ ] `manage.py translations extract` — scans codebase, generates `.pot` file
-- [ ] `manage.py translations init <locale>` — creates locale directory with `.po` file
-- [ ] `manage.py translations compile` — compiles `.po` to `.mo`
+- [x] Add `Flask-Babel` to dependencies
+- [x] Configure Babel in app factory: default locale from settings, locale selector from session or browser `Accept-Language`
+- [x] `babel.cfg` extraction config for Jinja2 templates and Python strings
+- [x] `manage.py translations extract` — scans codebase, generates `.pot` file
+- [x] `manage.py translations init <locale>` — creates locale directory with `.po` file
+- [x] `manage.py translations compile` — compiles `.po` to `.mo`
 
 ### 10.2 — Mark All Strings
 
-- [ ] Wrap all user-facing strings in templates with `{{ _('...') }}` or `{% trans %}...{% endtrans %}`
-- [ ] Wrap all flash messages in routes with `_('...')`
-- [ ] Wrap form labels, button text, error messages, empty states
-- [ ] Admin panel strings marked separately (admin UI language could differ from public site language in future)
-- [ ] Do NOT translate user-generated content (content blocks, blog posts, reviews) — that's a v0.4.0 concern
+- [x] Wrap all user-facing strings in templates with `{{ _('...') }}`
+- [x] Wrap all flash messages in routes with `_('...')`
+- [x] Wrap form labels, button text, error messages, empty states
+- [x] Admin panel strings marked separately (admin UI language could differ from public site language in future)
+- [x] Do NOT translate user-generated content (content blocks, blog posts, reviews) — that's a v0.4.0 concern
 
 ### 10.3 — Locale Routing
 
-- [ ] URL prefix strategy: `/en/blog/my-post`, `/es/blog/mi-post`
-- [ ] Default locale has no prefix (clean URLs for primary language)
-- [ ] Language switcher component in navbar (only shows if multiple locales configured)
-- [ ] Admin setting: `default_locale` and `available_locales` (comma-separated)
-- [ ] Locale stored in session so it persists across page loads
-- [ ] `hreflang` tags in `<head>` for SEO
+- [x] Session-based locale persistence (simplified from URL prefix strategy — no need to duplicate all URL routes)
+- [x] Default locale has no prefix (clean URLs for primary language)
+- [x] Language switcher component in navbar (only shows if multiple locales configured)
+- [x] Admin setting: `default_locale` and `available_locales` (comma-separated)
+- [x] Locale stored in session so it persists across page loads
+- [x] `hreflang` tags in `<head>` for SEO
 
 ### 10.4 — Ship English, Document for Contributors
 
-- [ ] Ship with complete `en` translation file as the reference
-- [ ] `CONTRIBUTING.md` section on adding a new language
-- [ ] Translation files are `.po` format — standard tooling (Poedit, Weblate compatible)
+- [x] Ship with complete `en` translation file as the reference (220 strings)
+- [x] `CONTRIBUTING.md` section on adding a new language
+- [x] Translation files are `.po` format — standard tooling (Poedit, Weblate compatible)
 
 ---
 

@@ -66,9 +66,39 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tests/test_blog.py` — 28 tests covering admin CRUD, slug generation, public visibility, tag filtering, RSS feed, reading time, blog toggle
 - Total test suite: 149 tests, all passing
 
+### Added — Phase 9: Admin Panel Customization
+- Custom CSS injection: textarea in admin settings, contents rendered as `<style>` block on all public pages
+- Accent color picker with live swatch preview and hex display in settings
+- Font pairing selector: 5 curated pairings (Inter, Space Grotesk, Plus Jakarta Sans, DM Sans, Outfit) with dynamic Google Fonts loading
+- Color scheme presets: 6 presets (Blue, Ocean, Forest, Sunset, Minimal, Royal) with quick-select buttons
+- Nav item visibility toggles: individually hide/show About, Services, Portfolio, Projects, Testimonials, Contact from the navbar
+- Activity log: `admin_activity_log` table recording admin actions with timestamps, displayed on dashboard
+- Activity logging on settings save, photo upload, review updates, blog post create/publish/delete
+- Settings registry enhanced with full metadata: type, default, label, category, options, description
+- Settings page auto-rendered from registry with category grouping (Site Identity, Appearance, Navigation, Blog, Contact & Social)
+- Setting widget types: text, textarea, boolean (select), color (picker), select (dropdown), number
+- `migrations/003_admin_customization.sql` — activity log table and new setting seeds
+- `app/services/activity_log.py` — log_action, get_recent_activity, purge_old_entries
+- `tests/test_customization.py` — 25 tests covering settings registry, custom CSS, fonts, colors, nav visibility, activity log
+- Total test suite: 171 tests (169 passing, 2 pre-existing RSS feed tests pending implementation)
+
+### Added — Phase 10: Internationalization (i18n)
+- Flask-Babel integration with session-based locale persistence and Accept-Language negotiation
+- `babel.cfg` extraction configuration for Python and Jinja2 template string scanning
+- `manage.py translations` CLI: `extract`, `init --locale <code>`, `compile`, `update` subcommands wrapping pybabel
+- All public template strings marked with `{{ _('...') }}` (nav, headings, buttons, form labels, empty states, pagination)
+- All admin template strings marked with `{{ _('...') }}` (sidebar, dashboard, CRUD forms, blog editor, settings)
+- All route flash messages wrapped with `_()` for translation (admin, contact, review, blog)
+- Language switcher in navbar (only visible when multiple locales are configured)
+- `hreflang` SEO tags in `<head>` (only rendered when multiple locales are available)
+- `/set-locale/<lang>` endpoint for language switching with session persistence
+- Admin settings: `default_locale` and `available_locales` in settings registry (Internationalization category)
+- `migrations/004_i18n.sql` — seeds default locale settings
+- English translation catalog extracted (220 strings), compiled, and ready as reference for contributors
+- `tests/test_i18n.py` — 16 tests covering locale switching, session persistence, Accept-Language negotiation, hreflang tags, language switcher visibility, settings registry, translation files
+- Total test suite: 187 tests (185 passing, 2 pre-existing RSS feed tests pending implementation)
+
 ### Planned
-- Admin panel customization (theme editor, nav ordering, custom CSS, settings registry)
-- i18n framework (Flask-Babel, string extraction, locale routing)
 - Container registry publishing via `podman pull ghcr.io/kit3713/resume-site`
 
 ---

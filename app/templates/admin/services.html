@@ -1,17 +1,17 @@
 {# Services Manager — Add, edit, reorder, toggle visibility, and delete service cards. #}
 {% extends "admin/base_admin.html" %}
 
-{% block title %}Services{% endblock %}
+{% block title %}{{ _('Services') }}{% endblock %}
 
 {% block content %}
 <div class="admin-page">
     <div class="admin-page__header">
-        <h1 class="admin-page__title">Services</h1>
+        <h1 class="admin-page__title">{{ _('Services') }}</h1>
     </div>
 
     <!-- Add Service -->
     <div class="admin-section">
-        <h2 class="admin-section__title">Add Service</h2>
+        <h2 class="admin-section__title">{{ _('Add Service') }}</h2>
         <form method="POST" action="{{ url_for('admin.services_add') }}" class="admin-form">
             <div class="admin-form-grid">
                 <div class="form-group">
@@ -31,14 +31,14 @@
                     <textarea name="description" class="form-input form-textarea" rows="3"></textarea>
                 </div>
             </div>
-            <button type="submit" class="btn btn--primary btn--sm">Add Service</button>
+            <button type="submit" class="btn btn--primary btn--sm">{{ _('Add Service') }}</button>
         </form>
     </div>
 
     <!-- Service List -->
     {% if services %}
     <div class="admin-section">
-        <h2 class="admin-section__title">All Services ({{ services|length }})</h2>
+        <h2 class="admin-section__title">{{ _('All Services') }} ({{ services|length }})</h2>
         {% for service in services %}
         <div class="admin-list-item">
             <form method="POST" action="{{ url_for('admin.services_edit', service_id=service.id) }}" class="admin-form admin-form--compact">
@@ -57,18 +57,18 @@
                     </div>
                 </div>
                 <div class="admin-list-item__actions">
-                    <label class="admin-checkbox"><input type="checkbox" name="visible" {{ 'checked' if service.visible }}> Visible</label>
-                    <button type="submit" class="btn btn--secondary btn--sm">Save</button>
+                    <label class="admin-checkbox"><input type="checkbox" name="visible" {{ 'checked' if service.visible }}> {{ _('Visible') }}</label>
+                    <button type="submit" class="btn btn--secondary btn--sm">{{ _('Save') }}</button>
                 </div>
             </form>
             <form method="POST" action="{{ url_for('admin.services_delete', service_id=service.id) }}" style="display:inline">
-                <button type="submit" class="btn btn--danger btn--sm" onclick="return confirm('Delete this service?')">Delete</button>
+                <button type="submit" class="btn btn--danger btn--sm" onclick="return confirm('{{ _('Delete this service?') }}')">{{ _('Delete') }}</button>
             </form>
         </div>
         {% endfor %}
     </div>
     {% else %}
-    <p class="admin-empty">No services added yet.</p>
+    <p class="admin-empty">{{ _('No services added yet.') }}</p>
     {% endif %}
 </div>
 {% endblock %}

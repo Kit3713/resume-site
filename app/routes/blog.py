@@ -35,6 +35,11 @@ def _check_blog_enabled(db):
         abort(404)
 
 
+def _attach_tags(db, posts):
+    """Attach tag lists to each post for template rendering."""
+    return [{'post': p, 'tags': get_tags_for_post(db, p['id'])} for p in posts]
+
+
 @blog_bp.route('/blog')
 def blog_index():
     """Paginated list of published blog posts, newest first."""
@@ -49,17 +54,11 @@ def blog_index():
     posts, total = get_published_posts(db, page=page, per_page=per_page)
     total_pages = max(1, math.ceil(total / per_page))
 
-    # Attach tags to each post for display
-    posts_with_tags = []
-    for post in posts:
-        tags = get_tags_for_post(db, post['id'])
-        posts_with_tags.append({'post': post, 'tags': tags})
-
     blog_title = get_setting(db, 'blog_title', 'Blog')
     show_reading_time = get_setting(db, 'show_reading_time', 'true') == 'true'
 
     return render_template('public/blog_index.html',
-                           posts=posts_with_tags,
+                           posts=_attach_tags(db, posts),
                            blog_title=blog_title,
                            show_reading_time=show_reading_time,
                            page=page,
@@ -117,16 +116,11 @@ def blog_tag(tag_slug):
     posts, total = get_posts_by_tag(db, tag_slug, page=page, per_page=per_page)
     total_pages = max(1, math.ceil(total / per_page))
 
-    posts_with_tags = []
-    for post in posts:
-        tags = get_tags_for_post(db, post['id'])
-        posts_with_tags.append({'post': post, 'tags': tags})
-
     blog_title = get_setting(db, 'blog_title', 'Blog')
     show_reading_time = get_setting(db, 'show_reading_time', 'true') == 'true'
 
     return render_template('public/blog_index.html',
-                           posts=posts_with_tags,
+                           posts=_attach_tags(db, posts),
                            blog_title=blog_title,
                            show_reading_time=show_reading_time,
                            page=page,

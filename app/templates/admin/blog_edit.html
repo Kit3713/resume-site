@@ -1,7 +1,7 @@
 {# Blog Post Editor — Create or edit a blog post with Quill.js rich text editor. #}
 {% extends "admin/base_admin.html" %}
 
-{% block title %}{{ 'Edit' if post else 'New' }} Post{% endblock %}
+{% block title %}{{ (_('Edit') if post else _('New')) }} {{ _('Post') }}{% endblock %}
 
 {% block head_extra %}
 <link href="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.snow.css" rel="stylesheet">
@@ -10,18 +10,18 @@
 {% block content %}
 <div class="admin-page">
     <div class="admin-page__header">
-        <h1 class="admin-page__title">{{ 'Edit' if post else 'New' }} Post</h1>
-        <a href="{{ url_for('blog_admin.blog_list') }}" class="btn btn--secondary btn--sm">Back</a>
+        <h1 class="admin-page__title">{{ (_('Edit') if post else _('New')) }} {{ _('Post') }}</h1>
+        <a href="{{ url_for('blog_admin.blog_list') }}" class="btn btn--secondary btn--sm">{{ _('Back') }}</a>
     </div>
 
     {% if post %}
     <div class="admin-post-status">
-        Status: <span class="admin-badge admin-badge--{{ 'success' if post.status == 'published' else ('warning' if post.status == 'draft' else 'muted') }}">{{ post.status }}</span>
+        {{ _('Status') }}: <span class="admin-badge admin-badge--{{ 'success' if post.status == 'published' else ('warning' if post.status == 'draft' else 'muted') }}">{{ post.status }}</span>
         {% if post.published_at %}
-        — Published {{ post.published_at[:10] }}
+        — {{ _('Published') }} {{ post.published_at[:10] }}
         {% endif %}
         {% if post.reading_time %}
-        — {{ post.reading_time }} min read
+        — {{ post.reading_time }} {{ _('min read') }}
         {% endif %}
     </div>
     {% endif %}
@@ -29,29 +29,29 @@
     <form method="POST" class="admin-form" id="blogForm">
         <div class="admin-form-grid">
             <div class="form-group form-group--full">
-                <label class="form-label" for="title">Title</label>
+                <label class="form-label" for="title">{{ _('Title') }}</label>
                 <input type="text" id="title" name="title" class="form-input"
                        value="{{ post.title if post else '' }}" required
-                       placeholder="Post title">
+                       placeholder="{{ _('Post title') }}">
             </div>
 
             {% if post %}
             <div class="form-group form-group--full">
-                <label class="form-label" for="slug">Slug (URL path)</label>
+                <label class="form-label" for="slug">{{ _('Slug (URL path)') }}</label>
                 <input type="text" id="slug" name="slug" class="form-input"
                        value="{{ post.slug if post else '' }}"
-                       placeholder="auto-generated-from-title">
+                       placeholder="{{ _('auto-generated-from-title') }}">
             </div>
             {% endif %}
 
             <div class="form-group form-group--full">
-                <label class="form-label" for="summary">Summary</label>
+                <label class="form-label" for="summary">{{ _('Summary') }}</label>
                 <textarea id="summary" name="summary" class="form-input form-textarea" rows="2"
-                          placeholder="Brief description shown on the blog listing page">{{ post.summary if post else '' }}</textarea>
+                          placeholder="{{ _('Brief description shown on the blog listing page') }}">{{ post.summary if post else '' }}</textarea>
             </div>
 
             <div class="form-group form-group--full">
-                <label class="form-label">Content</label>
+                <label class="form-label">{{ _('Content') }}</label>
                 <input type="hidden" name="content_format" id="contentFormat"
                        value="{{ post.content_format if post else 'html' }}">
                 <div id="editor" class="admin-editor admin-editor--blog">{{ post.content | safe if post else '' }}</div>
@@ -59,46 +59,46 @@
             </div>
 
             <div class="form-group">
-                <label class="form-label" for="author">Author</label>
+                <label class="form-label" for="author">{{ _('Author') }}</label>
                 <input type="text" id="author" name="author" class="form-input"
-                       value="{{ post.author if post else '' }}" placeholder="Author name">
+                       value="{{ post.author if post else '' }}" placeholder="{{ _('Author name') }}">
             </div>
 
             <div class="form-group">
-                <label class="form-label" for="tags">Tags (comma-separated)</label>
+                <label class="form-label" for="tags">{{ _('Tags (comma-separated)') }}</label>
                 <input type="text" id="tags" name="tags" class="form-input"
-                       value="{{ tags_str }}" placeholder="e.g., python, devops, tutorial">
+                       value="{{ tags_str }}" placeholder="{{ _('e.g., python, devops, tutorial') }}">
             </div>
 
             <div class="form-group">
-                <label class="form-label" for="cover_image">Cover Image URL</label>
+                <label class="form-label" for="cover_image">{{ _('Cover Image URL') }}</label>
                 <input type="text" id="cover_image" name="cover_image" class="form-input"
                        value="{{ post.cover_image if post else '' }}" placeholder="/photos/abc123.jpg">
             </div>
 
             <div class="form-group">
-                <label class="form-label" for="meta_description">Meta Description (SEO)</label>
+                <label class="form-label" for="meta_description">{{ _('Meta Description (SEO)') }}</label>
                 <input type="text" id="meta_description" name="meta_description" class="form-input"
                        value="{{ post.meta_description if post else '' }}"
-                       placeholder="Description for search engines" maxlength="160">
+                       placeholder="{{ _('Description for search engines') }}" maxlength="160">
             </div>
         </div>
 
         <div class="admin-form__actions">
             <label class="admin-checkbox">
                 <input type="checkbox" name="featured" {{ 'checked' if post and post.featured }}>
-                Featured on landing page
+                {{ _('Featured on landing page') }}
             </label>
         </div>
 
         <div class="admin-form__buttons">
-            <button type="submit" name="action" value="save" class="btn btn--secondary">Save Draft</button>
+            <button type="submit" name="action" value="save" class="btn btn--secondary">{{ _('Save Draft') }}</button>
             {% if post and post.status == 'published' %}
-            <button type="submit" name="action" value="save" class="btn btn--primary">Save</button>
-            <button type="submit" name="action" value="unpublish" class="btn btn--warning btn--sm">Unpublish</button>
-            <button type="submit" name="action" value="archive" class="btn btn--muted btn--sm">Archive</button>
+            <button type="submit" name="action" value="save" class="btn btn--primary">{{ _('Save') }}</button>
+            <button type="submit" name="action" value="unpublish" class="btn btn--warning btn--sm">{{ _('Unpublish') }}</button>
+            <button type="submit" name="action" value="archive" class="btn btn--muted btn--sm">{{ _('Archive') }}</button>
             {% else %}
-            <button type="submit" name="action" value="publish" class="btn btn--primary">Publish</button>
+            <button type="submit" name="action" value="publish" class="btn btn--primary">{{ _('Publish') }}</button>
             {% endif %}
         </div>
     </form>

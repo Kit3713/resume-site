@@ -1,17 +1,17 @@
 {# Photo Manager — Upload, edit metadata, set display tiers, and delete photos. #}
 {% extends "admin/base_admin.html" %}
 
-{% block title %}Photos{% endblock %}
+{% block title %}{{ _('Photos') }}{% endblock %}
 
 {% block content %}
 <div class="admin-page">
     <div class="admin-page__header">
-        <h1 class="admin-page__title">Photo Manager</h1>
+        <h1 class="admin-page__title">{{ _('Photo Manager') }}</h1>
     </div>
 
     <!-- Upload Form -->
     <div class="admin-section">
-        <h2 class="admin-section__title">Upload New Photo</h2>
+        <h2 class="admin-section__title">{{ _('Upload New Photo') }}</h2>
         <form method="POST" action="{{ url_for('admin.photos_upload') }}" enctype="multipart/form-data" class="admin-form admin-form--inline">
             <div class="form-group">
                 <input type="file" name="photo" accept="image/*" class="form-input" required>
@@ -29,14 +29,14 @@
                     <option value="hidden">Hidden</option>
                 </select>
             </div>
-            <button type="submit" class="btn btn--primary btn--sm">Upload</button>
+            <button type="submit" class="btn btn--primary btn--sm">{{ _('Upload') }}</button>
         </form>
     </div>
 
     <!-- Photo Grid -->
     {% if photos %}
     <div class="admin-section">
-        <h2 class="admin-section__title">All Photos ({{ photos|length }})</h2>
+        <h2 class="admin-section__title">{{ _('All Photos') }} ({{ photos|length }})</h2>
         <div class="admin-photos-grid">
             {% for photo in photos %}
             <div class="admin-photo-card">
@@ -56,18 +56,18 @@
                     </select>
                     <input type="number" name="sort_order" value="{{ photo.sort_order }}" class="form-input" placeholder="Sort order">
                     <div class="admin-photo-card__actions">
-                        <button type="submit" class="btn btn--secondary btn--sm">Save</button>
+                        <button type="submit" class="btn btn--secondary btn--sm">{{ _('Save') }}</button>
                     </div>
                 </form>
                 <form method="POST" action="{{ url_for('admin.photos_delete', photo_id=photo.id) }}" class="admin-photo-card__delete">
-                    <button type="submit" class="btn btn--danger btn--sm" onclick="return confirm('Delete this photo?')">Delete</button>
+                    <button type="submit" class="btn btn--danger btn--sm" onclick="return confirm('{{ _('Delete this photo?') }}')">{{ _('Delete') }}</button>
                 </form>
             </div>
             {% endfor %}
         </div>
     </div>
     {% else %}
-    <p class="admin-empty">No photos uploaded yet.</p>
+    <p class="admin-empty">{{ _('No photos uploaded yet.') }}</p>
     {% endif %}
 </div>
 {% endblock %}

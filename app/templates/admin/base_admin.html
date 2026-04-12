@@ -22,7 +22,15 @@
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    {% set font_key = site_settings.get('font_pairing', 'inter') %}
+    {% set font_families = {
+        'inter': 'Inter:wght@400;500;600;700;800',
+        'space-grotesk': 'Inter:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700',
+        'plus-jakarta': 'Plus+Jakarta+Sans:wght@400;500;600;700;800',
+        'dm-sans': 'DM+Sans:wght@400;500;600;700',
+        'outfit': 'Inter:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800',
+    } %}
+    <link href="https://fonts.googleapis.com/css2?family={{ font_families.get(font_key, font_families['inter']) }}&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     {% block head_extra %}{% endblock %}
 </head>
@@ -33,19 +41,19 @@
                 <a href="{{ url_for('admin.dashboard') }}">Admin</a>
             </div>
             <nav class="admin-sidebar__nav">
-                <a href="{{ url_for('admin.dashboard') }}" class="admin-sidebar__link {% if request.endpoint == 'admin.dashboard' %}admin-sidebar__link--active{% endif %}">Dashboard</a>
-                <a href="{{ url_for('admin.content') }}" class="admin-sidebar__link {% if 'content' in request.endpoint %}admin-sidebar__link--active{% endif %}">Content</a>
-                <a href="{{ url_for('admin.photos') }}" class="admin-sidebar__link {% if 'photos' in request.endpoint %}admin-sidebar__link--active{% endif %}">Photos</a>
-                <a href="{{ url_for('admin.services') }}" class="admin-sidebar__link {% if request.endpoint == 'admin.services' %}admin-sidebar__link--active{% endif %}">Services</a>
-                <a href="{{ url_for('admin.stats') }}" class="admin-sidebar__link {% if 'stats' in request.endpoint %}admin-sidebar__link--active{% endif %}">Stats</a>
-                <a href="{{ url_for('admin.reviews') }}" class="admin-sidebar__link {% if 'reviews' in request.endpoint %}admin-sidebar__link--active{% endif %}">Reviews</a>
-                <a href="{{ url_for('admin.tokens') }}" class="admin-sidebar__link {% if 'tokens' in request.endpoint %}admin-sidebar__link--active{% endif %}">Tokens</a>
-                <a href="{{ url_for('blog_admin.blog_list') }}" class="admin-sidebar__link {% if 'blog' in request.endpoint %}admin-sidebar__link--active{% endif %}">Blog</a>
-                <a href="{{ url_for('admin.settings') }}" class="admin-sidebar__link {% if request.endpoint == 'admin.settings' %}admin-sidebar__link--active{% endif %}">Settings</a>
+                <a href="{{ url_for('admin.dashboard') }}" class="admin-sidebar__link {% if request.endpoint == 'admin.dashboard' %}admin-sidebar__link--active{% endif %}">{{ _('Dashboard') }}</a>
+                <a href="{{ url_for('admin.content') }}" class="admin-sidebar__link {% if 'content' in request.endpoint %}admin-sidebar__link--active{% endif %}">{{ _('Content') }}</a>
+                <a href="{{ url_for('admin.photos') }}" class="admin-sidebar__link {% if 'photos' in request.endpoint %}admin-sidebar__link--active{% endif %}">{{ _('Photos') }}</a>
+                <a href="{{ url_for('admin.services') }}" class="admin-sidebar__link {% if request.endpoint == 'admin.services' %}admin-sidebar__link--active{% endif %}">{{ _('Services') }}</a>
+                <a href="{{ url_for('admin.stats') }}" class="admin-sidebar__link {% if 'stats' in request.endpoint %}admin-sidebar__link--active{% endif %}">{{ _('Stats') }}</a>
+                <a href="{{ url_for('admin.reviews') }}" class="admin-sidebar__link {% if 'reviews' in request.endpoint %}admin-sidebar__link--active{% endif %}">{{ _('Reviews') }}</a>
+                <a href="{{ url_for('admin.tokens') }}" class="admin-sidebar__link {% if 'tokens' in request.endpoint %}admin-sidebar__link--active{% endif %}">{{ _('Tokens') }}</a>
+                <a href="{{ url_for('blog_admin.blog_list') }}" class="admin-sidebar__link {% if 'blog' in request.endpoint %}admin-sidebar__link--active{% endif %}">{{ _('Blog') }}</a>
+                <a href="{{ url_for('admin.settings') }}" class="admin-sidebar__link {% if request.endpoint == 'admin.settings' %}admin-sidebar__link--active{% endif %}">{{ _('Settings') }}</a>
             </nav>
             <div class="admin-sidebar__footer">
-                <a href="{{ url_for('public.index') }}" class="admin-sidebar__link">View Site</a>
-                <a href="{{ url_for('admin.logout') }}" class="admin-sidebar__link">Logout</a>
+                <a href="{{ url_for('public.index') }}" class="admin-sidebar__link">{{ _('View Site') }}</a>
+                <a href="{{ url_for('admin.logout') }}" class="admin-sidebar__link">{{ _('Logout') }}</a>
             </div>
         </aside>
 

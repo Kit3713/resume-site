@@ -1,21 +1,21 @@
 {# Blog Manager — List, filter, and manage blog posts. #}
 {% extends "admin/base_admin.html" %}
 
-{% block title %}Blog{% endblock %}
+{% block title %}{{ _('Blog') }}{% endblock %}
 
 {% block content %}
 <div class="admin-page">
     <div class="admin-page__header">
-        <h1 class="admin-page__title">Blog Posts</h1>
-        <a href="{{ url_for('blog_admin.blog_new') }}" class="btn btn--primary btn--sm">New Post</a>
+        <h1 class="admin-page__title">{{ _('Blog Posts') }}</h1>
+        <a href="{{ url_for('blog_admin.blog_new') }}" class="btn btn--primary btn--sm">{{ _('New Post') }}</a>
     </div>
 
     <!-- Status Filter Tabs -->
     <div class="admin-tabs">
-        <a href="{{ url_for('blog_admin.blog_list') }}" class="admin-tab {{ 'admin-tab--active' if not status_filter }}">All</a>
-        <a href="{{ url_for('blog_admin.blog_list', status='draft') }}" class="admin-tab {{ 'admin-tab--active' if status_filter == 'draft' }}">Drafts</a>
-        <a href="{{ url_for('blog_admin.blog_list', status='published') }}" class="admin-tab {{ 'admin-tab--active' if status_filter == 'published' }}">Published</a>
-        <a href="{{ url_for('blog_admin.blog_list', status='archived') }}" class="admin-tab {{ 'admin-tab--active' if status_filter == 'archived' }}">Archived</a>
+        <a href="{{ url_for('blog_admin.blog_list') }}" class="admin-tab {{ 'admin-tab--active' if not status_filter }}">{{ _('All') }}</a>
+        <a href="{{ url_for('blog_admin.blog_list', status='draft') }}" class="admin-tab {{ 'admin-tab--active' if status_filter == 'draft' }}">{{ _('Drafts') }}</a>
+        <a href="{{ url_for('blog_admin.blog_list', status='published') }}" class="admin-tab {{ 'admin-tab--active' if status_filter == 'published' }}">{{ _('Published') }}</a>
+        <a href="{{ url_for('blog_admin.blog_list', status='archived') }}" class="admin-tab {{ 'admin-tab--active' if status_filter == 'archived' }}">{{ _('Archived') }}</a>
     </div>
 
     {% if posts %}
@@ -45,9 +45,9 @@
                 {% endif %}
             </div>
             <div class="admin-list-item__actions">
-                <a href="{{ url_for('blog_admin.blog_edit', post_id=post.id) }}" class="btn btn--secondary btn--sm">Edit</a>
+                <a href="{{ url_for('blog_admin.blog_edit', post_id=post.id) }}" class="btn btn--secondary btn--sm">{{ _('Edit') }}</a>
                 <form method="POST" action="{{ url_for('blog_admin.blog_delete', post_id=post.id) }}" style="display:inline">
-                    <button type="submit" class="btn btn--danger btn--sm" onclick="return confirm('Delete this post permanently?')">Delete</button>
+                    <button type="submit" class="btn btn--danger btn--sm" onclick="return confirm('{{ _('Delete this post permanently?') }}')">{{ _('Delete') }}</button>
                 </form>
             </div>
         </div>

@@ -16,6 +16,7 @@ Flow:
 """
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask_babel import gettext as _
 
 from app.db import get_db
 from app.models import create_review, mark_token_used
@@ -59,7 +60,7 @@ def review_form(token):
 
         # Validate required fields
         if not reviewer_name or not message:
-            flash('Name and message are required.', 'error')
+            flash(_('Name and message are required.'), 'error')
             return render_template('public/review.html', error=None, token_data=token_row)
 
         # Create the review with 'pending' status (awaiting admin approval)
@@ -77,7 +78,7 @@ def review_form(token):
         # Mark the token as used so it cannot be resubmitted
         mark_token_used(db, token_row['id'])
 
-        flash('Thank you! Your review has been submitted for approval.', 'success')
+        flash(_('Thank you! Your review has been submitted for approval.'), 'success')
         return redirect(url_for('public.index'))
 
     # GET request — render the form with token data for pre-filling

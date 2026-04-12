@@ -1,28 +1,28 @@
 {# Admin Login — Uses the public base.html (no sidebar) for a clean login experience. #}
 {% extends "base.html" %}
 
-{% block title %}Admin Login — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
+{% block title %}{{ _('Admin Login') }} — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
 
 {% block content %}
 <section class="admin-login">
     <div class="admin-login__container">
-        <h1 class="admin-login__title">Admin Login</h1>
+        <h1 class="admin-login__title">{{ _('Admin Login') }}</h1>
 
         <form method="POST" class="admin-login__form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
-                <label for="username" class="form-label">Username</label>
+                <label for="username" class="form-label">{{ _('Username') }}</label>
                 <input type="text" id="username" name="username" class="form-input"
                        required autocomplete="username">
             </div>
 
             <div class="form-group">
-                <label for="password" class="form-label">Password</label>
+                <label for="password" class="form-label">{{ _('Password') }}</label>
                 <input type="password" id="password" name="password" class="form-input"
                        required autocomplete="current-password">
             </div>
 
-            <button type="submit" class="btn btn--primary btn--full">Sign In</button>
+            <button type="submit" class="btn btn--primary btn--full">{{ _('Sign In') }}</button>
         </form>
     </div>
 </section>

@@ -1,37 +1,37 @@
 {# Admin Dashboard — Analytics overview with page views, popular pages, pending reviews, and recent messages. #}
 {% extends "admin/base_admin.html" %}
 
-{% block title %}Dashboard{% endblock %}
+{% block title %}{{ _('Dashboard') }}{% endblock %}
 
 {% block content %}
 <div class="admin-page">
-    <h1 class="admin-page__title">Dashboard</h1>
+    <h1 class="admin-page__title">{{ _('Dashboard') }}</h1>
 
     <div class="admin-dashboard__grid">
         <div class="admin-card">
-            <h3 class="admin-card__title">Total Page Views</h3>
+            <h3 class="admin-card__title">{{ _('Total Page Views') }}</h3>
             <p class="admin-card__value">{{ total_views }}</p>
         </div>
         <div class="admin-card">
-            <h3 class="admin-card__title">Views (7 days)</h3>
+            <h3 class="admin-card__title">{{ _('Views (7 days)') }}</h3>
             <p class="admin-card__value">{{ recent_views }}</p>
         </div>
         <div class="admin-card">
-            <h3 class="admin-card__title">Pending Reviews</h3>
+            <h3 class="admin-card__title">{{ _('Pending Reviews') }}</h3>
             <p class="admin-card__value">{{ pending_reviews }}</p>
         </div>
         <div class="admin-card">
-            <h3 class="admin-card__title">Unread Messages</h3>
+            <h3 class="admin-card__title">{{ _('Unread Messages') }}</h3>
             <p class="admin-card__value">{{ unread_contacts }}</p>
         </div>
     </div>
 
     {% if popular_pages %}
     <div class="admin-section">
-        <h2 class="admin-section__title">Popular Pages</h2>
+        <h2 class="admin-section__title">{{ _('Popular Pages') }}</h2>
         <table class="admin-table">
             <thead>
-                <tr><th>Page</th><th>Views</th></tr>
+                <tr><th>{{ _('Page') }}</th><th>{{ _('Views') }}</th></tr>
             </thead>
             <tbody>
                 {% for page in popular_pages %}
@@ -44,10 +44,10 @@
 
     {% if recent_contacts %}
     <div class="admin-section">
-        <h2 class="admin-section__title">Recent Messages</h2>
+        <h2 class="admin-section__title">{{ _('Recent Messages') }}</h2>
         <table class="admin-table">
             <thead>
-                <tr><th>Name</th><th>Email</th><th>Message</th><th>Date</th></tr>
+                <tr><th>{{ _('Name') }}</th><th>{{ _('Email') }}</th><th>{{ _('Message') }}</th><th>{{ _('Date') }}</th></tr>
             </thead>
             <tbody>
                 {% for msg in recent_contacts %}
@@ -56,6 +56,27 @@
                     <td>{{ msg.email }}</td>
                     <td>{{ msg.message[:80] }}{{ '...' if msg.message|length > 80 else '' }}</td>
                     <td>{{ msg.created_at[:10] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if activity %}
+    <div class="admin-section">
+        <h2 class="admin-section__title">{{ _('Recent Activity') }}</h2>
+        <table class="admin-table">
+            <thead>
+                <tr><th>{{ _('Action') }}</th><th>{{ _('Category') }}</th><th>{{ _('Detail') }}</th><th>{{ _('Date') }}</th></tr>
+            </thead>
+            <tbody>
+                {% for entry in activity %}
+                <tr>
+                    <td>{{ entry.action }}</td>
+                    <td><span class="tag">{{ entry.category }}</span></td>
+                    <td>{{ entry.detail[:60] }}{{ '...' if entry.detail|length > 60 else '' }}</td>
+                    <td>{{ entry.created_at[:16] | replace('T', ' ') }}</td>
                 </tr>
                 {% endfor %}
             </tbody>

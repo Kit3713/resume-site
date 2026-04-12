@@ -28,6 +28,7 @@ import secrets
 from datetime import datetime, timezone
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app, session
+from flask_babel import gettext as _
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash
 
@@ -41,7 +42,8 @@ from app.services.service_items import (
     get_all_services, add_service, update_service, delete_service,
 )
 from app.services.stats import get_all_stats, add_stat, update_stat, delete_stat
-from app.services.settings_svc import get_all as get_all_settings_svc, save_many as save_settings
+from app.services.settings_svc import get_all as get_all_settings_svc, save_many as save_settings, get_grouped_settings
+from app.services.activity_log import log_action, get_recent_activity
 
 admin_bp = Blueprint('admin', __name__, template_folder='../templates')
 
@@ -127,7 +129,7 @@ def check_session_timeout():
             if elapsed > timeout_minutes:
                 logout_user()
                 session.clear()
-                flash('Session expired due to inactivity. Please log in again.', 'error')
+                flash(_('Session expired due to inactivity. Please log in again.'), 'error')
                 return redirect(url_for('admin.login'))
         except (ValueError, TypeError):
             pass  # Malformed timestamp — let the request proceed
@@ -166,7 +168,7 @@ def login():
             next_page = request.args.get('next')
             return redirect(next_page or url_for('admin.dashboard'))
 
-        flash('Invalid credentials.', 'error')
+        flash(_('Invalid credentials.'), 'error')
 
     return render_template('admin/login.html')
 
@@ -213,13 +215,20 @@ def dashboard():
         "SELECT COUNT(*) as cnt FROM contact_submissions WHERE is_spam = 0 AND read = 0"
     ).fetchone()['cnt']
 
+    # Activity log
+    try:
+        activity = get_recent_activity(db, limit=10)
+    except Exception:
+        activity = []  # Table may not exist until migration 003 is applied
+
     return render_template('admin/dashboard.html',
                            total_views=total_views,
                            recent_views=recent_views,
                            popular_pages=popular_pages,
                            pending_reviews=pending_reviews,
                            recent_contacts=recent_contacts,
-                           unread_contacts=unread_contacts)
+                           unread_contacts=unread_contacts,
+                           activity=activity)
 
 
 # ============================================================
@@ -251,7 +260,7 @@ def content_edit(slug):
         title = request.form.get('title', '')
         content_html = request.form.get('content', '')
         save_block(db, slug, title, content_html, create_if_missing=True)
-        flash('Content saved.', 'success')
+        flash(_('Content saved.'), 'success')
         return redirect(url_for('admin.content'))
 
     return render_template('admin/content_edit.html', block=block, slug=slug)
@@ -268,7 +277,7 @@ def content_new():
         content_html = request.form.get('content', '')
         if slug:
             create_block(db, slug, title, content_html)
-            flash('Content block created.', 'success')
+            flash(_('Content block created.'), 'success')
         return redirect(url_for('admin.content'))
     return render_template('admin/content_edit.html', block=None, slug='')
 
@@ -300,13 +309,13 @@ def photos_upload():
     db = get_db()
     file = request.files.get('photo')
     if not file or not file.filename:
-        flash('No file selected.', 'error')
+        flash(_('No file selected.'), 'error')
         return redirect(url_for('admin.photos'))
 
     from app.services.photos import process_upload
     result = process_upload(file)
     if result is None:
-        flash('Invalid file type. Allowed: jpg, png, gif, webp.', 'error')
+        flash(_('Invalid file type. Allowed: jpg, png, gif, webp.'), 'error')
         return redirect(url_for('admin.photos'))
     if isinstance(result, str):
         flash(result, 'error')
@@ -327,7 +336,11 @@ def photos_upload():
          title, description, category, display_tier),
     )
     db.commit()
-    flash('Photo uploaded successfully.', 'success')
+    try:
+        log_action(db, 'Uploaded photo', 'photos', title or result['filename'])
+    except Exception:
+        pass
+    flash(_('Photo uploaded successfully.'), 'success')
     return redirect(url_for('admin.photos'))
 
 
@@ -349,7 +362,7 @@ def photos_edit(photo_id):
         (title, description, tech_used, category, display_tier, int(sort_order), photo_id),
     )
     db.commit()
-    flash('Photo updated.', 'success')
+    flash(_('Photo updated.'), 'success')
     return redirect(url_for('admin.photos'))
 
 
@@ -364,7 +377,7 @@ def photos_delete(photo_id):
         delete_photo_file(photo['storage_name'])
         db.execute('DELETE FROM photos WHERE id = ?', (photo_id,))
         db.commit()
-        flash('Photo deleted.', 'success')
+        flash(_('Photo deleted.'), 'success')
     return redirect(url_for('admin.photos'))
 
 
@@ -398,7 +411,11 @@ def reviews_update(review_id):
     elif action == 'update_tier':
         update_review_tier(db, review_id, display_tier)
 
-    flash('Review updated.', 'success')
+    try:
+        log_action(db, f'{action.capitalize()}d review', 'reviews', f'ID {review_id}')
+    except Exception:
+        pass
+    flash(_('Review updated.'), 'success')
     return redirect(url_for('admin.reviews'))
 
 
@@ -437,7 +454,7 @@ def tokens_generate():
         (token_string, name, token_type),
     )
     db.commit()
-    flash(f'Token generated for {name or "anonymous"}.', 'success')
+    flash(_('Token generated for %(name)s.', name=name or _('anonymous')), 'success')
     return redirect(url_for('admin.tokens'))
 
 
@@ -448,7 +465,7 @@ def tokens_delete(token_id):
     db = get_db()
     db.execute('DELETE FROM review_tokens WHERE id = ?', (token_id,))
     db.commit()
-    flash('Token deleted.', 'success')
+    flash(_('Token deleted.'), 'success')
     return redirect(url_for('admin.tokens'))
 
 
@@ -464,11 +481,18 @@ def settings():
 
     if request.method == 'POST':
         save_settings(db, request.form)
-        flash('Settings saved.', 'success')
+        try:
+            log_action(db, 'Updated settings', 'settings')
+        except Exception:
+            pass
+        flash(_('Settings saved.'), 'success')
         return redirect(url_for('admin.settings'))
 
+    grouped = get_grouped_settings(db)
     all_settings = get_all_settings_svc(db)
-    return render_template('admin/settings.html', settings=all_settings)
+    return render_template('admin/settings.html',
+                           settings=all_settings,
+                           grouped=grouped)
 
 
 # ============================================================
@@ -496,7 +520,7 @@ def services_add():
 
     if title:
         add_service(db, title, description, icon, sort_order)
-        flash('Service added.', 'success')
+        flash(_('Service added.'), 'success')
     return redirect(url_for('admin.services'))
 
 
@@ -512,7 +536,7 @@ def services_edit(service_id):
     visible = bool(request.form.get('visible'))
 
     update_service(db, service_id, title, description, icon, sort_order, visible)
-    flash('Service updated.', 'success')
+    flash(_('Service updated.'), 'success')
     return redirect(url_for('admin.services'))
 
 
@@ -522,7 +546,7 @@ def services_delete(service_id):
     """Delete a service card."""
     db = get_db()
     delete_service(db, service_id)
-    flash('Service deleted.', 'success')
+    flash(_('Service deleted.'), 'success')
     return redirect(url_for('admin.services'))
 
 
@@ -551,7 +575,7 @@ def stats_add():
 
     if label:
         add_stat(db, label, value, suffix, sort_order)
-        flash('Stat added.', 'success')
+        flash(_('Stat added.'), 'success')
     return redirect(url_for('admin.stats'))
 
 
@@ -567,7 +591,7 @@ def stats_edit(stat_id):
     visible = bool(request.form.get('visible'))
 
     update_stat(db, stat_id, label, value, suffix, sort_order, visible)
-    flash('Stat updated.', 'success')
+    flash(_('Stat updated.'), 'success')
     return redirect(url_for('admin.stats'))
 
 
@@ -577,5 +601,5 @@ def stats_delete(stat_id):
     """Delete a stat counter."""
     db = get_db()
     delete_stat(db, stat_id)
-    flash('Stat deleted.', 'success')
+    flash(_('Stat deleted.'), 'success')
     return redirect(url_for('admin.stats'))

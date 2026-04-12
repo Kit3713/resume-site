@@ -6,13 +6,14 @@ Provides command-line tools for server administration tasks that don't
 require the admin panel (e.g., initial setup, headless management).
 
 Commands:
-    init-db          Initialize the SQLite database (runs all pending migrations).
-    migrate          Apply pending database migrations.
-    hash-password    Generate a pbkdf2:sha256 password hash for config.yaml.
-    generate-secret  Generate a cryptographically secure secret_key value.
-    generate-token   Create a review invitation token for a trusted contact.
-    list-reviews     Display reviews filtered by status (pending/approved/rejected).
-    purge-analytics  Delete page view records older than N days.
+    init-db              Initialize the SQLite database (runs all pending migrations).
+    migrate              Apply pending database migrations.
+    hash-password        Generate a pbkdf2:sha256 password hash for config.yaml.
+    generate-secret      Generate a cryptographically secure secret_key value.
+    generate-token       Create a review invitation token for a trusted contact.
+    list-reviews         Display reviews filtered by status (pending/approved/rejected).
+    purge-analytics      Delete page view records older than N days.
+    translations         Manage translation files (extract, init, compile, update).
 
 Usage:
     python manage.py init-db
@@ -24,6 +25,10 @@ Usage:
     python manage.py generate-token --name "John Doe" --type recommendation
     python manage.py list-reviews --status pending
     python manage.py purge-analytics --days 90
+    python manage.py translations extract
+    python manage.py translations init es
+    python manage.py translations compile
+    python manage.py translations update
 """
 
 import argparse
@@ -406,6 +411,92 @@ def purge_analytics(args):
     print(f"Purged {count} page view records older than {args.days} days.")
 
 
+def translations(args):
+    """Manage translation message catalogs.
+
+    Subcommands:
+        extract  — Scan source code and templates, generate messages.pot.
+        init     — Create a new locale directory with an empty .po file.
+        compile  — Compile all .po files to .mo (binary) for runtime use.
+        update   — Update existing .po files with newly extracted messages.
+    """
+    import subprocess
+
+    project_root = os.path.dirname(__file__)
+    translations_dir = os.path.join(project_root, 'translations')
+    pot_file = os.path.join(translations_dir, 'messages.pot')
+    babel_cfg = os.path.join(project_root, 'babel.cfg')
+
+    os.makedirs(translations_dir, exist_ok=True)
+
+    action = args.action
+
+    if action == 'extract':
+        cmd = [
+            sys.executable, '-m', 'babel.messages.frontend', 'extract',
+            '-F', babel_cfg,
+            '-o', pot_file,
+            '--project', 'resume-site',
+            '--version', '0.2.0',
+            '.',
+        ]
+        result = subprocess.run(cmd, cwd=project_root)
+        if result.returncode == 0:
+            print(f"Messages extracted to {pot_file}")
+        sys.exit(result.returncode)
+
+    elif action == 'init':
+        locale = args.locale
+        if not locale:
+            print("ERROR: --locale is required for init. Example: python manage.py translations init --locale es",
+                  file=sys.stderr)
+            sys.exit(1)
+        if not os.path.exists(pot_file):
+            print("ERROR: Run 'translations extract' first to generate messages.pot",
+                  file=sys.stderr)
+            sys.exit(1)
+        cmd = [
+            sys.executable, '-m', 'babel.messages.frontend', 'init',
+            '-i', pot_file,
+            '-d', translations_dir,
+            '-l', locale,
+        ]
+        result = subprocess.run(cmd, cwd=project_root)
+        if result.returncode == 0:
+            print(f"Locale '{locale}' initialized in {translations_dir}/{locale}/")
+        sys.exit(result.returncode)
+
+    elif action == 'compile':
+        cmd = [
+            sys.executable, '-m', 'babel.messages.frontend', 'compile',
+            '-d', translations_dir,
+        ]
+        result = subprocess.run(cmd, cwd=project_root)
+        if result.returncode == 0:
+            print("Translation catalogs compiled.")
+        sys.exit(result.returncode)
+
+    elif action == 'update':
+        if not os.path.exists(pot_file):
+            print("ERROR: Run 'translations extract' first to generate messages.pot",
+                  file=sys.stderr)
+            sys.exit(1)
+        cmd = [
+            sys.executable, '-m', 'babel.messages.frontend', 'update',
+            '-i', pot_file,
+            '-d', translations_dir,
+        ]
+        result = subprocess.run(cmd, cwd=project_root)
+        if result.returncode == 0:
+            print("Translation catalogs updated with new messages.")
+        sys.exit(result.returncode)
+
+    else:
+        print(f"Unknown translations action: {action}", file=sys.stderr)
+        print("Available: extract, init, compile, update")
+        sys.exit(1)
+
+
 def main():
     """Parse command-line arguments and dispatch to the appropriate handler."""
     parser = argparse.ArgumentParser(description='resume-site management CLI')
@@ -445,24 +536,29 @@ def main():
     purge_parser = subparsers.add_parser('purge-analytics', help='Purge old analytics data')
     purge_parser.add_argument('--days', type=int, default=90, help='Days to retain')
 
+    # Translation management
+    trans_parser = subparsers.add_parser('translations', help='Manage translation files')
+    trans_parser.add_argument('action', choices=['extract', 'init', 'compile', 'update'],
+                              help='Translation action to perform')
+    trans_parser.add_argument('--locale', '-l', default=None, help='Locale code (for init)')
+
     args = parser.parse_args()
 
-    if args.command == 'init-db':
-        init_db(args)
-    elif args.command == 'migrate':
-        migrate(args)
-    elif args.command == 'config':
-        config_validate(args)
-    elif args.command == 'generate-secret':
-        generate_secret(args)
-    elif args.command == 'hash-password':
-        hash_password(args)
-    elif args.command == 'generate-token':
-        generate_token(args)
-    elif args.command == 'list-reviews':
-        list_reviews(args)
-    elif args.command == 'purge-analytics':
-        purge_analytics(args)
+    commands = {
+        'init-db': init_db,
+        'migrate': migrate,
+        'config': config_validate,
+        'generate-secret': generate_secret,
+        'hash-password': hash_password,
+        'generate-token': generate_token,
+        'list-reviews': list_reviews,
+        'purge-analytics': purge_analytics,
+        'translations': translations,
+    }
+
+    handler = commands.get(args.command)
+    if handler:
+        handler(args)
     else:
         parser.print_help()
         sys.exit(1)

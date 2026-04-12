@@ -41,12 +41,68 @@
         (function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();
     </script>
 
-    <!-- Fonts -->
+    <!-- Fonts (dynamic based on font_pairing setting) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    {% set font_key = site_settings.get('font_pairing', 'inter') %}
+    {% set font_families = {
+        'inter': 'Inter:wght@400;500;600;700;800;900',
+        'space-grotesk': 'Inter:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700',
+        'plus-jakarta': 'Plus+Jakarta+Sans:wght@400;500;600;700;800',
+        'dm-sans': 'DM+Sans:wght@400;500;600;700',
+        'outfit': 'Inter:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800',
+    } %}
+    <link href="https://fonts.googleapis.com/css2?family={{ font_families.get(font_key, font_families['inter']) }}&display=swap" rel="stylesheet">
 
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+    {# Dynamic theme overrides: accent color and font pairing #}
+    {% set accent = site_settings.get('accent_color', '#0071e3') %}
+    {% set font_display_map = {
+        'inter': "'Inter'",
+        'space-grotesk': "'Space Grotesk'",
+        'plus-jakarta': "'Plus Jakarta Sans'",
+        'dm-sans': "'DM Sans'",
+        'outfit': "'Outfit'",
+    } %}
+    {% set font_body_map = {
+        'inter': "'Inter'",
+        'space-grotesk': "'Inter'",
+        'plus-jakarta': "'Plus Jakarta Sans'",
+        'dm-sans': "'DM Sans'",
+        'outfit': "'Inter'",
+    } %}
+    <style>
+        :root {
+            --color-accent: {{ accent }};
+            --color-accent-hover: {{ accent }};
+            --font-display: {{ font_display_map.get(font_key, "'Inter'") }}, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            --font-body: {{ font_body_map.get(font_key, "'Inter'") }}, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+        [data-theme="dark"] {
+            --color-accent: {{ accent }};
+            --color-accent-hover: {{ accent }};
+        }
+        [data-theme="light"] {
+            --color-accent: {{ accent }};
+            --color-accent-hover: {{ accent }};
+        }
+    </style>
+
+    {# Custom CSS from admin settings #}
+    {% set custom_css = site_settings.get('custom_css', '') %}
+    {% if custom_css %}
+    <style>{{ custom_css }}</style>
+    {% endif %}
+
+    {# hreflang tags for SEO when multiple locales are available #}
+    {% if available_locales|length > 1 %}
+    {% for locale in available_locales %}
+    <link rel="alternate" hreflang="{{ locale }}" href="{{ request.url_root.rstrip('/') }}{{ request.path }}?lang={{ locale }}">
+    {% endfor %}
+    <link rel="alternate" hreflang="x-default" href="{{ request.url_root.rstrip('/') }}{{ request.path }}">
+    {% endif %}
+
     {% block head_extra %}{% endblock %}
 </head>
 <body>
@@ -65,18 +121,41 @@
             </button>
 
             <ul class="navbar__menu" id="navMenu">
-                <li><a href="{{ url_for('public.index') }}#about">About</a></li>
-                <li><a href="{{ url_for('public.services') }}">Services</a></li>
-                <li><a href="{{ url_for('public.portfolio') }}">Portfolio</a></li>
-                <li><a href="{{ url_for('public.projects') }}">Projects</a></li>
-                <li><a href="{{ url_for('public.testimonials') }}">Testimonials</a></li>
-                {% if site_settings.get('blog_enabled', 'false') == 'true' %}
-                <li><a href="{{ url_for('blog.blog_index') }}">Blog</a></li>
+                {# Nav items with admin-controlled visibility (nav_hide_* settings) #}
+                {% if site_settings.get('nav_hide_about', 'false') != 'true' %}
+                <li><a href="{{ url_for('public.index') }}#about">{{ _('About') }}</a></li>
                 {% endif %}
-                <li><a href="{{ url_for('contact.contact_page') }}">Contact</a></li>
+                {% if site_settings.get('nav_hide_services', 'false') != 'true' %}
+                <li><a href="{{ url_for('public.services') }}">{{ _('Services') }}</a></li>
+                {% endif %}
+                {% if site_settings.get('nav_hide_portfolio', 'false') != 'true' %}
+                <li><a href="{{ url_for('public.portfolio') }}">{{ _('Portfolio') }}</a></li>
+                {% endif %}
+                {% if site_settings.get('nav_hide_projects', 'false') != 'true' %}
+                <li><a href="{{ url_for('public.projects') }}">{{ _('Projects') }}</a></li>
+                {% endif %}
+                {% if site_settings.get('nav_hide_testimonials', 'false') != 'true' %}
+                <li><a href="{{ url_for('public.testimonials') }}">{{ _('Testimonials') }}</a></li>
+                {% endif %}
+                {% if site_settings.get('blog_enabled', 'false') == 'true' %}
+                <li><a href="{{ url_for('blog.blog_index') }}">{{ _('Blog') }}</a></li>
+                {% endif %}
+                {% if site_settings.get('nav_hide_contact', 'false') != 'true' %}
+                <li><a href="{{ url_for('contact.contact_page') }}">{{ _('Contact') }}</a></li>
+                {% endif %}
                 {% block nav_extra %}{% endblock %}
+                {# Language switcher (only when multiple locales configured) #}
+                {% if available_locales|length > 1 %}
+                <li class="navbar__lang">
+                    {% for locale in available_locales %}
+                    <a href="{{ url_for('locale.set_locale', lang=locale) }}"
+                       class="navbar__lang-link {{ 'navbar__lang-link--active' if locale == current_locale }}"
+                       title="{{ locale }}">{{ locale|upper }}</a>
+                    {% endfor %}
+                </li>
+                {% endif %}
                 <li>
-                    <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark/light mode">
+                    <button class="theme-toggle" id="themeToggle" aria-label="{{ _('Toggle dark/light mode') }}">
                         <svg class="theme-toggle__icon theme-toggle__icon--sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="5"></circle>
                             <line x1="12" y1="1" x2="12" y2="3"></line>

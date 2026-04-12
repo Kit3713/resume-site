@@ -21,15 +21,36 @@ Usage:
 
 import os
 
-from flask import Flask, request
+from flask import Flask, request, g
+from flask_babel import Babel
 from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect
 
 from app.db import get_db, close_db
 from app.services.config import load_config
 
-# CSRF protection instance (initialized in create_app)
+# Extension instances (initialized in create_app)
 csrf = CSRFProtect()
+babel = Babel()
+
+
+def _get_available_locales(app):
+    """Return the list of available locale codes from site settings.
+
+    Falls back to ['en'] if no locales are configured or the database
+    is not yet initialized.
+    """
+    try:
+        with app.app_context():
+            db = get_db()
+            row = db.execute(
+                "SELECT value FROM settings WHERE key = 'available_locales'"
+            ).fetchone()
+            if row and row['value']:
+                return [l.strip() for l in row['value'].split(',') if l.strip()]
+    except Exception:
+        pass
+    return ['en']
 
 
 def create_app(config_path=None):
@@ -97,13 +118,41 @@ def create_app(config_path=None):
     # Endpoints can opt out with @csrf.exempt when needed (e.g., webhook receivers).
     csrf.init_app(app)
 
-    # --- 5. Blueprint registration ---
+    # --- 5. Internationalization (Flask-Babel) ---
+    app.config['BABEL_DEFAULT_LOCALE'] = 'en'
+    app.config['BABEL_TRANSLATION_DIRECTORIES'] = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), 'translations'
+    )
+
+    def get_locale():
+        """Select the locale for the current request.
+
+        Priority: URL prefix > session > Accept-Language header > default.
+        The URL-based locale is set by the locale routing blueprint.
+        """
+        # URL-based locale (set by locale blueprint's url_value_preprocessor)
+        locale = g.get('lang')
+        if locale:
+            return locale
+        # Session-based persistence
+        from flask import session
+        locale = session.get('locale')
+        if locale and locale in _get_available_locales(app):
+            return locale
+        # Browser preference
+        available = _get_available_locales(app)
+        return request.accept_languages.best_match(available, default='en')
+
+    babel.init_app(app, locale_selector=get_locale)
+
+    # --- 6. Blueprint registration ---
     from app.routes.public import public_bp
     from app.routes.admin import admin_bp
     from app.routes.blog_admin import blog_admin_bp
     from app.routes.blog import blog_bp
     from app.routes.contact import contact_bp
     from app.routes.review import review_bp
+    from app.routes.locale import locale_bp
 
     app.register_blueprint(public_bp)
     app.register_blueprint(admin_bp, url_prefix='/admin')
@@ -111,12 +160,13 @@ def create_app(config_path=None):
     app.register_blueprint(blog_bp)
     app.register_blueprint(contact_bp)
     app.register_blueprint(review_bp)
+    app.register_blueprint(locale_bp)
 
-    # --- 6. Analytics middleware ---
+    # --- 8. Analytics middleware ---
     from app.services.analytics import track_page_view
     app.before_request(track_page_view)
 
-    # --- 7. Security response headers ---
+    # --- 9. Security response headers ---
     @app.after_request
     def set_security_headers(response):
         """Add security headers to every response.
@@ -141,7 +191,7 @@ def create_app(config_path=None):
 
         return response
 
-    # --- 8. Template context processor ---
+    # --- 10. Template context processor ---
     @app.context_processor
     def inject_settings():
         """Make site settings and config available in all templates.
@@ -158,9 +208,17 @@ def create_app(config_path=None):
             settings = {row['key']: row['value'] for row in rows}
         except Exception:
             settings = {}
-        return dict(site_settings=settings, site_config=site_config)
+        # Locale information for language switcher and hreflang tags
+        available_locales = [l.strip() for l in settings.get('available_locales', 'en').split(',') if l.strip()]
+        current_locale = str(get_locale())
+        return dict(
+            site_settings=settings,
+            site_config=site_config,
+            available_locales=available_locales,
+            current_locale=current_locale,
+        )
 
-    # --- 9. Ensure storage directories exist ---
+    # --- 11. Ensure storage directories exist ---
     os.makedirs(os.path.dirname(app.config['DATABASE_PATH']) or '.', exist_ok=True)
     os.makedirs(app.config['PHOTO_STORAGE'], exist_ok=True)
 

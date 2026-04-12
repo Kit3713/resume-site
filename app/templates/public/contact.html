@@ -1,22 +1,18 @@
 {#
   Contact Page — Form with honeypot spam protection and contact info sidebar
 
-  Two-column layout: the contact form on the left, contact info on the right.
-  The form includes a hidden "website" honeypot field (invisible to users via
-  CSS) that catches automated bot submissions.
-
   The form is conditionally shown based on the 'contact_form_enabled' setting.
   Contact info items (email, GitHub, LinkedIn) are individually toggled.
 #}
 {% extends "base.html" %}
 
-{% block title %}Contact — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
+{% block title %}{{ _('Contact') }} — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
 
 {% block content %}
 <section class="page-header">
     <div class="page-header__container">
-        <h1 class="page-header__title">Get in Touch</h1>
-        <p class="page-header__subtitle">I'd love to hear from you</p>
+        <h1 class="page-header__title">{{ _('Get in Touch') }}</h1>
+        <p class="page-header__subtitle">{{ _("I'd love to hear from you") }}</p>
     </div>
 </section>
 
@@ -28,28 +24,28 @@
                 <form method="POST" action="{{ url_for('contact.contact_page') }}" class="contact__form" id="contactForm">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="form-group">
-                        <label for="name" class="form-label">Name</label>
+                        <label for="name" class="form-label">{{ _('Name') }}</label>
                         <input type="text" id="name" name="name" class="form-input" required>
                     </div>
                     <div class="form-group">
-                        <label for="email" class="form-label">Email</label>
+                        <label for="email" class="form-label">{{ _('Email') }}</label>
                         <input type="email" id="email" name="email" class="form-input" required>
                     </div>
                     <div class="form-group">
-                        <label for="message" class="form-label">Message</label>
+                        <label for="message" class="form-label">{{ _('Message') }}</label>
                         <textarea id="message" name="message" class="form-input form-textarea" rows="6" required></textarea>
                     </div>
                     <!-- Honeypot -->
                     <div class="form-input--hp" aria-hidden="true">
                         <input type="text" name="website" tabindex="-1" autocomplete="off">
                     </div>
-                    <button type="submit" class="btn btn--primary btn--full" id="contactSubmit">Send Message</button>
+                    <button type="submit" class="btn btn--primary btn--full" id="contactSubmit">{{ _('Send Message') }}</button>
                 </form>
             </div>
             {% endif %}
 
             <div class="contact__info-col">
-                <h3 class="contact__info-heading">Contact Info</h3>
+                <h3 class="contact__info-heading">{{ _('Contact Info') }}</h3>
                 {% if site_settings.get('contact_email_visible', 'false') == 'true' and site_config.get('smtp', {}).get('recipient') %}
                 <div class="contact__info-item">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>

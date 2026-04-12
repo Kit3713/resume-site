@@ -38,16 +38,6 @@ class AdminUser(UserMixin):
 # SETTINGS (key-value store in SQLite)
 # ============================================================
 
-def get_all_settings(db):
-    """Return all settings as a {key: value} dict.
-
-    Used by the context processor to inject settings into every template,
-    and by the admin settings page to populate form fields.
-    """
-    rows = db.execute('SELECT key, value FROM settings').fetchall()
-    return {row['key']: row['value'] for row in rows}
-
-
 def get_setting(db, key, default=''):
     """Return a single setting value by key, or default if not found.
 

@@ -1,156 +1,184 @@
-{# Settings Panel — All site-wide toggles, identity, display, contact, and analytics configuration. #}
+{# Settings Panel — Auto-rendered from the settings registry with category grouping. #}
 {% extends "admin/base_admin.html" %}
 
-{% block title %}Settings{% endblock %}
+{% block title %}{{ _('Settings') }}{% endblock %}
+
+{% block head_extra %}
+<style>
+    .settings-textarea {
+        font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+        font-size: 0.85rem;
+        min-height: 120px;
+        resize: vertical;
+    }
+    .settings-description {
+        font-size: 0.8rem;
+        color: var(--color-text-tertiary);
+        margin-top: 0.25rem;
+    }
+    .color-preview {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .color-preview__swatch {
+        width: 24px;
+        height: 24px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--color-border);
+        vertical-align: middle;
+    }
+    .preset-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+    }
+    .preset-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.35rem 0.75rem;
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-sm);
+        background: var(--color-surface);
+        color: var(--color-text-primary);
+        cursor: pointer;
+        font-size: 0.85rem;
+        transition: border-color var(--transition-fast);
+    }
+    .preset-btn:hover {
+        border-color: var(--color-accent);
+    }
+    .preset-btn__dot {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+    }
+</style>
+{% endblock %}
 
 {% block content %}
 <div class="admin-page">
-    <h1 class="admin-page__title">Settings</h1>
+    <h1 class="admin-page__title">{{ _('Settings') }}</h1>
 
     <form method="POST" class="admin-form">
-        <!-- Site Identity -->
+        {% for category, items in grouped %}
         <div class="admin-section">
-            <h2 class="admin-section__title">Site Identity</h2>
+            <h2 class="admin-section__title">{{ category }}</h2>
             <div class="admin-form-grid">
-                <div class="form-group">
-                    <label class="form-label">Site Title</label>
-                    <input type="text" name="site_title" class="form-input" value="{{ settings.get('site_title', '') }}">
+                {% for item in items %}
+                <div class="form-group{% if item.type == 'textarea' %} form-group--full{% endif %}">
+                    <label class="form-label">{{ item.label }}</label>
+
+                    {% if item.type == 'bool' %}
+                    <select name="{{ item.key }}" class="form-input">
+                        {% if item.key.startswith('nav_hide_') %}
+                        <option value="false" {{ 'selected' if item.value != 'true' }}>Visible</option>
+                        <option value="true" {{ 'selected' if item.value == 'true' }}>Hidden</option>
+                        {% elif item.key == 'dark_mode_default' %}
+                        <option value="true" {{ 'selected' if item.value == 'true' }}>Dark</option>
+                        <option value="false" {{ 'selected' if item.value != 'true' }}>Light</option>
+                        {% else %}
+                        <option value="true" {{ 'selected' if item.value == 'true' }}>Enabled</option>
+                        <option value="false" {{ 'selected' if item.value != 'true' }}>Disabled</option>
+                        {% endif %}
+                    </select>
+
+                    {% elif item.type == 'select' %}
+                    <select name="{{ item.key }}" class="form-input" {% if item.key == 'color_preset' %}id="colorPresetSelect"{% endif %}>
+                        {% for opt_val, opt_label in item.get('options', []) %}
+                        <option value="{{ opt_val }}" {{ 'selected' if item.value == opt_val }}>{{ opt_label }}</option>
+                        {% endfor %}
+                    </select>
+                    {% if item.key == 'color_preset' %}
+                    <div class="preset-grid" id="presetGrid">
+                        <button type="button" class="preset-btn" data-preset="default" data-color="#0071e3">
+                            <span class="preset-btn__dot" style="background:#0071e3"></span> Blue
+                        </button>
+                        <button type="button" class="preset-btn" data-preset="ocean" data-color="#00897B">
+                            <span class="preset-btn__dot" style="background:#00897B"></span> Ocean
+                        </button>
+                        <button type="button" class="preset-btn" data-preset="forest" data-color="#2E7D32">
+                            <span class="preset-btn__dot" style="background:#2E7D32"></span> Forest
+                        </button>
+                        <button type="button" class="preset-btn" data-preset="sunset" data-color="#E65100">
+                            <span class="preset-btn__dot" style="background:#E65100"></span> Sunset
+                        </button>
+                        <button type="button" class="preset-btn" data-preset="minimal" data-color="#616161">
+                            <span class="preset-btn__dot" style="background:#616161"></span> Minimal
+                        </button>
+                        <button type="button" class="preset-btn" data-preset="royal" data-color="#6200EA">
+                            <span class="preset-btn__dot" style="background:#6200EA"></span> Royal
+                        </button>
+                    </div>
+                    {% endif %}
+
+                    {% elif item.type == 'color' %}
+                    <div class="color-preview">
+                        <input type="color" name="{{ item.key }}" class="form-input form-input--color" id="accentColorInput"
+                               value="{{ item.value or '#0071e3' }}">
+                        <span class="color-preview__swatch" id="accentSwatch"
+                              style="background:{{ item.value or '#0071e3' }}"></span>
+                        <code id="accentHex">{{ item.value or '#0071e3' }}</code>
+                    </div>
+
+                    {% elif item.type == 'textarea' %}
+                    <textarea name="{{ item.key }}" class="form-input settings-textarea"
+                              placeholder="{{ item.get('description', '') }}">{{ item.value }}</textarea>
+                    {% if item.get('description') %}
+                    <p class="settings-description">{{ item.description }}</p>
+                    {% endif %}
+
+                    {% elif item.type == 'int' %}
+                    <input type="number" name="{{ item.key }}" class="form-input"
+                           value="{{ item.value }}" min="1">
+
+                    {% else %}
+                    <input type="{% if 'url' in item.key %}url{% else %}text{% endif %}"
+                           name="{{ item.key }}" class="form-input"
+                           value="{{ item.value }}"
+                           {% if 'url' in item.key %}placeholder="https://..."{% endif %}>
+                    {% endif %}
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Site Tagline</label>
-                    <input type="text" name="site_tagline" class="form-input" value="{{ settings.get('site_tagline', '') }}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Footer Text</label>
-                    <input type="text" name="footer_text" class="form-input" value="{{ settings.get('footer_text', '') }}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Accent Color</label>
-                    <input type="color" name="accent_color" class="form-input form-input--color" value="{{ settings.get('accent_color', '#0071e3') }}">
-                </div>
+                {% endfor %}
             </div>
         </div>
+        {% endfor %}
 
-        <!-- Hero Section -->
-        <div class="admin-section">
-            <h2 class="admin-section__title">Hero Section</h2>
-            <div class="admin-form-grid">
-                <div class="form-group">
-                    <label class="form-label">Heading (your name)</label>
-                    <input type="text" name="hero_heading" class="form-input" value="{{ settings.get('hero_heading', '') }}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Subheading (your title)</label>
-                    <input type="text" name="hero_subheading" class="form-input" value="{{ settings.get('hero_subheading', '') }}">
-                </div>
-                <div class="form-group form-group--full">
-                    <label class="form-label">Tagline (value proposition)</label>
-                    <input type="text" name="hero_tagline" class="form-input" value="{{ settings.get('hero_tagline', '') }}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Availability Status</label>
-                    <select name="availability_status" class="form-input">
-                        <option value="available" {{ 'selected' if settings.get('availability_status') == 'available' }}>Available</option>
-                        <option value="open" {{ 'selected' if settings.get('availability_status') == 'open' }}>Open to Opportunities</option>
-                        <option value="unavailable" {{ 'selected' if settings.get('availability_status') == 'unavailable' }}>Not Available</option>
-                        <option value="off" {{ 'selected' if settings.get('availability_status') == 'off' }}>Hidden</option>
-                    </select>
-                </div>
-            </div>
-        </div>
-
-        <!-- Display Settings -->
-        <div class="admin-section">
-            <h2 class="admin-section__title">Display Settings</h2>
-            <div class="admin-form-grid">
-                <div class="form-group">
-                    <label class="form-label">Default Theme</label>
-                    <select name="dark_mode_default" class="form-input">
-                        <option value="true" {{ 'selected' if settings.get('dark_mode_default') == 'true' }}>Dark</option>
-                        <option value="false" {{ 'selected' if settings.get('dark_mode_default') == 'false' }}>Light</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Logo Mode</label>
-                    <select name="logo_mode" class="form-input">
-                        <option value="title" {{ 'selected' if settings.get('logo_mode') == 'title' }}>Site Title</option>
-                        <option value="initials" {{ 'selected' if settings.get('logo_mode') == 'initials' }}>Initials</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Testimonial Display</label>
-                    <select name="testimonial_display_mode" class="form-input">
-                        <option value="mixed" {{ 'selected' if settings.get('testimonial_display_mode') == 'mixed' }}>Mixed with Labels</option>
-                        <option value="separate" {{ 'selected' if settings.get('testimonial_display_mode') == 'separate' }}>Separate Sections</option>
-                        <option value="all" {{ 'selected' if settings.get('testimonial_display_mode') == 'all' }}>All Together</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Case Studies</label>
-                    <select name="case_studies_enabled" class="form-input">
-                        <option value="true" {{ 'selected' if settings.get('case_studies_enabled') == 'true' }}>Enabled</option>
-                        <option value="false" {{ 'selected' if settings.get('case_studies_enabled') == 'false' }}>Disabled</option>
-                    </select>
-                </div>
-            </div>
-        </div>
-
-        <!-- Contact & Social -->
-        <div class="admin-section">
-            <h2 class="admin-section__title">Contact & Social</h2>
-            <div class="admin-form-grid">
-                <div class="form-group">
-                    <label class="form-label">Contact Form</label>
-                    <select name="contact_form_enabled" class="form-input">
-                        <option value="true" {{ 'selected' if settings.get('contact_form_enabled') == 'true' }}>Enabled</option>
-                        <option value="false" {{ 'selected' if settings.get('contact_form_enabled') == 'false' }}>Disabled</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Show Email</label>
-                    <select name="contact_email_visible" class="form-input">
-                        <option value="true" {{ 'selected' if settings.get('contact_email_visible') == 'true' }}>Visible</option>
-                        <option value="false" {{ 'selected' if settings.get('contact_email_visible') == 'false' }}>Hidden</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Show Phone</label>
-                    <select name="contact_phone_visible" class="form-input">
-                        <option value="true" {{ 'selected' if settings.get('contact_phone_visible') == 'true' }}>Visible</option>
-                        <option value="false" {{ 'selected' if settings.get('contact_phone_visible') == 'false' }}>Hidden</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Resume Visibility</label>
-                    <select name="resume_visibility" class="form-input">
-                        <option value="public" {{ 'selected' if settings.get('resume_visibility') == 'public' }}>Public</option>
-                        <option value="private" {{ 'selected' if settings.get('resume_visibility') == 'private' }}>Private Link</option>
-                        <option value="off" {{ 'selected' if settings.get('resume_visibility') == 'off' }}>Disabled</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">GitHub URL</label>
-                    <input type="url" name="contact_github_url" class="form-input" value="{{ settings.get('contact_github_url', '') }}" placeholder="https://github.com/username">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">LinkedIn URL</label>
-                    <input type="url" name="contact_linkedin_url" class="form-input" value="{{ settings.get('contact_linkedin_url', '') }}" placeholder="https://linkedin.com/in/username">
-                </div>
-            </div>
-        </div>
-
-        <!-- Analytics -->
-        <div class="admin-section">
-            <h2 class="admin-section__title">Analytics</h2>
-            <div class="admin-form-grid">
-                <div class="form-group">
-                    <label class="form-label">Retention Days</label>
-                    <input type="number" name="analytics_retention_days" class="form-input" value="{{ settings.get('analytics_retention_days', '90') }}" min="7" max="365">
-                </div>
-            </div>
-        </div>
-
-        <button type="submit" class="btn btn--primary">Save Settings</button>
+        <button type="submit" class="btn btn--primary">{{ _('Save Settings') }}</button>
     </form>
 </div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+// Color preset quick-select: clicking a preset sets both the preset dropdown and accent color
+document.querySelectorAll('.preset-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        var preset = this.dataset.preset;
+        var color = this.dataset.color;
+        var presetSelect = document.getElementById('colorPresetSelect');
+        var colorInput = document.getElementById('accentColorInput');
+        var swatch = document.getElementById('accentSwatch');
+        var hex = document.getElementById('accentHex');
+
+        if (presetSelect) presetSelect.value = preset;
+        if (colorInput) colorInput.value = color;
+        if (swatch) swatch.style.background = color;
+        if (hex) hex.textContent = color;
+    });
+});
+
+// Live accent color preview
+var colorInput = document.getElementById('accentColorInput');
+if (colorInput) {
+    colorInput.addEventListener('input', function() {
+        var swatch = document.getElementById('accentSwatch');
+        var hex = document.getElementById('accentHex');
+        if (swatch) swatch.style.background = this.value;
+        if (hex) hex.textContent = this.value;
+    });
+}
+</script>
 {% endblock %}

@@ -16,6 +16,7 @@ of spam status, giving the admin full visibility in the dashboard.
 """
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask_babel import gettext as _
 
 from app.db import get_db
 from app.models import save_contact_submission, count_recent_submissions, get_setting
@@ -37,7 +38,7 @@ def contact_page():
         # Check if the contact form is enabled in site settings
         form_enabled = get_setting(db, 'contact_form_enabled', 'true')
         if form_enabled != 'true':
-            flash('Contact form is currently unavailable.', 'error')
+            flash(_('Contact form is currently unavailable.'), 'error')
             return redirect(url_for('contact.contact_page'))
 
         # Extract form data
@@ -52,11 +53,11 @@ def contact_page():
 
         # Server-side validation
         if not name or not email or not message:
-            flash('Please fill in all required fields.', 'error')
+            flash(_('Please fill in all required fields.'), 'error')
             return render_template('public/contact.html')
 
         if '@' not in email or '.' not in email:
-            flash('Please enter a valid email address.', 'error')
+            flash(_('Please enter a valid email address.'), 'error')
             return render_template('public/contact.html')
 
         # Rate limiting — extract the real client IP from the proxy chain
@@ -65,7 +66,7 @@ def contact_page():
             client_ip = client_ip.split(',')[0].strip()
 
         if count_recent_submissions(db, client_ip) >= 5:
-            flash('Too many submissions. Please try again later.', 'error')
+            flash(_('Too many submissions. Please try again later.'), 'error')
             return render_template('public/contact.html')
 
         # Persist to database (always, even for spam — for admin visibility)
@@ -83,7 +84,7 @@ def contact_page():
 
         # Show the same success message for both spam and real submissions
         # to avoid revealing the honeypot detection to bots
-        flash('Message sent successfully! I\'ll get back to you soon.', 'success')
+        flash(_('Message sent successfully! I\'ll get back to you soon.'), 'success')
         return redirect(url_for('contact.contact_page'))
 
     return render_template('public/contact.html')

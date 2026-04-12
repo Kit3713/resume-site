@@ -1,9 +1,6 @@
 {#
   Case Study Detail — Problem / Solution / Result format
 
-  Displays a detailed portfolio write-up linked from the portfolio gallery.
-  Guarded by the 'case_studies_enabled' setting at the route level.
-
   Context variables (from public.case_study route):
   - study: The case_studies row (title, summary, problem, solution, result)
   - photo: Optional associated photo row for the hero image
@@ -15,7 +12,7 @@
 {% block content %}
 <section class="page-header">
     <div class="page-header__container">
-        <a href="{{ url_for('public.portfolio') }}" class="page-header__back">&larr; Back to Portfolio</a>
+        <a href="{{ url_for('public.portfolio') }}" class="page-header__back">&larr; {{ _('Back to Portfolio') }}</a>
         <h1 class="page-header__title">{{ study.title }}</h1>
         {% if study.summary %}
         <p class="page-header__subtitle">{{ study.summary }}</p>
@@ -38,19 +35,19 @@
         <div class="case-study__grid">
             {% if study.problem %}
             <div class="case-study__card">
-                <h3 class="case-study__card-title">Problem</h3>
+                <h3 class="case-study__card-title">{{ _('Problem') }}</h3>
                 <div class="case-study__card-content">{{ study.problem | safe }}</div>
             </div>
             {% endif %}
             {% if study.solution %}
             <div class="case-study__card">
-                <h3 class="case-study__card-title">Solution</h3>
+                <h3 class="case-study__card-title">{{ _('Solution') }}</h3>
                 <div class="case-study__card-content">{{ study.solution | safe }}</div>
             </div>
             {% endif %}
             {% if study.result %}
             <div class="case-study__card">
-                <h3 class="case-study__card-title">Result</h3>
+                <h3 class="case-study__card-title">{{ _('Result') }}</h3>
                 <div class="case-study__card-content">{{ study.result | safe }}</div>
             </div>
             {% endif %}

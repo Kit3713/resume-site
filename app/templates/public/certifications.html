@@ -1,21 +1,18 @@
 {#
   Certifications Page — Professional credential badges with details
 
-  Displays certification cards with badge images, issuer info, dates,
-  and optional verification links. Expired certs are visually dimmed.
-
   Context variables (from public.certifications route):
   - certifications: Visible certification records ordered by sort_order
 #}
 {% extends "base.html" %}
 
-{% block title %}Certifications — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
+{% block title %}{{ _('Certifications') }} — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
 
 {% block content %}
 <section class="page-header">
     <div class="page-header__container">
-        <h1 class="page-header__title">Certifications</h1>
-        <p class="page-header__subtitle">Professional credentials and certifications</p>
+        <h1 class="page-header__title">{{ _('Certifications') }}</h1>
+        <p class="page-header__subtitle">{{ _('Professional credentials and certifications') }}</p>
     </div>
 </section>
 
@@ -40,14 +37,14 @@
                     {% endif %}
                     <div class="cert-card__dates">
                         {% if cert.date_earned %}
-                        <span>Earned: {{ cert.date_earned }}</span>
+                        <span>{{ _('Earned:') }} {{ cert.date_earned }}</span>
                         {% endif %}
                         {% if cert.date_expires %}
-                        <span>Expires: {{ cert.date_expires }}</span>
+                        <span>{{ _('Expires:') }} {{ cert.date_expires }}</span>
                         {% endif %}
                     </div>
                     {% if cert.credential_url %}
-                    <a href="{{ cert.credential_url }}" class="cert-card__verify-link" target="_blank" rel="noopener noreferrer">Verify &rarr;</a>
+                    <a href="{{ cert.credential_url }}" class="cert-card__verify-link" target="_blank" rel="noopener noreferrer">{{ _('Verify') }} &rarr;</a>
                     {% endif %}
                 </div>
             </div>
@@ -60,7 +57,7 @@
     <div class="section__container">
         <div class="empty-state">
             <svg class="empty-state__icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 15l-2 5l9-11h-5l2-5l-9 11h5z"/></svg>
-            <p class="empty-state__text">Certifications coming soon.</p>
+            <p class="empty-state__text">{{ _('Certifications coming soon.') }}</p>
         </div>
     </div>
 </section>

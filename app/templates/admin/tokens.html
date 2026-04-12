@@ -1,17 +1,17 @@
 {# Token Generator — Create review invitation URLs and track their usage status. #}
 {% extends "admin/base_admin.html" %}
 
-{% block title %}Tokens{% endblock %}
+{% block title %}{{ _('Tokens') }}{% endblock %}
 
 {% block content %}
 <div class="admin-page">
     <div class="admin-page__header">
-        <h1 class="admin-page__title">Review Tokens</h1>
+        <h1 class="admin-page__title">{{ _('Review Tokens') }}</h1>
     </div>
 
     <!-- Generate Token -->
     <div class="admin-section">
-        <h2 class="admin-section__title">Generate New Token</h2>
+        <h2 class="admin-section__title">{{ _('Generate New Token') }}</h2>
         <form method="POST" action="{{ url_for('admin.tokens_generate') }}" class="admin-form admin-form--inline">
             <div class="form-group">
                 <input type="text" name="name" class="form-input" placeholder="Recipient name (optional)">
@@ -22,17 +22,17 @@
                     <option value="client_review">Client Review</option>
                 </select>
             </div>
-            <button type="submit" class="btn btn--primary btn--sm">Generate</button>
+            <button type="submit" class="btn btn--primary btn--sm">{{ _('Generate') }}</button>
         </form>
     </div>
 
     <!-- Token List -->
     {% if tokens %}
     <div class="admin-section">
-        <h2 class="admin-section__title">All Tokens</h2>
+        <h2 class="admin-section__title">{{ _('All Tokens') }}</h2>
         <table class="admin-table">
             <thead>
-                <tr><th>Name</th><th>Type</th><th>Status</th><th>URL</th><th>Created</th><th>Actions</th></tr>
+                <tr><th>{{ _('Name') }}</th><th>{{ _('Type') }}</th><th>{{ _('Status') }}</th><th>URL</th><th>{{ _('Created') }}</th><th>{{ _('Actions') }}</th></tr>
             </thead>
             <tbody>
                 {% for token in tokens %}
@@ -56,7 +56,7 @@
                     <td>{{ token.created_at[:10] }}</td>
                     <td>
                         <form method="POST" action="{{ url_for('admin.tokens_delete', token_id=token.id) }}" style="display:inline">
-                            <button type="submit" class="btn btn--danger btn--sm" onclick="return confirm('Delete this token?')">Delete</button>
+                            <button type="submit" class="btn btn--danger btn--sm" onclick="return confirm('{{ _('Delete this token?') }}')">{{ _('Delete') }}</button>
                         </form>
                     </td>
                 </tr>
@@ -65,7 +65,7 @@
         </table>
     </div>
     {% else %}
-    <p class="admin-empty">No tokens generated yet.</p>
+    <p class="admin-empty">{{ _('No tokens generated yet.') }}</p>
     {% endif %}
 </div>
 {% endblock %}

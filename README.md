@@ -12,18 +12,22 @@ resume-site is a configurable portfolio website designed around the idea that **
 
 ### Features
 
-- **Admin panel** — Manage all content, photos, reviews, services, stats, and settings from a browser. Local/VPN access only. Dedicated admin base template with sidebar navigation.
-- **Dynamic photo gallery** — Upload photos via admin with automatic Pillow optimization (resize to 2000px max, JPEG/PNG/WebP quality optimization). Assign categories, metadata, display tiers.
-- **Invite-only testimonials** — Generate tokens via admin or CLI for trusted contacts to submit reviews. Approve, feature, or hide from the review manager.
-- **Configurable everything** — Toggle contact methods, pages, stats, availability status, dark/light mode, and more from the settings panel. No code changes needed.
-- **GSAP animations** — Scroll-triggered section reveals, staggered card animations, animated stat counters, hero entrance, page header reveals.
-- **Dark/light mode** — Visitor toggle with admin-configurable default.
-- **Built-in analytics** — Page view tracking stored in SQLite with dashboard overview. No cookies, no third parties. Auto-purge via CLI.
-- **Contact form** — Honeypot spam protection, rate limiting, SMTP relay to your personal email. Visitors never see your address.
-- **SEO ready** — Open Graph meta tags, auto-generated sitemap.xml, robots.txt.
-- **Mobile-first responsive** — Equal priority desktop and mobile experience.
-- **Zero personal data in repo** — All private info lives in your config file and database, never committed.
-- **CI pipeline** — GitHub Actions running pytest + flake8 across Python 3.11/3.12 with container build verification and GHCR publishing.
+- **Admin panel** -- Manage all content, photos, reviews, services, stats, blog posts, and settings from a browser. Local/VPN access only.
+- **Blog engine** -- Full blogging system with rich text editor, tags, RSS 2.0 feed, reading time, pagination, cover images, and publish/draft/archive workflow.
+- **Dynamic photo gallery** -- Upload photos via admin with automatic Pillow optimization (resize to 2000px max, JPEG/PNG/WebP quality optimization). Magic byte validation and size limits.
+- **Invite-only testimonials** -- Generate tokens via admin or CLI for trusted contacts to submit reviews. Approve, feature, or hide from the review manager.
+- **Configurable everything** -- Toggle contact methods, pages, stats, blog, availability status, dark/light mode, and more from the settings panel. No code changes needed.
+- **Security hardened** -- CSRF protection, HTML sanitization (nh3), security response headers, admin session timeout, file upload validation, IP-restricted admin access.
+- **12-factor configuration** -- Environment variable overrides for all config values (`RESUME_SITE_*`), Docker/Podman secrets support for SMTP passwords.
+- **Database migrations** -- Numbered SQL migration system with auto-detection of existing databases, dry-run mode, and status reporting.
+- **GSAP animations** -- Scroll-triggered section reveals, staggered card animations, animated stat counters, hero entrance, page header reveals.
+- **Dark/light mode** -- Visitor toggle with admin-configurable default.
+- **Built-in analytics** -- Page view tracking stored in SQLite with dashboard overview. No cookies, no third parties. Auto-purge via CLI.
+- **Contact form** -- Honeypot spam protection, rate limiting, SMTP relay to your personal email. Visitors never see your address.
+- **SEO ready** -- Open Graph meta tags, auto-generated sitemap.xml, robots.txt.
+- **Mobile-first responsive** -- Equal priority desktop and mobile experience.
+- **Zero personal data in repo** -- All private info lives in your config file and database, never committed.
+- **CI pipeline** -- GitHub Actions running pytest + flake8 across Python 3.11/3.12 with container build verification and GHCR publishing.
 
 ## Tech Stack
 
@@ -127,27 +131,40 @@ Navigate to your site from a local or Tailscale IP and log in at `/admin`.
 ```
 resume-site/
 ├── app.py                        # Flask application entry point
+├── manage.py                     # CLI tools (migrate, hash-password, etc.)
+├── schema.sql                    # Database schema (baseline)
 ├── config.example.yaml           # Template for infrastructure config
+├── config.schema.json            # JSON Schema for config validation
 ├── requirements.txt              # Python dependencies
 ├── Containerfile                 # Multi-stage OCI container build
 ├── compose.yaml                  # Podman/Docker Compose deployment
 ├── resume-site.container         # Podman Quadlet unit file
-├── schema.sql                    # Database schema
-├── manage.py                     # CLI tools
+├── migrations/                   # Numbered SQL migration files
+│   ├── 001_baseline.sql
+│   └── 002_blog_tables.sql
 ├── .github/
 │   └── workflows/ci.yml          # CI + GHCR publishing pipeline
 ├── app/
 │   ├── __init__.py               # App factory + blueprint registration
-│   ├── models.py                 # Database models and queries
+│   ├── db.py                     # Database connection lifecycle
+│   ├── models.py                 # Read queries and data access layer
 │   ├── routes/
-│   │   ├── public.py             # Public page routes + sitemap/robots
+│   │   ├── public.py             # Public pages + sitemap/robots
 │   │   ├── admin.py              # Admin panel (content, photos, reviews,
 │   │   │                         #   tokens, settings, services, stats)
+│   │   ├── blog.py               # Public blog routes + RSS feed
+│   │   ├── blog_admin.py         # Blog admin CRUD
 │   │   ├── contact.py            # Contact form with honeypot + SMTP
 │   │   └── review.py             # Token-based review submission
 │   ├── services/
-│   │   ├── config.py             # YAML config loader
-│   │   ├── photos.py             # Photo upload, Pillow processing, deletion
+│   │   ├── config.py             # YAML config loader + env var overrides
+│   │   ├── blog.py               # Blog CRUD, slug generation, tags
+│   │   ├── content.py            # Content blocks + HTML sanitization
+│   │   ├── reviews.py            # Review lifecycle (approve/reject/tier)
+│   │   ├── settings_svc.py       # Settings registry + validation
+│   │   ├── service_items.py      # Service cards CRUD
+│   │   ├── stats.py              # Stat counters CRUD
+│   │   ├── photos.py             # Photo upload, Pillow processing
 │   │   ├── mail.py               # SMTP relay for contact form
 │   │   ├── analytics.py          # Page view tracking middleware
 │   │   └── tokens.py             # Review token validation
@@ -159,8 +176,13 @@ resume-site/
 │       ├── css/style.css         # Full dark/light theming, responsive
 │       └── js/main.js            # GSAP animations, dark/light toggle
 └── tests/
-    ├── conftest.py               # Pytest fixtures
-    └── test_app.py               # Route, auth, IP restriction tests
+    ├── conftest.py               # Pytest fixtures (app, client, auth_client)
+    ├── test_app.py               # Foundation + public page tests
+    ├── test_admin.py             # Admin CRUD tests
+    ├── test_blog.py              # Blog engine tests
+    ├── test_security.py          # CSRF, headers, sanitization tests
+    ├── test_migrations.py        # Migration system tests
+    └── test_integration.py       # End-to-end flow tests
 ```
 
 ## Configuration
@@ -188,15 +210,39 @@ admin:
     - "100.64.0.0/10"
 ```
 
+### Environment variable overrides
+
+All config.yaml values can be overridden with `RESUME_SITE_*` environment variables (12-factor app support):
+
+```bash
+RESUME_SITE_SECRET_KEY="your-secret"
+RESUME_SITE_DATABASE_PATH="/app/data/site.db"
+RESUME_SITE_SMTP_HOST="smtp.gmail.com"
+RESUME_SITE_SMTP_PASSWORD_FILE="/run/secrets/smtp_password"  # Docker/Podman secrets
+```
+
+Precedence: environment variables > config.yaml > built-in defaults.
+
 ### Admin panel (everything else)
 
-All content, display settings, contact visibility, page toggles, photo management, review moderation, and site appearance are managed through the admin panel. No container rebuild needed for content changes.
+All content, display settings, contact visibility, page toggles, photo management, review moderation, blog management, and site appearance are managed through the admin panel. No container rebuild needed for content changes.
 
 ## CLI Tools
 
 ```bash
-# Initialize the database
+# Initialize the database (runs all pending migrations)
 python manage.py init-db
+
+# Apply pending database migrations
+python manage.py migrate
+python manage.py migrate --status     # Show applied/pending
+python manage.py migrate --dry-run    # Preview without executing
+
+# Validate config.yaml structure
+python manage.py config
+
+# Generate a cryptographically secure secret key
+python manage.py generate-secret
 
 # Generate an admin password hash
 python manage.py hash-password

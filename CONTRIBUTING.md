@@ -38,26 +38,49 @@ If your feature adds or modifies database tables:
 5. Test on an existing database: `python manage.py migrate`
 6. Never modify an existing migration file that has been released
 
-## Adding Translations (v0.2.0+)
-
-To contribute a translation:
-
-1. Run `python manage.py translations init <locale>` (e.g., `es` for Spanish)
-2. Edit the generated `.po` file in `translations/<locale>/LC_MESSAGES/messages.po`
-3. Use a tool like [Poedit](https://poedit.net/) or edit the `.po` file directly
-4. Run `python manage.py translations compile`
-5. Test by setting the locale in your browser or via URL prefix
-6. Submit a PR with the `.po` file (not the compiled `.mo`)
-
 ## Project Architecture
 
 Understanding the separation of concerns helps when contributing:
 
-- **`config.yaml`** — Infrastructure and secrets only (SMTP, secret key, database path, admin credentials). Never display or content settings.
-- **`settings` table** — Everything the admin UI controls (display toggles, appearance, content settings).
-- **`app/models.py`** — Read queries. Functions that return data from the database.
-- **`app/services/`** — Business logic and write operations. Input validation, file processing, external integrations.
-- **`app/routes/`** — Thin controllers. Validate request, call a service or model, render response.
+- **`config.yaml`** -- Infrastructure and secrets only (SMTP, secret key, database path, admin credentials). Never display or content settings.
+- **`settings` table** -- Everything the admin UI controls (display toggles, appearance, content settings).
+- **`app/db.py`** -- Database connection lifecycle. Single source of truth for `get_db()`.
+- **`app/models.py`** -- Read queries. Functions that return data from the database.
+- **`app/services/`** -- Business logic and write operations. Input validation, file processing, external integrations.
+- **`app/routes/`** -- Thin controllers. Validate request, call a service or model, render response.
+
+## Adding a Translation
+
+The project uses Flask-Babel for internationalization. All user-facing strings are marked for translation and the English (`en`) catalog ships as the reference.
+
+To add a new language (e.g., Spanish):
+
+1. Extract the latest strings (if not already up to date):
+   ```bash
+   python manage.py translations extract
+   ```
+2. Initialize the new locale:
+   ```bash
+   python manage.py translations init --locale es
+   ```
+3. Edit `translations/es/LC_MESSAGES/messages.po` with a PO editor ([Poedit](https://poedit.net/), [Weblate](https://weblate.org/), or any text editor). Translate the `msgstr` for each `msgid`.
+4. Compile the translations:
+   ```bash
+   python manage.py translations compile
+   ```
+5. Enable the locale in the admin settings: set **Available Locales** to `en,es`.
+6. Test by visiting `/set-locale/es` or using the language switcher in the navbar.
+
+When updating an existing translation after new strings are added:
+
+```bash
+python manage.py translations extract
+python manage.py translations update
+# Edit the .po file to translate new entries (marked "fuzzy" or empty)
+python manage.py translations compile
+```
+
+Translation files use the standard `.po` format and are compatible with tools like Poedit, Weblate, and Transifex.
 
 ## Reporting Bugs
 

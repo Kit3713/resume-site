@@ -4,4 +4,5 @@ PyYAML==6.0.2
 Flask-Login==0.6.3
 Pillow>=11.1.0
 Flask-WTF==1.2.2
+Flask-Babel==4.0.0
 nh3==0.2.21

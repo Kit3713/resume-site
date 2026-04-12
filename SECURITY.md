@@ -35,8 +35,7 @@ resume-site uses a defense-in-depth approach:
 - `X-Frame-Options: DENY`
 - `Referrer-Policy: strict-origin-when-cross-origin`
 - `Permissions-Policy` restricting device APIs
-- `Content-Security-Policy` (report-only initially)
-- `Strict-Transport-Security` when behind HTTPS
+- `Cache-Control: no-store` on admin pages
 
 ### Container
 - Non-root user in container image (v0.2.0+)

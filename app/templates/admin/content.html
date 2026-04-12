@@ -1,19 +1,19 @@
 {# Content Block List — Table of all editable content blocks with edit links. #}
 {% extends "admin/base_admin.html" %}
 
-{% block title %}Content{% endblock %}
+{% block title %}{{ _('Content') }}{% endblock %}
 
 {% block content %}
 <div class="admin-page">
     <div class="admin-page__header">
-        <h1 class="admin-page__title">Content Blocks</h1>
-        <a href="{{ url_for('admin.content_new') }}" class="btn btn--primary btn--sm">New Block</a>
+        <h1 class="admin-page__title">{{ _('Content Blocks') }}</h1>
+        <a href="{{ url_for('admin.content_new') }}" class="btn btn--primary btn--sm">{{ _('New Block') }}</a>
     </div>
 
     {% if blocks %}
     <table class="admin-table">
         <thead>
-            <tr><th>Slug</th><th>Title</th><th>Last Updated</th><th>Actions</th></tr>
+            <tr><th>{{ _('Slug') }}</th><th>{{ _('Title') }}</th><th>{{ _('Last Updated') }}</th><th>{{ _('Actions') }}</th></tr>
         </thead>
         <tbody>
             {% for block in blocks %}
@@ -21,13 +21,13 @@
                 <td><code>{{ block.slug }}</code></td>
                 <td>{{ block.title or '—' }}</td>
                 <td>{{ block.updated_at[:10] }}</td>
-                <td><a href="{{ url_for('admin.content_edit', slug=block.slug) }}" class="btn btn--secondary btn--sm">Edit</a></td>
+                <td><a href="{{ url_for('admin.content_edit', slug=block.slug) }}" class="btn btn--secondary btn--sm">{{ _('Edit') }}</a></td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
     {% else %}
-    <p class="admin-empty">No content blocks yet. Create one to manage section text.</p>
+    <p class="admin-empty">{{ _('No content blocks yet. Create one to manage section text.') }}</p>
     {% endif %}
 </div>
 {% endblock %}

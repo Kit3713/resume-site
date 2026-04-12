@@ -15,25 +15,22 @@ Token lifecycle:
 Tokens may optionally have an expiration date (expires_at field).
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def validate_token(db, token_string):
     """Validate a review invitation token.
 
     Checks whether the token exists, hasn't been used, and hasn't expired.
-    Returns a tuple of (token_row, error_string) where error is None if
-    the token is valid.
 
     Args:
         db: The SQLite database connection.
         token_string: The URL-safe token string from the URL path.
 
     Returns:
-        tuple: (token_row, error) where:
-            - token_row is the sqlite3.Row object (or None if not found)
-            - error is None (valid), 'invalid' (not found), 'used' (already
-              submitted), or 'expired' (past expiration date)
+        tuple: (token_row, error) where token_row is the sqlite3.Row
+        (or None if not found) and error is one of None, 'invalid',
+        'used', or 'expired'.
     """
     row = db.execute(
         'SELECT * FROM review_tokens WHERE token = ?', (token_string,)
@@ -45,14 +42,14 @@ def validate_token(db, token_string):
     if row['used']:
         return row, 'used'
 
-    # Check optional expiration date
     if row['expires_at']:
         try:
             expires = datetime.fromisoformat(row['expires_at'])
-            if datetime.utcnow() > expires:
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) > expires:
                 return row, 'expired'
         except ValueError:
-            # Malformed date — treat as non-expiring rather than blocking
-            pass
+            pass  # Malformed date — treat as non-expiring
 
     return row, None

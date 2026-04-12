@@ -1,9 +1,6 @@
 {#
   Project Detail Page — Full write-up for a single project
 
-  Only accessible for projects with has_detail_page=1. The route returns
-  404 for projects that don't have detail pages enabled.
-
   Context variables (from public.project_detail route):
   - project: The projects row (title, summary, description HTML, tech_stack, etc.)
 #}
@@ -14,7 +11,7 @@
 {% block content %}
 <section class="page-header">
     <div class="page-header__container">
-        <a href="{{ url_for('public.projects') }}" class="page-header__back">&larr; Back to Projects</a>
+        <a href="{{ url_for('public.projects') }}" class="page-header__back">&larr; {{ _('Back to Projects') }}</a>
         <h1 class="page-header__title">{{ project.title }}</h1>
         {% if project.summary %}
         <p class="page-header__subtitle">{{ project.summary }}</p>
@@ -51,7 +48,7 @@
 
             <div class="project-detail__actions">
                 {% if project.github_url %}
-                <a href="{{ project.github_url }}" class="btn btn--secondary" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+                <a href="{{ project.github_url }}" class="btn btn--secondary" target="_blank" rel="noopener noreferrer">{{ _('View on GitHub') }}</a>
                 {% endif %}
             </div>
         </div>

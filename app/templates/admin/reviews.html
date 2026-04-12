@@ -1,17 +1,17 @@
 {# Review Manager — Approve/reject pending reviews, update display tiers for approved reviews. #}
 {% extends "admin/base_admin.html" %}
 
-{% block title %}Reviews{% endblock %}
+{% block title %}{{ _('Reviews') }}{% endblock %}
 
 {% block content %}
 <div class="admin-page">
     <div class="admin-page__header">
-        <h1 class="admin-page__title">Review Manager</h1>
+        <h1 class="admin-page__title">{{ _('Review Manager') }}</h1>
     </div>
 
     {% if pending %}
     <div class="admin-section">
-        <h2 class="admin-section__title">Pending ({{ pending|length }})</h2>
+        <h2 class="admin-section__title">{{ _('Pending') }} ({{ pending|length }})</h2>
         {% for review in pending %}
         <div class="admin-review-card admin-review-card--pending">
             <div class="admin-review-card__content">
@@ -31,8 +31,8 @@
                     <option value="standard">Standard</option>
                     <option value="featured">Featured</option>
                 </select>
-                <button type="submit" name="action" value="approve" class="btn btn--primary btn--sm">Approve</button>
-                <button type="submit" name="action" value="reject" class="btn btn--danger btn--sm">Reject</button>
+                <button type="submit" name="action" value="approve" class="btn btn--primary btn--sm">{{ _('Approve') }}</button>
+                <button type="submit" name="action" value="reject" class="btn btn--danger btn--sm">{{ _('Reject') }}</button>
             </form>
         </div>
         {% endfor %}
@@ -41,7 +41,7 @@
 
     {% if approved %}
     <div class="admin-section">
-        <h2 class="admin-section__title">Approved ({{ approved|length }})</h2>
+        <h2 class="admin-section__title">{{ _('Approved') }} ({{ approved|length }})</h2>
         {% for review in approved %}
         <div class="admin-review-card">
             <div class="admin-review-card__content">
@@ -56,7 +56,7 @@
                     <option value="featured" {{ 'selected' if review.display_tier == 'featured' }}>Featured</option>
                     <option value="hidden" {{ 'selected' if review.display_tier == 'hidden' }}>Hidden</option>
                 </select>
-                <button type="submit" name="action" value="update_tier" class="btn btn--secondary btn--sm">Update</button>
+                <button type="submit" name="action" value="update_tier" class="btn btn--secondary btn--sm">{{ _('Update') }}</button>
             </form>
         </div>
         {% endfor %}
@@ -64,7 +64,7 @@
     {% endif %}
 
     {% if not pending and not approved and not rejected %}
-    <p class="admin-empty">No reviews yet. Generate tokens to invite reviewers.</p>
+    <p class="admin-empty">{{ _('No reviews yet. Generate tokens to invite reviewers.') }}</p>
     {% endif %}
 </div>
 {% endblock %}

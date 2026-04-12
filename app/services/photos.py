@@ -44,6 +44,17 @@ _MAGIC_BYTES = {
 _DEFAULT_MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
+def _get_photo_dir():
+    """Resolve the photo storage directory to an absolute path."""
+    photo_dir = current_app.config['PHOTO_STORAGE']
+    if not os.path.isabs(photo_dir):
+        photo_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            photo_dir,
+        )
+    return photo_dir
+
+
 def _validate_magic_bytes(file_storage, ext):
     """Verify the file's magic bytes match its claimed extension.
 
@@ -138,13 +149,7 @@ def process_upload(file_storage):
     # Generate a unique storage filename (UUID prevents collisions and path traversal)
     storage_name = f"{uuid.uuid4().hex}{ext}"
 
-    # Resolve the photo storage directory (absolute or relative to project root)
-    photo_dir = current_app.config['PHOTO_STORAGE']
-    if not os.path.isabs(photo_dir):
-        photo_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            photo_dir,
-        )
+    photo_dir = _get_photo_dir()
     os.makedirs(photo_dir, exist_ok=True)
 
     file_path = os.path.join(photo_dir, storage_name)
@@ -208,14 +213,8 @@ def serve_photo(storage_name):
     Returns:
         Response: The file response, or aborts with 404 if not found.
     """
-    photo_dir = current_app.config['PHOTO_STORAGE']
-    if not os.path.isabs(photo_dir):
-        photo_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            photo_dir,
-        )
-    file_path = os.path.join(photo_dir, storage_name)
-    if not os.path.exists(file_path):
+    photo_dir = _get_photo_dir()
+    if not os.path.exists(os.path.join(photo_dir, storage_name)):
         abort(404)
     return send_from_directory(photo_dir, storage_name)
 
@@ -230,12 +229,6 @@ def delete_photo_file(storage_name):
     Args:
         storage_name: The UUID-based filename to delete.
     """
-    photo_dir = current_app.config['PHOTO_STORAGE']
-    if not os.path.isabs(photo_dir):
-        photo_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            photo_dir,
-        )
-    file_path = os.path.join(photo_dir, storage_name)
+    file_path = os.path.join(_get_photo_dir(), storage_name)
     if os.path.exists(file_path):
         os.remove(file_path)

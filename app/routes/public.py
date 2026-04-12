@@ -26,7 +26,7 @@ URL structure:
 
 import os
 
-from flask import Blueprint, render_template, abort, send_from_directory, request, make_response
+from flask import Blueprint, render_template, abort, send_from_directory, request, make_response, jsonify
 
 from app.db import get_db
 from app.models import (
@@ -315,3 +315,14 @@ def robots():
     response = make_response(txt)
     response.headers['Content-Type'] = 'text/plain'
     return response
+
+
+@public_bp.route('/healthz')
+def healthz():
+    """Lightweight health check endpoint for container orchestration.
+
+    Returns a simple JSON response without hitting the database or
+    rendering templates. Used by Podman/Docker HEALTHCHECK and
+    load balancers.
+    """
+    return jsonify(status='ok'), 200

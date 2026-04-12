@@ -43,7 +43,7 @@
                 <time datetime="{{ post.published_at }}">{{ post.published_at[:10] }}</time>
                 {% endif %}
                 {% if show_reading_time and post.reading_time %}
-                <span>{{ post.reading_time }} min read</span>
+                <span>{{ _('%(time)s min read', time=post.reading_time) }}</span>
                 {% endif %}
             </div>
             {% if tags %}
@@ -68,7 +68,7 @@
             <div class="blog-nav">
                 {% if prev_post %}
                 <a href="{{ url_for('blog.blog_post', slug=prev_post.slug) }}" class="blog-nav__link blog-nav__link--prev">
-                    <span class="blog-nav__label">Previous</span>
+                    <span class="blog-nav__label">{{ _('Previous') }}</span>
                     <span class="blog-nav__title">{{ prev_post.title }}</span>
                 </a>
                 {% else %}
@@ -76,7 +76,7 @@
                 {% endif %}
                 {% if next_post %}
                 <a href="{{ url_for('blog.blog_post', slug=next_post.slug) }}" class="blog-nav__link blog-nav__link--next">
-                    <span class="blog-nav__label">Next</span>
+                    <span class="blog-nav__label">{{ _('Next') }}</span>
                     <span class="blog-nav__title">{{ next_post.title }}</span>
                 </a>
                 {% endif %}

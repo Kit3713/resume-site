@@ -12,6 +12,7 @@ blueprint is registered with the /admin prefix).
 """
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask_babel import gettext as _
 from flask_login import login_required
 
 from app.db import get_db
@@ -21,6 +22,7 @@ from app.services.blog import (
     create_post, update_post, publish_post, unpublish_post,
     archive_post, delete_post,
 )
+from app.services.activity_log import log_action
 
 blog_admin_bp = Blueprint('blog_admin', __name__, template_folder='../templates')
 
@@ -52,7 +54,7 @@ def blog_new():
         db = get_db()
         title = request.form.get('title', '').strip()
         if not title:
-            flash('Title is required.', 'error')
+            flash(_('Title is required.'), 'error')
             return render_template('admin/blog_edit.html', post=None, tags_str='')
 
         post_id = create_post(
@@ -71,9 +73,17 @@ def blog_new():
         action = request.form.get('action', 'save')
         if action == 'publish':
             publish_post(db, post_id)
-            flash('Post published.', 'success')
+            flash(_('Post published.'), 'success')
+            try:
+                log_action(db, 'Published post', 'blog', title)
+            except Exception:
+                pass
         else:
-            flash('Draft saved.', 'success')
+            flash(_('Draft saved.'), 'success')
+            try:
+                log_action(db, 'Created draft', 'blog', title)
+            except Exception:
+                pass
 
         return redirect(url_for('blog_admin.blog_edit', post_id=post_id))
 
@@ -87,13 +97,13 @@ def blog_edit(post_id):
     db = get_db()
     post = get_post_by_id(db, post_id)
     if not post:
-        flash('Post not found.', 'error')
+        flash(_('Post not found.'), 'error')
         return redirect(url_for('blog_admin.blog_list'))
 
     if request.method == 'POST':
         title = request.form.get('title', '').strip()
         if not title:
-            flash('Title is required.', 'error')
+            flash(_('Title is required.'), 'error')
             tags = get_tags_for_post(db, post_id)
             tags_str = ', '.join(t['name'] for t in tags)
             return render_template('admin/blog_edit.html', post=post, tags_str=tags_str)
@@ -116,15 +126,15 @@ def blog_edit(post_id):
         action = request.form.get('action', 'save')
         if action == 'publish':
             publish_post(db, post_id)
-            flash('Post published.', 'success')
+            flash(_('Post published.'), 'success')
         elif action == 'unpublish':
             unpublish_post(db, post_id)
-            flash('Post reverted to draft.', 'success')
+            flash(_('Post reverted to draft.'), 'success')
         elif action == 'archive':
             archive_post(db, post_id)
-            flash('Post archived.', 'success')
+            flash(_('Post archived.'), 'success')
         else:
-            flash('Post saved.', 'success')
+            flash(_('Post saved.'), 'success')
 
         return redirect(url_for('blog_admin.blog_edit', post_id=post_id))
 
@@ -138,6 +148,12 @@ def blog_edit(post_id):
 def blog_delete(post_id):
     """Permanently delete a blog post."""
     db = get_db()
+    post = get_post_by_id(db, post_id)
+    detail = post['title'] if post else f'ID {post_id}'
     delete_post(db, post_id)
-    flash('Post deleted.', 'success')
+    try:
+        log_action(db, 'Deleted post', 'blog', detail)
+    except Exception:
+        pass
+    flash(_('Post deleted.'), 'success')
     return redirect(url_for('blog_admin.blog_list'))

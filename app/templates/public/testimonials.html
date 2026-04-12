@@ -1,10 +1,6 @@
 {#
   Testimonials Page — Featured and Standard Review Display
 
-  Shows approved reviews in two tiers: featured (large quote cards at top)
-  and standard (smaller grid cards below). Each card displays the reviewer's
-  name, title, message, optional star rating, and type badge.
-
   Context variables (from public.testimonials route):
   - featured:     Approved reviews with display_tier='featured'
   - standard:     Approved reviews with display_tier='standard'
@@ -12,13 +8,13 @@
 #}
 {% extends "base.html" %}
 
-{% block title %}Testimonials — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
+{% block title %}{{ _('Testimonials') }} — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
 
 {% block content %}
 <section class="page-header">
     <div class="page-header__container">
-        <h1 class="page-header__title">Testimonials</h1>
-        <p class="page-header__subtitle">What people are saying</p>
+        <h1 class="page-header__title">{{ _('Testimonials') }}</h1>
+        <p class="page-header__subtitle">{{ _('What people are saying') }}</p>
     </div>
 </section>
 
@@ -88,7 +84,7 @@
         <div class="section__container">
             <div class="empty-state">
                 <svg class="empty-state__icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                <p class="empty-state__text">Testimonials coming soon.</p>
+                <p class="empty-state__text">{{ _('Testimonials coming soon.') }}</p>
             </div>
         </div>
     </section>
