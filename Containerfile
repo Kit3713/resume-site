@@ -1,34 +1,64 @@
-FROM python:3.12-slim AS base
+# =============================================================
+# resume-site Containerfile
+# Multi-stage build, non-root, minimal attack surface
+# =============================================================
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+# --- Stage 1: Builder ---
+FROM python:3.12-slim AS builder
 
-# Create non-root user
-RUN groupadd --gid 1000 appuser && \
-    useradd --uid 1000 --gid 1000 --create-home appuser
+WORKDIR /build
+
+# Install build dependencies only in builder stage
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc libc6-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# --- Stage 2: Runtime ---
+FROM python:3.12-slim AS runtime
+
+# OCI image labels
+LABEL org.opencontainers.image.title="resume-site" \
+      org.opencontainers.image.description="Self-hosted portfolio and blog engine" \
+      org.opencontainers.image.source="https://github.com/Kit3713/resume-site" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.authors="Kit3713"
+
+# Install only runtime system deps (curl for healthcheck)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/* && \
+    # Create non-root user
+    groupadd -r appuser -g 1000 && \
+    useradd -r -u 1000 -g appuser -d /app -s /sbin/nologin appuser
 
 WORKDIR /app
 
-# Install dependencies (layer caching: only re-run if requirements change)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy Python packages from builder
+COPY --from=builder /install /usr/local
 
-# Copy application code
-COPY app.py manage.py schema.sql config.example.yaml ./
-COPY app/ app/
+# Copy application code (respects .containerignore)
+COPY app/ ./app/
+COPY app.py manage.py schema.sql ./
+COPY migrations/ ./migrations/
 
-# Create volume mount points
-RUN mkdir -p /app/data /app/photos && \
+# Create writable directories and set ownership
+RUN mkdir -p /app/data /app/photos /app/uploads && \
     chown -R appuser:appuser /app
 
+# Switch to non-root user
 USER appuser
 
+# Expose port
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/')" || exit 1
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8080/ || exit 1
 
-# Gunicorn: 2 workers (SQLite doesn't benefit from many concurrent writers)
+# Run with Gunicorn
 ENTRYPOINT ["gunicorn", \
     "--bind", "0.0.0.0:8080", \
     "--workers", "2", \

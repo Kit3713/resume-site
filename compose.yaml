@@ -1,0 +1,39 @@
+# =============================================================
+# resume-site compose.yaml
+# Works with both `podman compose` and `docker compose`
+#
+# Usage:
+#   1. Copy config.example.yaml to config.yaml and edit
+#   2. podman compose up -d
+#   3. podman compose exec resume-site python manage.py init-db
+#   4. Access admin at http://localhost:8080/admin
+# =============================================================
+
+services:
+  resume-site:
+    image: ghcr.io/kit3713/resume-site:latest
+    container_name: resume-site
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro,Z
+      - resume-site-data:/app/data:Z
+      - resume-site-photos:/app/photos:Z
+    # Uncomment to use Podman secrets for SMTP password:
+    # secrets:
+    #   - smtp_password
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  resume-site-data:
+  resume-site-photos:
+
+# secrets:
+#   smtp_password:
+#     file: ./smtp_password.txt
