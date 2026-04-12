@@ -1,0 +1,88 @@
+{#
+  Blog Post — Full article display with metadata and navigation
+
+  Context variables (from blog.blog_post):
+  - post:              The blog_posts row
+  - tags:              List of blog_tags rows for this post
+  - show_reading_time: Boolean — whether to display reading time
+  - prev_post:         Previous post (slug, title) or None
+  - next_post:         Next post (slug, title) or None
+#}
+{% extends "base.html" %}
+
+{% block title %}{{ post.title }} — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
+{% block meta_description %}{{ post.meta_description or post.summary }}{% endblock %}
+{% block og_title %}{{ post.title }}{% endblock %}
+
+{% block head_extra %}
+{% if post.cover_image %}
+<meta property="og:image" content="{{ post.cover_image }}">
+{% endif %}
+<meta property="og:type" content="article">
+{% if post.published_at %}
+<meta property="article:published_time" content="{{ post.published_at }}">
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<article class="blog-article">
+    {% if post.cover_image %}
+    <div class="blog-article__hero">
+        <img src="{{ post.cover_image }}" alt="{{ post.title }}" class="blog-article__hero-img">
+    </div>
+    {% endif %}
+
+    <header class="blog-article__header">
+        <div class="blog-article__container">
+            <h1 class="blog-article__title">{{ post.title }}</h1>
+            <div class="blog-article__meta">
+                {% if post.author %}
+                <span class="blog-article__author">{{ post.author }}</span>
+                {% endif %}
+                {% if post.published_at %}
+                <time datetime="{{ post.published_at }}">{{ post.published_at[:10] }}</time>
+                {% endif %}
+                {% if show_reading_time and post.reading_time %}
+                <span>{{ post.reading_time }} min read</span>
+                {% endif %}
+            </div>
+            {% if tags %}
+            <div class="blog-article__tags">
+                {% for tag in tags %}
+                <a href="{{ url_for('blog.blog_tag', tag_slug=tag.slug) }}" class="tag">{{ tag.name }}</a>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </header>
+
+    <div class="blog-article__content">
+        <div class="blog-article__container">
+            {{ post.content | safe }}
+        </div>
+    </div>
+
+    {% if prev_post or next_post %}
+    <nav class="blog-article__nav">
+        <div class="blog-article__container">
+            <div class="blog-nav">
+                {% if prev_post %}
+                <a href="{{ url_for('blog.blog_post', slug=prev_post.slug) }}" class="blog-nav__link blog-nav__link--prev">
+                    <span class="blog-nav__label">Previous</span>
+                    <span class="blog-nav__title">{{ prev_post.title }}</span>
+                </a>
+                {% else %}
+                <div></div>
+                {% endif %}
+                {% if next_post %}
+                <a href="{{ url_for('blog.blog_post', slug=next_post.slug) }}" class="blog-nav__link blog-nav__link--next">
+                    <span class="blog-nav__label">Next</span>
+                    <span class="blog-nav__title">{{ next_post.title }}</span>
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </nav>
+    {% endif %}
+</article>
+{% endblock %}

@@ -1,0 +1,60 @@
+{# Blog Manager — List, filter, and manage blog posts. #}
+{% extends "admin/base_admin.html" %}
+
+{% block title %}Blog{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+    <div class="admin-page__header">
+        <h1 class="admin-page__title">Blog Posts</h1>
+        <a href="{{ url_for('blog_admin.blog_new') }}" class="btn btn--primary btn--sm">New Post</a>
+    </div>
+
+    <!-- Status Filter Tabs -->
+    <div class="admin-tabs">
+        <a href="{{ url_for('blog_admin.blog_list') }}" class="admin-tab {{ 'admin-tab--active' if not status_filter }}">All</a>
+        <a href="{{ url_for('blog_admin.blog_list', status='draft') }}" class="admin-tab {{ 'admin-tab--active' if status_filter == 'draft' }}">Drafts</a>
+        <a href="{{ url_for('blog_admin.blog_list', status='published') }}" class="admin-tab {{ 'admin-tab--active' if status_filter == 'published' }}">Published</a>
+        <a href="{{ url_for('blog_admin.blog_list', status='archived') }}" class="admin-tab {{ 'admin-tab--active' if status_filter == 'archived' }}">Archived</a>
+    </div>
+
+    {% if posts %}
+    <div class="admin-section">
+        {% for post in posts %}
+        <div class="admin-list-item">
+            <div class="admin-list-item__content">
+                <div class="admin-list-item__title">
+                    <a href="{{ url_for('blog_admin.blog_edit', post_id=post.id) }}">{{ post.title }}</a>
+                    {% if post.featured %}
+                    <span class="admin-badge admin-badge--accent">Featured</span>
+                    {% endif %}
+                </div>
+                <div class="admin-list-item__meta">
+                    <span class="admin-badge admin-badge--{{ 'success' if post.status == 'published' else ('warning' if post.status == 'draft' else 'muted') }}">{{ post.status }}</span>
+                    {% if post.reading_time %}
+                    <span>{{ post.reading_time }} min read</span>
+                    {% endif %}
+                    {% if post.published_at %}
+                    <span>Published {{ post.published_at[:10] }}</span>
+                    {% else %}
+                    <span>Created {{ post.created_at[:10] }}</span>
+                    {% endif %}
+                </div>
+                {% if post.summary %}
+                <p class="admin-list-item__summary">{{ post.summary[:120] }}{{ '...' if post.summary|length > 120 }}</p>
+                {% endif %}
+            </div>
+            <div class="admin-list-item__actions">
+                <a href="{{ url_for('blog_admin.blog_edit', post_id=post.id) }}" class="btn btn--secondary btn--sm">Edit</a>
+                <form method="POST" action="{{ url_for('blog_admin.blog_delete', post_id=post.id) }}" style="display:inline">
+                    <button type="submit" class="btn btn--danger btn--sm" onclick="return confirm('Delete this post permanently?')">Delete</button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="admin-empty">No {{ status_filter + ' ' if status_filter else '' }}posts yet. <a href="{{ url_for('blog_admin.blog_new') }}">Create one</a>.</p>
+    {% endif %}
+</div>
+{% endblock %}

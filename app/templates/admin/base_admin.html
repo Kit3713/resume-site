@@ -40,6 +40,7 @@
                 <a href="{{ url_for('admin.stats') }}" class="admin-sidebar__link {% if 'stats' in request.endpoint %}admin-sidebar__link--active{% endif %}">Stats</a>
                 <a href="{{ url_for('admin.reviews') }}" class="admin-sidebar__link {% if 'reviews' in request.endpoint %}admin-sidebar__link--active{% endif %}">Reviews</a>
                 <a href="{{ url_for('admin.tokens') }}" class="admin-sidebar__link {% if 'tokens' in request.endpoint %}admin-sidebar__link--active{% endif %}">Tokens</a>
+                <a href="{{ url_for('blog_admin.blog_list') }}" class="admin-sidebar__link {% if 'blog' in request.endpoint %}admin-sidebar__link--active{% endif %}">Blog</a>
                 <a href="{{ url_for('admin.settings') }}" class="admin-sidebar__link {% if request.endpoint == 'admin.settings' %}admin-sidebar__link--active{% endif %}">Settings</a>
             </nav>
             <div class="admin-sidebar__footer">

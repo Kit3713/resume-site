@@ -100,11 +100,15 @@ def create_app(config_path=None):
     # --- 5. Blueprint registration ---
     from app.routes.public import public_bp
     from app.routes.admin import admin_bp
+    from app.routes.blog_admin import blog_admin_bp
+    from app.routes.blog import blog_bp
     from app.routes.contact import contact_bp
     from app.routes.review import review_bp
 
     app.register_blueprint(public_bp)
     app.register_blueprint(admin_bp, url_prefix='/admin')
+    app.register_blueprint(blog_admin_bp, url_prefix='/admin')
+    app.register_blueprint(blog_bp)
     app.register_blueprint(contact_bp)
     app.register_blueprint(review_bp)
 

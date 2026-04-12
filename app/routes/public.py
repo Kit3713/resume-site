@@ -277,6 +277,15 @@ def sitemap():
         for s in studies:
             pages.append((f"/portfolio/{s['slug']}", '0.6'))
 
+    # Add blog pages if the blog is enabled
+    if get_setting(db, 'blog_enabled', 'false') == 'true':
+        pages.append(('/blog', '0.8'))
+        blog_posts = db.execute(
+            "SELECT slug FROM blog_posts WHERE status = 'published'"
+        ).fetchall()
+        for bp in blog_posts:
+            pages.append((f"/blog/{bp['slug']}", '0.6'))
+
     # Build the XML response
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
     xml += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'

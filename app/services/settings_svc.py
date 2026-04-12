@@ -33,6 +33,11 @@ SETTINGS_REGISTRY = {
     'accent_color':             {'type': 'color', 'default': '#0071e3'},
     'logo_mode':                {'type': 'str',   'default': 'title'},
     'footer_text':              {'type': 'str',   'default': ''},
+    'blog_enabled':             {'type': 'bool',  'default': 'false'},
+    'blog_title':               {'type': 'str',   'default': 'Blog'},
+    'posts_per_page':           {'type': 'int',   'default': '10'},
+    'show_reading_time':        {'type': 'bool',  'default': 'true'},
+    'enable_rss':               {'type': 'bool',  'default': 'true'},
 }
 
 # Keys managed by the settings form (ordered list for the admin view).

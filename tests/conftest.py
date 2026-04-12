@@ -49,12 +49,25 @@ def _write_test_config(tmp_path):
 
 
 def _init_test_db(db_path):
-    """Initialize a test database from schema.sql."""
+    """Initialize a test database from schema.sql + all migrations."""
     schema_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'schema.sql')
     with open(schema_path, 'r') as f:
         schema = f.read()
     conn = sqlite3.connect(db_path)
     conn.executescript(schema)
+
+    # Apply any additional migrations beyond the baseline schema
+    migrations_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'migrations')
+    if os.path.isdir(migrations_dir):
+        for fname in sorted(os.listdir(migrations_dir)):
+            if fname.endswith('.sql') and fname[0].isdigit():
+                version = int(fname.split('_')[0])
+                if version <= 1:
+                    continue  # baseline is covered by schema.sql
+                migration_path = os.path.join(migrations_dir, fname)
+                with open(migration_path, 'r') as f:
+                    conn.executescript(f.read())
+
     conn.close()
 
 

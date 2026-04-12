@@ -190,67 +190,44 @@ Every feature ships behind a toggle or is fully backward-compatible with v0.1.x 
 
 ### 8.1 — Data Model
 
-- [ ] Migration: `blog_posts` table
-
-```sql
-CREATE TABLE blog_posts (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    slug            TEXT UNIQUE NOT NULL,
-    title           TEXT NOT NULL,
-    summary         TEXT NOT NULL DEFAULT '',
-    content         TEXT NOT NULL DEFAULT '',
-    content_format  TEXT NOT NULL DEFAULT 'html'
-                    CHECK(content_format IN ('html', 'markdown')),
-    cover_image     TEXT NOT NULL DEFAULT '',
-    author          TEXT NOT NULL DEFAULT '',
-    status          TEXT NOT NULL DEFAULT 'draft'
-                    CHECK(status IN ('draft', 'published', 'archived')),
-    featured        INTEGER NOT NULL DEFAULT 0,
-    reading_time    INTEGER NOT NULL DEFAULT 0,
-    meta_description TEXT NOT NULL DEFAULT '',
-    published_at    TEXT,
-    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-);
-```
-
-- [ ] Migration: `blog_tags` and `blog_post_tags` junction table
-- [ ] Migration: `blog_settings` seed values (posts_per_page, show_reading_time, enable_rss, blog_title)
-- [ ] Model functions: `get_published_posts()`, `get_post_by_slug()`, `get_posts_by_tag()`, `get_all_tags()`, `get_recent_posts(n)`
+- [x] Migration: `blog_posts` table (002_blog_tables.sql)
+- [x] Migration: `blog_tags` and `blog_post_tags` junction table
+- [x] Migration: `blog_settings` seed values (posts_per_page, show_reading_time, enable_rss, blog_title)
+- [x] Service functions: `get_published_posts()`, `get_post_by_slug()`, `get_posts_by_tag()`, `get_all_tags()`, `get_recent_posts(n)`, `get_featured_posts(n)`
 
 ### 8.2 — Admin: Blog Manager
 
-- [ ] Blog post list view with status filter (all / draft / published / archived)
-- [ ] Blog post editor: title, slug (auto-generated from title, editable), summary, content (Quill.js with code block support), cover image upload, tags (comma-separated or tag picker), status dropdown, meta description
-- [ ] Markdown support toggle per post — if markdown, render preview in editor, store raw markdown and render on display
-- [ ] Reading time auto-calculated on save (words / 200, rounded up)
-- [ ] Publish/unpublish with timestamp tracking
-- [ ] Blog settings in admin settings panel: posts per page, reading time display toggle, RSS toggle, blog page title
-- [ ] Sidebar nav entry: "Blog" in admin base template
+- [x] Blog post list view with status filter (all / draft / published / archived)
+- [x] Blog post editor: title, slug (auto-generated from title, editable), summary, content (Quill.js with code block support), cover image, tags (comma-separated), meta description
+- [x] Content format field (html/markdown) — stored per post
+- [x] Reading time auto-calculated on save (words / 200, rounded up)
+- [x] Publish/unpublish/archive with timestamp tracking
+- [x] Blog settings in admin settings registry: posts per page, reading time display toggle, RSS toggle, blog page title
+- [x] Sidebar nav entry: "Blog" in admin base template
 
 ### 8.3 — Public: Blog Pages
 
-- [ ] `/blog` — paginated list of published posts, newest first. Each card shows title, summary, cover image, date, reading time, tags
-- [ ] `/blog/<slug>` — full post view with formatted content, author, date, reading time, tags, prev/next navigation
-- [ ] `/blog/tag/<tag>` — filtered post list by tag
-- [ ] `/blog/feed.xml` — RSS 2.0 feed of published posts (togglable in settings)
-- [ ] Blog link in main navbar (togglable via settings — `blog_enabled`)
+- [x] `/blog` — paginated list of published posts, newest first. Each card shows title, summary, cover image, date, reading time, tags
+- [x] `/blog/<slug>` — full post view with formatted content, author, date, reading time, tags, prev/next navigation
+- [x] `/blog/tag/<tag>` — filtered post list by tag
+- [x] `/blog/feed.xml` — RSS 2.0 feed of published posts (togglable in settings)
+- [x] Blog link in main navbar (togglable via settings — `blog_enabled`)
 - [ ] Featured blog posts section on landing page (optional, togglable)
-- [ ] Add blog pages to sitemap.xml generation
-- [ ] Open Graph tags per blog post (title, summary, cover image)
+- [x] Add blog pages to sitemap.xml generation
+- [x] Open Graph tags per blog post (title, summary, cover image)
 
 ### 8.4 — Blog Tests
 
-- [ ] CRUD: create draft, edit, publish, archive, delete
-- [ ] Slug generation and uniqueness
-- [ ] Draft posts not visible on public routes
-- [ ] Published posts visible, ordered correctly
-- [ ] Tag filtering returns correct posts
+- [x] CRUD: create draft, edit, publish, unpublish, archive, delete
+- [x] Slug generation and uniqueness
+- [x] Draft posts not visible on public routes
+- [x] Published posts visible, ordered correctly
+- [x] Tag filtering returns correct posts
 - [ ] Pagination works at boundary (exactly N posts, N+1 posts)
-- [ ] RSS feed valid XML, contains only published posts
-- [ ] Reading time calculation accuracy
+- [x] RSS feed valid XML, contains only published posts
+- [x] Reading time calculation accuracy
 - [ ] Markdown rendering (if markdown format selected)
-- [ ] Blog disabled in settings → `/blog` returns 404, nav link hidden
+- [x] Blog disabled in settings → `/blog` returns 404, nav link hidden
 
 ---
 

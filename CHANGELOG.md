@@ -46,8 +46,27 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `ROADMAP_v0.2.0.md` development plan
 - Updated `SECURITY.md` with v0.2.0 hardening commitments
 
+### Added — Phase 8: Blog Engine
+- Full blog system with admin CRUD: create, edit, publish, unpublish, archive, delete posts
+- Automatic slug generation from titles with numeric suffix for uniqueness
+- Tag system with comma-separated input, junction table, and tag-based filtering (`/blog/tag/<slug>`)
+- RSS 2.0 feed at `/blog/feed.xml` (respects `enable_rss` setting, excludes drafts)
+- Reading time calculation (words/200, ceiling, HTML tags stripped)
+- Paginated blog index and tag pages (configurable `posts_per_page`)
+- Previous/next post navigation on individual post pages
+- Quill.js rich text editor with code block support in admin
+- Cover image, author, meta description fields per post
+- Blog feature toggle: `blog_enabled` setting controls public routes and nav link visibility
+- Admin status filter tabs (all/draft/published/archived)
+- Blog settings in settings registry: `blog_title`, `posts_per_page`, `show_reading_time`, `enable_rss`
+- Blog pages included in `sitemap.xml` when enabled
+- Open Graph article meta tags on individual post pages
+- `migrations/002_blog_tables.sql` — blog_posts, blog_tags, blog_post_tags tables with indexes
+- `app/services/blog.py` — service layer for all blog operations with HTML sanitization on write
+- `tests/test_blog.py` — 28 tests covering admin CRUD, slug generation, public visibility, tag filtering, RSS feed, reading time, blog toggle
+- Total test suite: 149 tests, all passing
+
 ### Planned
-- Blog / articles engine with tags, RSS, markdown support
 - Admin panel customization (theme editor, nav ordering, custom CSS, settings registry)
 - i18n framework (Flask-Babel, string extraction, locale routing)
 - Container registry publishing via `podman pull ghcr.io/kit3713/resume-site`
