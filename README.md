@@ -4,7 +4,7 @@
 >
 > **In development: [v0.2.0](ROADMAP_v0.2.0.md)** — Blog engine, security hardening, admin customization, i18n, container registry publishing.
 
-A self-hosted, containerized resume and portfolio website engine built with Flask. Apple-inspired design, admin panel for content management, and zero personal data in the repo.
+A self-hosted, containerized resume and portfolio website engine built with Flask. Apple-inspired design, and admin panel for content management.
 
 ## Overview
 
