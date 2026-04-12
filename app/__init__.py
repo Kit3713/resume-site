@@ -24,6 +24,8 @@ import os
 from flask import Flask, request, g
 from flask_babel import Babel
 from flask_login import LoginManager
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect
 
 from app.db import get_db, close_db
@@ -32,6 +34,11 @@ from app.services.config import load_config
 # Extension instances (initialized in create_app)
 csrf = CSRFProtect()
 babel = Babel()
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=[],             # No global limit — applied per-route
+    storage_uri="memory://",       # In-memory for single-process deployments
+)
 
 
 def _get_available_locales(app):
@@ -120,6 +127,10 @@ def create_app(config_path=None):
     # Endpoints can opt out with @csrf.exempt when needed (e.g., webhook receivers).
     csrf.init_app(app)
 
+    # --- 4b. Rate limiting ---
+    # Applied per-route on public POST endpoints (contact, review, admin login).
+    limiter.init_app(app)
+
     # --- 5. Internationalization (Flask-Babel) ---
     app.config['BABEL_DEFAULT_LOCALE'] = 'en'
     app.config['BABEL_TRANSLATION_DIRECTORIES'] = os.path.join(
@@ -179,7 +190,11 @@ def create_app(config_path=None):
         - X-XSS-Protection: Disabled in favour of CSP (modern best practice).
         - Referrer-Policy: Limits referrer leakage on cross-origin navigation.
         - Permissions-Policy: Disables browser features this app doesn't use.
-        - Cache-Control: Prevents admin pages from being cached by proxies/browsers.
+        - Content-Security-Policy-Report-Only: CSP in report-only mode while
+          tuning the policy. Allows GSAP CDN, Google Fonts, Quill.js, and
+          inline styles (needed for custom CSS injection and Quill editor).
+        - Cache-Control: Prevents admin pages from being cached; enables
+          long caching for static assets (CSS/JS/images).
         """
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'DENY'
@@ -187,9 +202,22 @@ def create_app(config_path=None):
         response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
         response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
 
-        # Prevent admin pages from being cached
+        # Content Security Policy (report-only to avoid breaking pages while tuning)
+        csp = (
+            "default-src 'self'; "
+            "script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data: https:; "
+            "connect-src 'self'"
+        )
+        response.headers['Content-Security-Policy-Report-Only'] = csp
+
+        # Cache-Control per route type
         if request.path.startswith('/admin'):
             response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+        elif request.path.startswith('/static/'):
+            response.headers['Cache-Control'] = 'public, max-age=2592000, immutable'
 
         return response
 

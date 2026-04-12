@@ -17,25 +17,37 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Service layer: `app/services/content.py`, `reviews.py`, `stats.py`, `service_items.py`, `settings_svc.py` — admin routes are now thin controllers
 - Settings registry with type validation and key whitelisting
 
+### Added — Phase 5 (continued)
+- `seeds/defaults.sql` — seed data separated from schema migrations (INSERT OR IGNORE for all default settings)
+- `requirements.in` — unpinned dependency source file for pip-compile
+
 ### Added — Phase 6: Security Hardening
 - CSRF protection on all POST forms via Flask-WTF (`CSRFProtect`)
 - CSRF tokens auto-injected into admin templates and manually added to public forms
 - Security response headers on every response: `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`, `Permissions-Policy`
+- `Content-Security-Policy-Report-Only` header allowing GSAP CDN, Google Fonts, Quill.js, and inline styles
 - `Cache-Control: no-store` on all admin pages
+- `Cache-Control: public, max-age=2592000, immutable` on static assets
 - HTML sanitization via `nh3` on all content block writes (allowlisted tags only)
 - File upload hardening: magic byte validation, configurable size limits (`max_upload_size`), null byte filename rejection
+- Rate limiting via Flask-Limiter on all public POST endpoints: contact (10/min), review (5/min), admin login (5/min)
 - Admin session timeout with configurable inactivity period (`session_timeout_minutes`, default 60 min)
 - Startup validation: warns on weak/placeholder secret keys and keys shorter than 32 characters
+- Startup validation: warns on unrecognized password hash algorithms
 - `manage.py generate-secret` command for cryptographically secure key generation
 - `smtp.password_file` support for Docker/Podman secrets integration
+- CI check for unsafe SQL string interpolation patterns (parameterized queries audit)
+- Dependencies pinned with hashes via `pip-compile --generate-hashes`
+- `pip-audit` dependency vulnerability scanning in CI pipeline
+- Supply chain documentation: dependency table in README
 
 ### Added — Phase 7: Expanded Test Suite
-- `tests/test_admin.py` — 47 tests covering all admin CRUD operations, auth, and IP restriction
-- `tests/test_security.py` — 21 tests covering CSRF enforcement, security headers, HTML sanitization
-- `tests/test_migrations.py` — 13 tests covering migration system (fresh DB, v0.1.0 detection, bad SQL, status output)
+- `tests/test_admin.py` — 50 tests covering all admin CRUD operations, auth, IP restriction, and photo metadata/tier/delete
+- `tests/test_security.py` — 26 tests covering CSRF enforcement, security headers, HTML sanitization, CSP, Cache-Control, file upload size limits, rate limiting (429)
+- `tests/test_migrations.py` — 14 tests covering migration system (fresh DB, v0.1.0 detection, bad SQL, dry-run, status output)
 - `tests/test_integration.py` — 9 end-to-end tests (full review flow, contact flow, settings reflection, sitemap, file upload validation, session timeout)
-- Test fixtures: `auth_client` (pre-authenticated admin), `populated_db` (sample content), `csrf_app` (CSRF-enabled)
-- Total: 121 tests, all passing
+- Test fixtures: `auth_client` (pre-authenticated admin), `populated_db` (sample content), `csrf_app` (CSRF-enabled), `smtp_mock` (captures sent emails)
+- Total: 199 tests, all passing
 
 ### Infrastructure
 - Multi-stage Containerfile with non-root user, health check, and OCI labels
@@ -62,8 +74,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Blog pages included in `sitemap.xml` when enabled
 - Open Graph article meta tags on individual post pages
 - `migrations/002_blog_tables.sql` — blog_posts, blog_tags, blog_post_tags tables with indexes
+- Markdown rendering for blog posts via mistune (when content_format='markdown')
+- Featured blog posts section on landing page (shown when blog is enabled and posts are marked featured)
 - `app/services/blog.py` — service layer for all blog operations with HTML sanitization on write
-- `tests/test_blog.py` — 28 tests covering admin CRUD, slug generation, public visibility, tag filtering, RSS feed, reading time, blog toggle
+- `tests/test_blog.py` — 31 tests covering admin CRUD, slug generation, public visibility, tag filtering, RSS feed, reading time, blog toggle, pagination boundaries, markdown rendering
 - Total test suite: 149 tests, all passing
 
 ### Added — Phase 9: Admin Panel Customization

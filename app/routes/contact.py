@@ -18,6 +18,7 @@ of spam status, giving the admin full visibility in the dashboard.
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from flask_babel import gettext as _
 
+from app import limiter
 from app.db import get_db
 from app.models import save_contact_submission, count_recent_submissions, get_setting
 
@@ -25,6 +26,7 @@ contact_bp = Blueprint('contact', __name__, template_folder='../templates')
 
 
 @contact_bp.route('/contact', methods=['GET', 'POST'])
+@limiter.limit("10 per minute", methods=["POST"])
 def contact_page():
     """Handle the contact page display and form submission.
 

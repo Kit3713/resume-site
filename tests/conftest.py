@@ -125,6 +125,23 @@ def auth_client(app):
 
 
 @pytest.fixture
+def smtp_mock(app, monkeypatch):
+    """Mock the SMTP email sending to capture sent messages without a real relay.
+
+    Returns a list that collects (name, email, message) tuples for each call
+    to send_contact_email(). The actual SMTP connection is never attempted.
+    """
+    sent = []
+
+    def _mock_send(name, email, message):
+        sent.append((name, email, message))
+        return True
+
+    monkeypatch.setattr('app.services.mail.send_contact_email', _mock_send)
+    return sent
+
+
+@pytest.fixture
 def populated_db(app):
     """Return a database connection pre-populated with sample content.
 

@@ -6,13 +6,19 @@ Handles CRUD operations, slug generation, reading time calculation,
 tag management, and publishing workflow.
 
 Content is sanitized via nh3 before storage (same rules as content blocks).
-Markdown posts store raw markdown and are rendered on display.
+Markdown posts store raw markdown and are rendered to HTML on display
+via the mistune library.
 """
 
 import re
 import math
 
+import mistune
+
 from app.services.content import sanitize_html
+
+# Markdown renderer (initialized once, reused across requests)
+_markdown = mistune.create_markdown(escape=False)
 
 
 def _slugify(text):
@@ -59,6 +65,17 @@ def _ensure_unique_slug(db, slug, exclude_id=None):
             return slug
         counter += 1
         slug = f"{base_slug}-{counter}"
+
+
+def render_post_content(post):
+    """Render a post's content to HTML based on its content_format.
+
+    Markdown posts are converted to HTML via mistune. HTML posts are
+    returned as-is (already sanitized on save).
+    """
+    if post['content_format'] == 'markdown':
+        return _markdown(post['content'] or '')
+    return post['content'] or ''
 
 
 # ============================================================

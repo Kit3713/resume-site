@@ -405,3 +405,87 @@ def test_photos_list_loads(auth_client):
     """Photos list page should return 200 even when empty."""
     response = auth_client.get('/admin/photos')
     assert response.status_code == 200
+
+
+def test_photos_edit_metadata(auth_client, app):
+    """Editing photo metadata should persist changes."""
+    import sqlite3
+    db_path = app.config['DATABASE_PATH']
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO photos (filename, storage_name, mime_type, width, height, file_size, title, display_tier) "
+        "VALUES ('test.jpg', 'abc123.jpg', 'image/jpeg', 800, 600, 50000, 'Original', 'grid')"
+    )
+    conn.commit()
+    photo_id = conn.execute("SELECT id FROM photos WHERE filename='test.jpg'").fetchone()[0]
+    conn.close()
+
+    response = auth_client.post(f'/admin/photos/{photo_id}/edit', data={
+        'title': 'Updated Title',
+        'description': 'A new description',
+        'tech_used': 'Python',
+        'category': 'screenshots',
+        'display_tier': 'featured',
+        'sort_order': '5',
+    }, follow_redirects=False)
+    assert response.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    photo = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+    conn.close()
+    assert photo['title'] == 'Updated Title'
+    assert photo['description'] == 'A new description'
+    assert photo['display_tier'] == 'featured'
+    assert photo['sort_order'] == 5
+
+
+def test_photos_tier_change(auth_client, app):
+    """Changing a photo's display tier should update the database."""
+    import sqlite3
+    db_path = app.config['DATABASE_PATH']
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO photos (filename, storage_name, mime_type, width, height, file_size, title, display_tier) "
+        "VALUES ('tier.jpg', 'tier123.jpg', 'image/jpeg', 800, 600, 50000, 'Tier Test', 'grid')"
+    )
+    conn.commit()
+    photo_id = conn.execute("SELECT id FROM photos WHERE filename='tier.jpg'").fetchone()[0]
+    conn.close()
+
+    auth_client.post(f'/admin/photos/{photo_id}/edit', data={
+        'title': 'Tier Test',
+        'description': '',
+        'tech_used': '',
+        'category': '',
+        'display_tier': 'hidden',
+        'sort_order': '0',
+    })
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    photo = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+    conn.close()
+    assert photo['display_tier'] == 'hidden'
+
+
+def test_photos_delete(auth_client, app):
+    """Deleting a photo should remove the database record."""
+    import sqlite3
+    db_path = app.config['DATABASE_PATH']
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO photos (filename, storage_name, mime_type, width, height, file_size, title, display_tier) "
+        "VALUES ('delete_me.jpg', 'del123.jpg', 'image/jpeg', 800, 600, 50000, 'Delete Me', 'grid')"
+    )
+    conn.commit()
+    photo_id = conn.execute("SELECT id FROM photos WHERE filename='delete_me.jpg'").fetchone()[0]
+    conn.close()
+
+    response = auth_client.post(f'/admin/photos/{photo_id}/delete', follow_redirects=False)
+    assert response.status_code == 302
+
+    conn = sqlite3.connect(db_path)
+    photo = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+    conn.close()
+    assert photo is None

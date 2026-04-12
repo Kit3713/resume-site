@@ -135,6 +135,43 @@
 </section>
 {% endif %}
 
+<!-- Featured Blog Posts -->
+{% if featured_blog_posts %}
+<section class="section section--alt" id="blog">
+    <div class="section__container">
+        <h2 class="section__heading">{{ _('Latest Posts') }}</h2>
+        <div class="blog__featured-grid">
+            {% for post in featured_blog_posts %}
+            <a href="{{ url_for('blog.blog_post', slug=post.slug) }}" class="blog-preview-card">
+                {% if post.cover_image %}
+                <div class="blog-preview-card__image">
+                    <img src="{{ post.cover_image }}" alt="{{ post.title }}" loading="lazy">
+                </div>
+                {% endif %}
+                <div class="blog-preview-card__body">
+                    <h3 class="blog-preview-card__title">{{ post.title }}</h3>
+                    {% if post.summary %}
+                    <p class="blog-preview-card__summary">{{ post.summary }}</p>
+                    {% endif %}
+                    <div class="blog-preview-card__meta">
+                        {% if post.published_at %}
+                        <time datetime="{{ post.published_at }}">{{ post.published_at[:10] }}</time>
+                        {% endif %}
+                        {% if post.reading_time %}
+                        <span>{{ _('%(time)s min read', time=post.reading_time) }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+        <div class="section__cta">
+            <a href="{{ url_for('blog.blog_index') }}" class="btn btn--secondary">{{ _('View All Posts') }}</a>
+        </div>
+    </div>
+</section>
+{% endif %}
+
 <!-- Featured Testimonials -->
 {% if featured_reviews %}
 <section class="section section--alt" id="testimonials">

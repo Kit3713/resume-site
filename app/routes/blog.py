@@ -24,6 +24,7 @@ from app.models import get_setting
 from app.services.blog import (
     get_published_posts, get_post_by_slug, get_posts_by_tag,
     get_tags_for_post, get_all_tags, get_tag_by_slug,
+    render_post_content,
 )
 
 blog_bp = Blueprint('blog', __name__, template_folder='../templates')
@@ -77,6 +78,7 @@ def blog_post(slug):
 
     tags = get_tags_for_post(db, post['id'])
     show_reading_time = get_setting(db, 'show_reading_time', 'true') == 'true'
+    rendered_content = render_post_content(post)
 
     # Get prev/next posts for navigation
     prev_post = db.execute(
@@ -92,6 +94,7 @@ def blog_post(slug):
 
     return render_template('public/blog_post.html',
                            post=post,
+                           rendered_content=rendered_content,
                            tags=tags,
                            show_reading_time=show_reading_time,
                            prev_post=prev_post,

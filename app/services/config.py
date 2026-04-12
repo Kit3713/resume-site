@@ -235,10 +235,18 @@ def load_config(path):
         sys.exit(1)
 
     # password_hash is optional at startup (allows init-db before setting password)
-    if not config['admin'].get('password_hash'):
+    password_hash = config['admin'].get('password_hash', '')
+    if not password_hash:
         print(
             "WARNING: admin.password_hash is empty. "
             "Set it with: python manage.py hash-password",
+            file=sys.stderr,
+        )
+    elif not password_hash.startswith(('pbkdf2:sha256:', 'scrypt:', 'argon2')):
+        print(
+            "WARNING: admin.password_hash does not use a recognized strong algorithm. "
+            "Expected pbkdf2:sha256, scrypt, or argon2. "
+            "Regenerate with: python manage.py hash-password",
             file=sys.stderr,
         )
 

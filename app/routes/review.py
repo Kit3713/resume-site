@@ -18,6 +18,7 @@ Flow:
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from flask_babel import gettext as _
 
+from app import limiter
 from app.db import get_db
 from app.models import create_review, mark_token_used
 from app.services.tokens import validate_token
@@ -26,6 +27,7 @@ review_bp = Blueprint('review', __name__, template_folder='../templates')
 
 
 @review_bp.route('/review/<token>', methods=['GET', 'POST'])
+@limiter.limit("5 per minute", methods=["POST"])
 def review_form(token):
     """Handle the review submission form.
 

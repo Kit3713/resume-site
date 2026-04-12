@@ -92,17 +92,47 @@ def _list_migration_files(migrations_dir):
     return files
 
 
-def init_db(args):
-    """Initialize the database by running all pending migrations.
+def _get_seeds_dir():
+    """Return the path to the seeds/ directory."""
+    return os.path.join(os.path.dirname(__file__), 'seeds')
 
-    Delegates to the migrate command internally. Running init-db on an
-    already-initialized database is safe — it only applies pending migrations.
+
+def _run_seeds(db_path):
+    """Run all seed SQL files to populate default data.
+
+    Uses INSERT OR IGNORE so existing values are never overwritten.
+    Safe to run multiple times.
+    """
+    seeds_dir = _get_seeds_dir()
+    if not os.path.isdir(seeds_dir):
+        return
+
+    conn = sqlite3.connect(db_path)
+    for fname in sorted(os.listdir(seeds_dir)):
+        if fname.endswith('.sql'):
+            path = os.path.join(seeds_dir, fname)
+            with open(path, 'r') as f:
+                conn.executescript(f.read())
+            print(f"  Seeded: {fname}")
+    conn.close()
+
+
+def init_db(args):
+    """Initialize the database by running all pending migrations and seeds.
+
+    Delegates to the migrate command for schema, then runs seed SQL files
+    for default data. Running init-db on an already-initialized database
+    is safe — migrations skip applied versions, seeds use INSERT OR IGNORE.
     """
     # Reuse the migrate logic with no flags
     class _Args:
         status = False
         dry_run = False
     migrate(_Args())
+
+    # Run seed data after migrations
+    db_path = _get_db_path()
+    _run_seeds(db_path)
 
 
 def migrate(args):

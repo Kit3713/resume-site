@@ -37,6 +37,7 @@ from app.models import (
     get_visible_certifications, get_skill_domains_with_skills,
     get_setting,
 )
+from app.services.blog import get_featured_posts
 
 public_bp = Blueprint('public', __name__, template_folder='../templates')
 
@@ -59,12 +60,19 @@ def index():
     services = get_visible_services(db)
     featured_photos = get_photos_by_tier(db, 'featured')[:3]       # Top 3 featured photos
     featured_reviews = get_approved_reviews_by_tier(db, 'featured')[:3]  # Top 3 featured reviews
+
+    # Featured blog posts (only when blog is enabled)
+    featured_blog_posts = []
+    if get_setting(db, 'blog_enabled', 'false') == 'true':
+        featured_blog_posts = get_featured_posts(db, n=3)
+
     return render_template('public/index.html',
                            about_block=about_block,
                            stats=stats,
                            services=services,
                            featured_photos=featured_photos,
-                           featured_reviews=featured_reviews)
+                           featured_reviews=featured_reviews,
+                           featured_blog_posts=featured_blog_posts)
 
 
 # ============================================================

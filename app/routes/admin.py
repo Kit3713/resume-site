@@ -32,6 +32,7 @@ from flask_babel import gettext as _
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash
 
+from app import limiter
 from app.db import get_db
 from app.models import AdminUser
 from app.services.content import get_all_blocks, save_block, create_block
@@ -140,6 +141,7 @@ def check_session_timeout():
 # ============================================================
 
 @admin_bp.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5 per minute", methods=["POST"])
 def login():
     """Handle admin login form display and credential validation.
 

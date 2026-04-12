@@ -261,3 +261,98 @@ def test_content_save_strips_xss(auth_client, populated_db):
     response = auth_client.get('/')
     assert b'alert(&quot;xss&quot;)' not in response.data
     assert b'alert("xss")' not in response.data
+
+
+# ============================================================
+# CSP HEADER
+# ============================================================
+
+def test_header_csp_report_only(client):
+    """Content-Security-Policy-Report-Only header must be present."""
+    response = client.get('/')
+    csp = response.headers.get('Content-Security-Policy-Report-Only', '')
+    assert "default-src 'self'" in csp
+    assert 'cdnjs.cloudflare.com' in csp
+    assert 'fonts.googleapis.com' in csp
+
+
+# ============================================================
+# CACHE-CONTROL ON STATIC ASSETS
+# ============================================================
+
+def test_header_cache_control_on_static(client):
+    """Static asset responses should have long-lived Cache-Control."""
+    response = client.get('/static/css/style.css')
+    cc = response.headers.get('Cache-Control', '')
+    assert 'public' in cc
+    assert 'max-age' in cc
+
+
+# ============================================================
+# FILE UPLOAD SIZE LIMIT
+# ============================================================
+
+def test_upload_exceeding_size_limit_rejected(auth_client, app):
+    """Uploading a file that exceeds MAX_UPLOAD_SIZE should be rejected."""
+    import io
+    # Set a very small limit for this test
+    app.config['MAX_UPLOAD_SIZE'] = 1024  # 1 KB
+
+    # Create a PNG that exceeds the limit (valid PNG header + padding)
+    png_header = b'\x89PNG\r\n\x1a\n'
+    data = png_header + b'\x00' * 2048  # 2 KB total
+
+    response = auth_client.post('/admin/photos/upload', data={
+        'photo': (io.BytesIO(data), 'big.png'),
+    }, content_type='multipart/form-data', follow_redirects=True)
+    assert response.status_code == 200
+    # Should show an error about file size
+    assert b'too large' in response.data.lower() or b'exceeds' in response.data.lower() or b'size' in response.data.lower()
+
+
+# ============================================================
+# RATE LIMITING
+# ============================================================
+
+def test_rate_limiting_contact_returns_429(app):
+    """Exceeding the rate limit on contact form should return 429."""
+    # Create a client with rate limiting enabled
+    app.config['RATELIMIT_ENABLED'] = True
+    client = app.test_client()
+
+    # Flood the contact endpoint beyond the limit (10/min)
+    for i in range(15):
+        client.post('/contact', data={
+            'name': f'Test {i}',
+            'email': f'test{i}@example.com',
+            'message': 'Rate limit test',
+            'website': '',
+        })
+
+    # The last requests should be rate-limited
+    response = client.post('/contact', data={
+        'name': 'Final',
+        'email': 'final@example.com',
+        'message': 'Should be limited',
+        'website': '',
+    })
+    assert response.status_code == 429
+
+
+def test_rate_limiting_admin_login_returns_429(app):
+    """Exceeding the rate limit on admin login should return 429 (brute force protection)."""
+    app.config['RATELIMIT_ENABLED'] = True
+    client = app.test_client()
+
+    # Flood the login endpoint beyond the limit (5/min)
+    for i in range(8):
+        client.post('/admin/login', data={
+            'username': 'admin',
+            'password': f'wrong-password-{i}',
+        })
+
+    response = client.post('/admin/login', data={
+        'username': 'admin',
+        'password': 'another-wrong-password',
+    })
+    assert response.status_code == 429

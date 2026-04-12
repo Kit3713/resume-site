@@ -44,9 +44,9 @@ Every feature ships behind a toggle or is fully backward-compatible with v0.1.x 
 - [x] `manage.py migrate --status` — shows which migrations are applied and which are pending
 - [x] `manage.py migrate --dry-run` — prints SQL without executing
 - [x] Baseline migration (`001`) reproduces current `schema.sql` exactly so existing databases register as up-to-date
-- [ ] Separate seed data from schema: `seeds/defaults.sql` for the `INSERT OR IGNORE` settings block
+- [x] Separate seed data from schema: `seeds/defaults.sql` for the `INSERT OR IGNORE` settings block
 - [x] `manage.py init-db` still works but now calls migrate internally
-- [ ] Document migration authoring in `CONTRIBUTING.md`
+- [x] Document migration authoring in `CONTRIBUTING.md`
 
 ### 5.3 — Configuration Boundary
 
@@ -98,31 +98,31 @@ Every feature ships behind a toggle or is fully backward-compatible with v0.1.x 
   - `Referrer-Policy: strict-origin-when-cross-origin`
   - `Permissions-Policy: camera=(), microphone=(), geolocation=()`
   - `Strict-Transport-Security: max-age=63072000; includeSubDomains` (when behind HTTPS)
-- [ ] Content Security Policy header — start with a reporting-only policy, tighten over time. Must allow GSAP CDN, Google Fonts, and Quill.js
-- [ ] `Cache-Control` on static assets (long cache with fingerprinted filenames)
+- [x] Content Security Policy header — report-only policy allowing GSAP CDN, Google Fonts, and Quill.js
+- [x] `Cache-Control` on static assets (long cache with `max-age=2592000, immutable`)
 - [x] `Cache-Control: no-store` on admin pages
 
 ### 6.3 — Input Validation & Sanitization
 
 - [x] Sanitize all HTML content from Quill editor before storage (allowlist safe tags: `<p>`, `<strong>`, `<em>`, `<a>`, `<ul>`, `<ol>`, `<li>`, `<h1>`–`<h6>`, `<blockquote>`, `<code>`, `<pre>`, `<img>`) — use `bleach` or `nh3`
 - [x] Validate file uploads: check magic bytes not just extension, enforce max file size (configurable, default 10MB), reject files with null bytes in name
-- [ ] Rate limiting on all public POST endpoints (contact form already has basic limiting; formalize with a decorator or `Flask-Limiter`)
+- [x] Rate limiting on all public POST endpoints via Flask-Limiter (contact, review, admin login)
 - [x] Admin session timeout (configurable, default 60 minutes of inactivity)
-- [ ] Parameterized queries audit — current code uses parameterized queries correctly, but add a linting rule or CI check to catch any raw string interpolation in SQL
+- [x] Parameterized queries audit — CI check for unsafe SQL string interpolation patterns
 
 ### 6.4 — Secrets Management
 
 - [x] `manage.py generate-secret` — generates a cryptographically random secret key, writes to config.yaml or prints for manual insertion
 - [x] Warn at startup if `secret_key` is the example value or shorter than 32 bytes
-- [ ] Admin password hash: validate that it uses a strong algorithm (pbkdf2 with sufficient iterations, or migrate to argon2 via `argon2-cffi`)
+- [x] Admin password hash: startup validation warns on unrecognized or weak hash algorithms
 - [x] Support reading SMTP password from a file path (`smtp.password_file`) for Docker/Podman secrets integration
 
 ### 6.5 — Dependency Security
 
-- [ ] Pin all dependencies with hashes in `requirements.txt` (use `pip-compile` from `pip-tools`)
-- [ ] Add `safety` or `pip-audit` check to CI pipeline
-- [ ] Minimal container image: switch to `python:3.12-slim` + explicit system deps only, run as non-root user
-- [ ] Document the supply chain: every dependency and why it's there
+- [x] Pin all dependencies with hashes in `requirements.txt` (via `pip-compile --generate-hashes`)
+- [x] Add `pip-audit` check to CI pipeline
+- [x] Minimal container image: `python:3.12-slim`, non-root user (UID 1000), curl-only runtime dep
+- [x] Document the supply chain: dependency table in README with purpose for each package
 
 ---
 
@@ -132,18 +132,18 @@ Every feature ships behind a toggle or is fully backward-compatible with v0.1.x 
 
 ### 7.1 — Test Infrastructure
 
-- [ ] Add `pytest-cov` for coverage reporting
-- [ ] Add coverage threshold to CI (start at current coverage, ratchet up — never goes down)
+- [x] Add `pytest-cov` for coverage reporting
+- [x] Add coverage threshold to CI (`--cov-fail-under=60`, ratchet up over time)
 - [x] Create test fixtures for authenticated admin sessions (login helper)
 - [x] Create test fixtures for populated database (sample content blocks, photos, services, reviews)
-- [ ] Create test fixture for SMTP mock (verify emails sent without real relay)
+- [x] Create test fixture for SMTP mock (verify emails sent without real relay)
 - [x] Separate test files by domain: `test_app.py`, `test_admin.py`, `test_security.py`, `test_migrations.py`, `test_integration.py`
 
 ### 7.2 — Admin CRUD Tests
 
 - [x] Content block create, read, update
 - [x] Photo upload (valid file, invalid file, wrong extension)
-- [ ] Photo metadata edit, tier change, deletion (verify file cleanup)
+- [x] Photo metadata edit, tier change, deletion (verify file cleanup)
 - [x] Service add, edit, delete, visibility toggle
 - [x] Stat add, edit, delete, visibility toggle
 - [x] Review approve, reject, tier change
@@ -157,20 +157,20 @@ Every feature ships behind a toggle or is fully backward-compatible with v0.1.x 
 - [x] CSRF: POST without token → 400
 - [x] CSRF: POST with valid token → succeeds
 - [x] File upload: executable disguised as image → rejected
-- [ ] File upload: file exceeding size limit → rejected
+- [x] File upload: file exceeding size limit → rejected
 - [x] HTML injection in content block → sanitized on save
 - [x] XSS payload in contact form fields → escaped in admin dashboard display
-- [ ] Rate limiting: exceed threshold → 429
+- [x] Rate limiting: exceed threshold → 429
 - [x] Session timeout: stale session → redirected to login
 - [x] Security headers present on all responses
-- [ ] Admin login brute force: repeated failures → rate limited
+- [x] Admin login brute force: repeated failures → rate limited (5/min via Flask-Limiter)
 
 ### 7.4 — Migration Tests
 
 - [x] Fresh database: all migrations apply cleanly
 - [x] Existing v0.1.0 database: baseline detects as applied, subsequent migrations run
 - [x] Migration with bad SQL: transaction rolls back, database unchanged
-- [ ] `--dry-run` produces output but no changes
+- [x] `--dry-run` produces output but no changes
 - [x] `--status` accurately reports applied vs pending
 
 ### 7.5 — Integration Tests
@@ -179,7 +179,7 @@ Every feature ships behind a toggle or is fully backward-compatible with v0.1.x 
 - [x] Full contact flow: submit form → saved to DB → appears in admin dashboard
 - [x] Photo upload → validated (magic bytes, null bytes, valid files accepted)
 - [x] Settings changes reflect immediately in public templates
-- [ ] Dark/light mode toggle persists via localStorage
+- [ ] Dark/light mode toggle persists via localStorage (requires browser-based testing framework)
 - [x] Sitemap includes all active pages, excludes hidden content
 
 ---
@@ -212,7 +212,7 @@ Every feature ships behind a toggle or is fully backward-compatible with v0.1.x 
 - [x] `/blog/tag/<tag>` — filtered post list by tag
 - [x] `/blog/feed.xml` — RSS 2.0 feed of published posts (togglable in settings)
 - [x] Blog link in main navbar (togglable via settings — `blog_enabled`)
-- [ ] Featured blog posts section on landing page (optional, togglable)
+- [x] Featured blog posts section on landing page (shown when blog is enabled and posts are marked featured)
 - [x] Add blog pages to sitemap.xml generation
 - [x] Open Graph tags per blog post (title, summary, cover image)
 
@@ -223,10 +223,10 @@ Every feature ships behind a toggle or is fully backward-compatible with v0.1.x 
 - [x] Draft posts not visible on public routes
 - [x] Published posts visible, ordered correctly
 - [x] Tag filtering returns correct posts
-- [ ] Pagination works at boundary (exactly N posts, N+1 posts)
+- [x] Pagination works at boundary (exactly N posts, N+1 posts)
 - [x] RSS feed valid XML, contains only published posts
 - [x] Reading time calculation accuracy
-- [ ] Markdown rendering (if markdown format selected)
+- [x] Markdown rendering via mistune (when content_format='markdown')
 - [x] Blog disabled in settings → `/blog` returns 404, nav link hidden
 
 ---

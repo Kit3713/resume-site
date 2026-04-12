@@ -343,6 +343,25 @@ For personal use, fork this repo as a **private fork** on GitHub. Your private f
 
 Pull upstream updates from the public repo to get new features without losing your config.
 
+## Dependencies
+
+All runtime dependencies are pinned with hashes in `requirements.txt` (generated via `pip-compile --generate-hashes`). The unpinned source specifications are in `requirements.in`.
+
+| Package | Purpose |
+|---------|---------|
+| Flask | Web framework (routing, templates, sessions) |
+| gunicorn | Production WSGI server |
+| PyYAML | Configuration file parsing |
+| Flask-Login | Admin session authentication |
+| Pillow | Image upload processing (resize, optimize) |
+| Flask-WTF | CSRF protection on all POST forms |
+| Flask-Babel | Internationalization (i18n) framework |
+| Flask-Limiter | Rate limiting on public POST endpoints |
+| nh3 | HTML sanitization (Rust-based, safe allowlisting) |
+| mistune | Markdown rendering for blog posts |
+
+CI also runs `pip-audit` on every push to flag known vulnerabilities.
+
 ## Roadmap
 
 See [ROADMAP_v0.2.0.md](ROADMAP_v0.2.0.md) for the full development plan. The original v0.1.0 build phases are documented in [ROADMAP.md](ROADMAP.md).

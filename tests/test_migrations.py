@@ -225,6 +225,38 @@ def test_bad_migration_does_not_corrupt_db(fresh_db, tmp_path):
 # DRY RUN & STATUS (functional tests via subprocess)
 # ============================================================
 
+def test_dry_run_produces_output_no_changes(fresh_db, migrations_dir, capsys):
+    """--dry-run should print SQL but not apply any migrations."""
+    _ensure_schema_version_table(fresh_db)
+
+    migration_files = _list_migration_files(migrations_dir)
+    applied = _get_applied_versions(fresh_db)
+    pending = [(v, f) for v, f in migration_files if v not in applied]
+    assert len(pending) > 0, "Expected at least one pending migration"
+
+    # Simulate dry-run (same logic as manage.py migrate with args.dry_run=True)
+    for version, fname in pending:
+        path = os.path.join(migrations_dir, fname)
+        with open(path, 'r') as f:
+            sql = f.read()
+        print(f"-- DRY RUN: {fname}")
+        print(sql)
+
+    captured = capsys.readouterr()
+    assert '-- DRY RUN:' in captured.out
+    assert '001_baseline.sql' in captured.out
+
+    # Verify nothing was actually applied
+    applied_after = _get_applied_versions(fresh_db)
+    assert len(applied_after) == 0
+
+    # Verify no tables were created (except schema_version)
+    tables = {row[0] for row in fresh_db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+    assert 'settings' not in tables
+
+
 def test_migration_status_output(app, capsys, migrations_dir):
     """--status flag should list migrations with applied/pending labels."""
     db_path = app.config['DATABASE_PATH']

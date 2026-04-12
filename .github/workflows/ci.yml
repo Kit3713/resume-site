@@ -47,6 +47,15 @@ jobs:
       - name: Lint
         run: flake8 app/ tests/ --max-line-length 120 --count --show-source --statistics
 
+      - name: Check for unsafe SQL patterns
+        run: |
+          # Catch string formatting in SQL queries (f-strings, .format, %)
+          # Parameterized queries use ? placeholders, never interpolation
+          if grep -rn "execute(f['\"]" app/ || grep -rn '\.format(' app/ | grep -i 'execute\|select\|insert\|update\|delete'; then
+            echo "ERROR: Found string interpolation in SQL queries. Use parameterized queries (?) instead."
+            exit 1
+          fi
+
       - name: Dependency audit
         run: pip-audit
         continue-on-error: true  # Advisory — don't block builds yet

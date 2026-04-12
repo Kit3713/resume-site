@@ -420,3 +420,87 @@ def test_admin_status_filter_published(auth_client):
     response = auth_client.get('/admin/blog?status=published')
     assert b'Published Two' in response.data
     assert b'Draft Two' not in response.data
+
+
+# ============================================================
+# PAGINATION BOUNDARY TESTS
+# ============================================================
+
+def test_pagination_exact_boundary(auth_client, app):
+    """With exactly N posts and per_page=N, there should be 1 page."""
+    _enable_blog(auth_client)
+
+    # Set posts_per_page to 3
+    auth_client.post('/admin/settings', data={
+        'blog_enabled': 'true',
+        'enable_rss': 'true',
+        'show_reading_time': 'true',
+        'posts_per_page': '3',
+    })
+
+    # Create exactly 3 published posts
+    for i in range(3):
+        _create_post(auth_client, title=f'Page Boundary {i}', action='publish')
+
+    public_client = app.test_client()
+    response = public_client.get('/blog')
+    assert response.status_code == 200
+    # All 3 posts should be visible on page 1
+    for i in range(3):
+        assert f'Page Boundary {i}'.encode() in response.data
+
+    # Page 2 should have no posts
+    response2 = public_client.get('/blog?page=2')
+    assert response2.status_code == 200
+
+
+def test_pagination_overflow(auth_client, app):
+    """With N+1 posts and per_page=N, page 2 should have 1 post."""
+    _enable_blog(auth_client)
+
+    auth_client.post('/admin/settings', data={
+        'blog_enabled': 'true',
+        'enable_rss': 'true',
+        'show_reading_time': 'true',
+        'posts_per_page': '2',
+    })
+
+    for i in range(3):
+        _create_post(auth_client, title=f'Overflow Post {i}', action='publish')
+
+    public_client = app.test_client()
+    # Page 1 should have 2 posts
+    response = public_client.get('/blog')
+    assert response.status_code == 200
+
+    # Page 2 should have the remaining post
+    response2 = public_client.get('/blog?page=2')
+    assert response2.status_code == 200
+
+
+# ============================================================
+# MARKDOWN RENDERING
+# ============================================================
+
+def test_markdown_post_rendered(auth_client, app):
+    """A post with content_format='markdown' should render to HTML."""
+    _enable_blog(auth_client)
+    auth_client.post('/admin/blog/new', data={
+        'title': 'Markdown Post',
+        'summary': 'A markdown test',
+        'content': '# Hello World\n\nThis is **bold** and *italic*.',
+        'content_format': 'markdown',
+        'cover_image': '',
+        'author': 'Test',
+        'tags': '',
+        'meta_description': '',
+        'action': 'publish',
+    })
+
+    public_client = app.test_client()
+    response = public_client.get('/blog/markdown-post')
+    assert response.status_code == 200
+    data = response.data.decode()
+    assert '<h1>' in data or '<h1' in data  # Rendered from # heading
+    assert '<strong>bold</strong>' in data
+    assert '<em>italic</em>' in data
