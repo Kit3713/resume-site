@@ -11,7 +11,6 @@ Verifies the database migration system (manage.py migrate):
 
 import os
 import sqlite3
-import tempfile
 
 import pytest
 

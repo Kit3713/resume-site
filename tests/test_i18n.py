@@ -15,8 +15,6 @@ Verifies the i18n infrastructure:
 import os
 import sqlite3
 
-import pytest
-
 
 # ============================================================
 # LOCALE SWITCHING
@@ -158,9 +156,7 @@ def test_context_processor_injects_locale_vars(app):
     """The context processor should inject available_locales and current_locale."""
     with app.test_request_context('/'):
         app.preprocess_request()
-        ctx = app.jinja_env.globals
-        # These are injected by the context processor, accessible in templates
-        # We verify by checking the rendered page contains locale-related markup
+        # Verify the context processor runs by rendering a page and checking the response
         response = app.test_client().get('/')
         assert response.status_code == 200
 

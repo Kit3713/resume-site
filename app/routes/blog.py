@@ -23,7 +23,7 @@ from app.db import get_db
 from app.models import get_setting
 from app.services.blog import (
     get_published_posts, get_post_by_slug, get_posts_by_tag,
-    get_tags_for_post, get_all_tags, get_tag_by_slug,
+    get_tags_for_post, get_tag_by_slug,
     render_post_content,
 )
 

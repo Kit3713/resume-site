@@ -13,8 +13,6 @@ Covers the full blog system:
 - Blog disabled in settings → /blog returns 404, nav link hidden
 """
 
-import pytest
-
 
 # ============================================================
 # HELPER: Enable blog and create posts

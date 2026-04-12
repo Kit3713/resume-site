@@ -8,8 +8,10 @@ Anti-spam measures:
 - Honeypot field: A hidden "website" input that bots tend to fill. If
   populated, the submission is silently flagged as spam (saved to DB but
   no email sent) without revealing the detection to the bot.
-- Rate limiting: Max 5 submissions per IP per hour, enforced via a
-  database count query (no external dependencies like Flask-Limiter).
+- Short-window rate limit: Flask-Limiter caps POSTs at 10 per minute per IP
+  to absorb burst abuse (returns 429).
+- Long-window rate limit: A database count query caps submissions at
+  5 per hour per IP to stop slow-and-steady spam that evades the burst limit.
 
 All submissions are persisted to the contact_submissions table regardless
 of spam status, giving the admin full visibility in the dashboard.

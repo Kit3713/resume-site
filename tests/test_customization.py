@@ -11,8 +11,6 @@ Covers:
 - Settings form saves all registry keys correctly
 """
 
-import pytest
-
 
 # ============================================================
 # SETTINGS REGISTRY

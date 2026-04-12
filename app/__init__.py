@@ -54,7 +54,7 @@ def _get_available_locales(app):
                 "SELECT value FROM settings WHERE key = 'available_locales'"
             ).fetchone()
             if row and row['value']:
-                return [l.strip() for l in row['value'].split(',') if l.strip()]
+                return [loc.strip() for loc in row['value'].split(',') if loc.strip()]
     except Exception:
         pass
     return ['en']
@@ -239,7 +239,9 @@ def create_app(config_path=None):
         except Exception:
             settings = {}
         # Locale information for language switcher and hreflang tags
-        available_locales = [l.strip() for l in settings.get('available_locales', 'en').split(',') if l.strip()]
+        available_locales = [
+            loc.strip() for loc in settings.get('available_locales', 'en').split(',') if loc.strip()
+        ]
         current_locale = str(get_locale())
         return dict(
             site_settings=settings,

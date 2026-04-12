@@ -12,9 +12,6 @@ as a whole, not just individual endpoints:
 """
 
 import io
-import sqlite3
-
-import pytest
 
 
 # ============================================================

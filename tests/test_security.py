@@ -307,7 +307,8 @@ def test_upload_exceeding_size_limit_rejected(auth_client, app):
     }, content_type='multipart/form-data', follow_redirects=True)
     assert response.status_code == 200
     # Should show an error about file size
-    assert b'too large' in response.data.lower() or b'exceeds' in response.data.lower() or b'size' in response.data.lower()
+    body = response.data.lower()
+    assert b'too large' in body or b'exceeds' in body or b'size' in body
 
 
 # ============================================================
