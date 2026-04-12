@@ -17,7 +17,7 @@ of spam status, giving the admin full visibility in the dashboard.
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 
-from app import get_db
+from app.db import get_db
 from app.models import save_contact_submission, count_recent_submissions, get_setting
 
 contact_bp = Blueprint('contact', __name__, template_folder='../templates')

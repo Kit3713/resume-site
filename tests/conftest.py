@@ -5,10 +5,11 @@ Provides pytest fixtures for creating isolated test environments. Each test
 gets a fresh application instance with a temporary database, ensuring tests
 don't interfere with each other or with the development database.
 
-The test config uses:
-- A random temporary directory for the database and photo storage.
-- A known (but non-functional) password hash for admin login tests.
-- Only localhost (127.0.0.0/8) in allowed_networks for IP restriction tests.
+Fixtures:
+    app           — Base Flask app with an empty database (schema + seeds only).
+    client        — Test client for HTTP requests (from 127.0.0.1 by default).
+    auth_client   — Test client pre-logged-in as admin.
+    populated_db  — In-process database populated with sample content.
 """
 
 import os
@@ -19,53 +20,141 @@ import pytest
 from app import create_app
 
 
+# ---------------------------------------------------------------------------
+# Config helper
+# ---------------------------------------------------------------------------
+
+def _write_test_config(tmp_path):
+    """Write a minimal test config.yaml to tmp_path and return its path."""
+    config_path = tmp_path / 'config.yaml'
+    db_path = str(tmp_path / 'test.db')
+    photos_path = str(tmp_path / 'photos')
+    # Hash for "testpassword123" (pbkdf2:sha256)
+    pw_hash = (
+        'pbkdf2:sha256:600000$test$'
+        'b109f3bbbc244eb82441917ed06d618b9008dd09b3befd1b5e07394c706a8bb9'
+        '80b1d7785e5976ec049b46df5f1326af5a2ea6d103fd07c95385ffab0cacbc86'
+    )
+    config_path.write_text(
+        'secret_key: "test-secret-key-for-testing-only"\n'
+        f'database_path: "{db_path}"\n'
+        f'photo_storage: "{photos_path}"\n'
+        'admin:\n'
+        '  username: "admin"\n'
+        f'  password_hash: "{pw_hash}"\n'
+        '  allowed_networks:\n'
+        '    - "127.0.0.0/8"\n'
+    )
+    return str(config_path)
+
+
+def _init_test_db(db_path):
+    """Initialize a test database from schema.sql."""
+    schema_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'schema.sql')
+    with open(schema_path, 'r') as f:
+        schema = f.read()
+    conn = sqlite3.connect(db_path)
+    conn.executescript(schema)
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Core fixtures
+# ---------------------------------------------------------------------------
+
 @pytest.fixture
 def app(tmp_path):
-    """Create a test application with a temporary database and config.
+    """Create a test application with a temporary database.
 
     Sets up a complete test environment:
     1. Writes a minimal config.yaml to a temp directory.
     2. Creates the Flask app with TESTING mode enabled.
-    3. Initializes the database with the full schema.
-    4. Yields the app for use in tests.
+    3. Initializes the database with the full schema + seed data.
 
     The temp directory is automatically cleaned up after each test.
     """
-    # Write a minimal test configuration
-    config_path = tmp_path / 'config.yaml'
-    config_path.write_text(
-        'secret_key: "test-secret-key"\n'
-        'database_path: "' + str(tmp_path / 'test.db') + '"\n'
-        'photo_storage: "' + str(tmp_path / 'photos') + '"\n'
-        'admin:\n'
-        '  username: "admin"\n'
-        '  password_hash: "pbkdf2:sha256:600000$test$b109f3bbbc244eb82441917ed06d618b9008dd09b3befd1b5e07394c706a8bb980b1d7785e5976ec049b46df5f1326af5a2ea6d103fd07c95385ffab0cacbc86"\n'
-        '  allowed_networks:\n'
-        '    - "127.0.0.0/8"\n'
-    )
+    config_path = _write_test_config(tmp_path)
+    flask_app = create_app(config_path=config_path)
+    flask_app.config['TESTING'] = True
+    flask_app.config['WTF_CSRF_ENABLED'] = False  # Disable CSRF in tests (tested separately)
 
-    # Create the app with the test config
-    app = create_app(config_path=str(config_path))
-    app.config['TESTING'] = True
+    _init_test_db(str(tmp_path / 'test.db'))
 
-    # Initialize the database with the full schema
-    schema_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'schema.sql')
-    with open(schema_path, 'r') as f:
-        schema = f.read()
-
-    conn = sqlite3.connect(str(tmp_path / 'test.db'))
-    conn.executescript(schema)
-    conn.close()
-
-    yield app
+    yield flask_app
 
 
 @pytest.fixture
 def client(app):
-    """Create a test client for making HTTP requests.
+    """Create a test client for HTTP requests.
 
-    The test client simulates requests without running a live server.
-    Requests come from 127.0.0.1 by default, which is within the
-    test config's allowed_networks.
+    Requests come from 127.0.0.1 by default, which passes the IP restriction
+    check (127.0.0.0/8 is in the test config's allowed_networks).
     """
     return app.test_client()
+
+
+@pytest.fixture
+def auth_client(app):
+    """Create a test client pre-authenticated as the admin user.
+
+    Uses Flask-Login's test utilities to set a valid session without
+    going through the login form. Useful for testing admin routes that
+    require @login_required without testing the login flow itself.
+    """
+    client = app.test_client()
+    with app.test_request_context():
+        with client.session_transaction() as sess:
+            # Manually set the Flask-Login session cookie
+            sess['_user_id'] = 'admin'
+            sess['_fresh'] = True
+
+    return client
+
+
+@pytest.fixture
+def populated_db(app):
+    """Return a database connection pre-populated with sample content.
+
+    Inserts representative rows for each content type so tests can verify
+    display logic, filtering, and ordering without setting up data inline.
+
+    Returns:
+        sqlite3.Connection: An open connection to the populated test database.
+        Remember to close it when done (or use it as a context manager).
+    """
+    db_path = app.config['DATABASE_PATH']
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA foreign_keys=ON')
+
+    # Sample service
+    conn.execute(
+        "INSERT INTO services (title, description, icon, sort_order) VALUES (?, ?, ?, ?)",
+        ('Web Development', 'Full-stack web applications', '🌐', 1),
+    )
+
+    # Sample stat
+    conn.execute(
+        "INSERT INTO stats (label, value, suffix, sort_order) VALUES (?, ?, ?, ?)",
+        ('Projects', 42, '+', 1),
+    )
+
+    # Sample review token and approved review
+    conn.execute(
+        "INSERT INTO review_tokens (token, name, type) VALUES (?, ?, ?)",
+        ('test-token-abc123', 'Alice Smith', 'recommendation'),
+    )
+    conn.execute(
+        "INSERT INTO reviews (token_id, reviewer_name, reviewer_title, message, type, status, display_tier) "
+        "VALUES (1, 'Alice Smith', 'Engineer', 'Great work!', 'recommendation', 'approved', 'featured')",
+    )
+
+    # Sample content block
+    conn.execute(
+        "INSERT INTO content_blocks (slug, title, content) VALUES (?, ?, ?)",
+        ('about', 'About Me', '<p>Test about content.</p>'),
+    )
+
+    conn.commit()
+    yield conn
+    conn.close()

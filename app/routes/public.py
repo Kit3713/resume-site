@@ -26,14 +26,14 @@ URL structure:
 
 import os
 
-from flask import Blueprint, render_template, abort, send_from_directory, current_app, request, Response, make_response
+from flask import Blueprint, render_template, abort, send_from_directory, request, make_response
 
-from app import get_db
+from app.db import get_db
 from app.models import (
     get_content_block, get_visible_stats, get_visible_services,
     get_photos_by_tier, get_all_visible_photos, get_photo_categories,
     get_case_study_by_slug, get_approved_reviews_by_tier,
-    get_all_approved_reviews, get_visible_projects, get_project_by_slug,
+    get_visible_projects, get_project_by_slug,
     get_visible_certifications, get_skill_domains_with_skills,
     get_setting,
 )

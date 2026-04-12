@@ -6,16 +6,21 @@ Provides command-line tools for server administration tasks that don't
 require the admin panel (e.g., initial setup, headless management).
 
 Commands:
-    init-db          Initialize the SQLite database with the full schema.
-                     Safe to run multiple times (all CREATE TABLE use IF NOT EXISTS).
+    init-db          Initialize the SQLite database (runs all pending migrations).
+    migrate          Apply pending database migrations.
     hash-password    Generate a pbkdf2:sha256 password hash for config.yaml.
+    generate-secret  Generate a cryptographically secure secret_key value.
     generate-token   Create a review invitation token for a trusted contact.
     list-reviews     Display reviews filtered by status (pending/approved/rejected).
     purge-analytics  Delete page view records older than N days.
 
 Usage:
     python manage.py init-db
+    python manage.py migrate
+    python manage.py migrate --status
+    python manage.py migrate --dry-run
     python manage.py hash-password
+    python manage.py generate-secret
     python manage.py generate-token --name "John Doe" --type recommendation
     python manage.py list-reviews --status pending
     python manage.py purge-analytics --days 90
@@ -30,35 +35,275 @@ import sys
 from werkzeug.security import generate_password_hash
 
 
-def init_db(args):
-    """Initialize the database with the full schema.
-
-    Reads schema.sql and executes it against the configured database path.
-    All tables use CREATE TABLE IF NOT EXISTS, making this command safe to
-    run multiple times without data loss. Default settings are seeded via
-    INSERT OR IGNORE.
-    """
+def _get_db_path():
+    """Return the configured database path by loading the app config."""
     from app import create_app
-
     app = create_app()
+    return app.config['DATABASE_PATH']
 
-    schema_path = os.path.join(os.path.dirname(__file__), 'schema.sql')
-    if not os.path.exists(schema_path):
-        print(f"ERROR: schema.sql not found at {schema_path}", file=sys.stderr)
+
+def _get_migrations_dir():
+    """Return the path to the migrations/ directory."""
+    return os.path.join(os.path.dirname(__file__), 'migrations')
+
+
+def _ensure_schema_version_table(conn):
+    """Create the schema_version tracking table if it doesn't exist."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version     INTEGER PRIMARY KEY,
+            name        TEXT NOT NULL,
+            applied_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        )
+    """)
+    conn.commit()
+
+
+def _get_applied_versions(conn):
+    """Return a set of migration version numbers that have been applied."""
+    return {row[0] for row in conn.execute('SELECT version FROM schema_version').fetchall()}
+
+
+def _detect_existing_db(conn):
+    """Return True if this looks like a v0.1.0 database (settings table exists)."""
+    tables = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+    return 'settings' in tables
+
+
+def _list_migration_files(migrations_dir):
+    """Return sorted (version, filename) pairs from the migrations directory."""
+    if not os.path.isdir(migrations_dir):
+        return []
+    files = []
+    for fname in sorted(os.listdir(migrations_dir)):
+        if fname.endswith('.sql') and fname[0].isdigit():
+            try:
+                version = int(fname.split('_')[0])
+                files.append((version, fname))
+            except ValueError:
+                pass
+    return files
+
+
+def init_db(args):
+    """Initialize the database by running all pending migrations.
+
+    Delegates to the migrate command internally. Running init-db on an
+    already-initialized database is safe — it only applies pending migrations.
+    """
+    # Reuse the migrate logic with no flags
+    class _Args:
+        status = False
+        dry_run = False
+    migrate(_Args())
+
+
+def migrate(args):
+    """Apply pending database migrations in order.
+
+    Each migration is a numbered SQL file in migrations/. The schema_version
+    table tracks which migrations have been applied. Existing v0.1.0 databases
+    are detected by the presence of the settings table and are auto-marked as
+    having migration 001 applied (since schema.sql created those tables).
+
+    Flags:
+        --status:   Print applied/pending status for all migrations and exit.
+        --dry-run:  Print SQL that would be executed without making changes.
+    """
+    db_path = _get_db_path()
+    migrations_dir = _get_migrations_dir()
+
+    os.makedirs(os.path.dirname(db_path) or '.', exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    _ensure_schema_version_table(conn)
+    applied = _get_applied_versions(conn)
+
+    # Auto-detect existing v0.1.0 databases and mark baseline as applied
+    if _detect_existing_db(conn) and 1 not in applied:
+        conn.execute(
+            "INSERT INTO schema_version (version, name) VALUES (1, '001_baseline.sql')"
+        )
+        conn.commit()
+        applied.add(1)
+        print("Detected existing database — marked 001_baseline as applied.")
+
+    migration_files = _list_migration_files(migrations_dir)
+    if not migration_files:
+        print("No migration files found in migrations/")
+        conn.close()
+        return
+
+    if args.status:
+        print("Migration status:")
+        for version, fname in migration_files:
+            status = 'applied ' if version in applied else 'pending '
+            print(f"  [{status}] {fname}")
+        conn.close()
+        return
+
+    pending = [(v, f) for v, f in migration_files if v not in applied]
+    if not pending:
+        print("All migrations are already applied.")
+        conn.close()
+        return
+
+    for version, fname in pending:
+        path = os.path.join(migrations_dir, fname)
+        with open(path, 'r') as f:
+            sql = f.read()
+
+        if args.dry_run:
+            print(f"-- DRY RUN: {fname}")
+            print(sql)
+            print()
+            continue
+
+        try:
+            conn.executescript(sql)
+            conn.execute(
+                "INSERT INTO schema_version (version, name) VALUES (?, ?)",
+                (version, fname),
+            )
+            conn.commit()
+            print(f"Applied: {fname}")
+        except Exception as e:
+            print(f"ERROR applying {fname}: {e}", file=sys.stderr)
+            conn.close()
+            sys.exit(1)
+
+    conn.close()
+    if not args.dry_run:
+        print("Migrations complete.")
+
+
+def config_validate(args):
+    """Validate config.yaml against expected structure and values.
+
+    Checks for:
+    - Required fields (secret_key)
+    - Unknown/unexpected keys (typos, settings-layer values in config)
+    - Type correctness for known fields
+    - Secret key strength
+    - CIDR network format validity
+    """
+    import ipaddress
+
+    from app.services.config import load_config, _WEAK_SECRET_KEYS
+
+    _VALID_TOP_KEYS = {
+        'secret_key', 'database_path', 'photo_storage', 'max_upload_size',
+        'session_timeout_minutes', 'smtp', 'admin',
+    }
+    _VALID_SMTP_KEYS = {'host', 'port', 'user', 'password', 'password_file', 'recipient'}
+    _VALID_ADMIN_KEYS = {'username', 'password_hash', 'allowed_networks'}
+
+    # Settings-layer keys that don't belong in config.yaml
+    _SETTINGS_KEYS = {
+        'site_title', 'site_tagline', 'dark_mode_default', 'availability_status',
+        'contact_form_enabled', 'contact_email_visible', 'contact_phone_visible',
+        'contact_github_url', 'contact_linkedin_url', 'resume_visibility',
+        'case_studies_enabled', 'testimonial_display_mode', 'analytics_retention_days',
+        'hero_heading', 'hero_subheading', 'hero_tagline', 'accent_color',
+        'logo_mode', 'footer_text',
+    }
+
+    config_path = os.environ.get(
+        'RESUME_SITE_CONFIG',
+        os.path.join(os.path.dirname(__file__), 'config.yaml'),
+    )
+
+    if not os.path.exists(config_path):
+        print(f"ERROR: Config file not found: {config_path}", file=sys.stderr)
         sys.exit(1)
 
-    with open(schema_path, 'r') as f:
-        schema = f.read()
+    import yaml as _yaml
+    with open(config_path, 'r') as f:
+        raw = _yaml.safe_load(f) or {}
 
-    # Ensure the database directory exists
-    db_path = app.config['DATABASE_PATH']
-    os.makedirs(os.path.dirname(db_path) or '.', exist_ok=True)
+    errors = []
+    warnings = []
 
-    conn = sqlite3.connect(db_path)
-    conn.executescript(schema)
-    conn.close()
+    # Check for unknown top-level keys
+    for key in raw:
+        if key in _SETTINGS_KEYS:
+            warnings.append(
+                f"'{key}' belongs in the admin settings panel, not config.yaml. "
+                "It will be ignored here."
+            )
+        elif key not in _VALID_TOP_KEYS:
+            warnings.append(f"Unknown key '{key}' in config.yaml (possible typo?).")
 
-    print(f"Database initialized at: {db_path}")
+    # Check required fields
+    if 'secret_key' not in raw:
+        errors.append("Required field 'secret_key' is missing.")
+    else:
+        sk = str(raw['secret_key'])
+        if sk.lower() in _WEAK_SECRET_KEYS:
+            warnings.append("secret_key is an example/placeholder value.")
+        if len(sk) < 32:
+            warnings.append(f"secret_key is only {len(sk)} chars (32+ recommended).")
+
+    # Validate SMTP section
+    smtp = raw.get('smtp', {})
+    if isinstance(smtp, dict):
+        for key in smtp:
+            if key not in _VALID_SMTP_KEYS:
+                warnings.append(f"Unknown key 'smtp.{key}' (possible typo?).")
+        if 'port' in smtp and not isinstance(smtp['port'], int):
+            errors.append("smtp.port must be an integer.")
+    elif smtp is not None:
+        errors.append("'smtp' must be a mapping (dict), not a scalar.")
+
+    # Validate admin section
+    admin = raw.get('admin', {})
+    if isinstance(admin, dict):
+        for key in admin:
+            if key not in _VALID_ADMIN_KEYS:
+                warnings.append(f"Unknown key 'admin.{key}' (possible typo?).")
+        networks = admin.get('allowed_networks', [])
+        if isinstance(networks, list):
+            for net in networks:
+                try:
+                    ipaddress.ip_network(net, strict=False)
+                except ValueError:
+                    errors.append(f"Invalid CIDR network: '{net}'")
+    elif admin is not None:
+        errors.append("'admin' must be a mapping (dict), not a scalar.")
+
+    # Validate integer fields
+    for field in ('max_upload_size', 'session_timeout_minutes'):
+        if field in raw and not isinstance(raw[field], int):
+            errors.append(f"'{field}' must be an integer.")
+
+    # Print results
+    if errors:
+        print("ERRORS:")
+        for e in errors:
+            print(f"  ✗ {e}")
+    if warnings:
+        print("WARNINGS:")
+        for w in warnings:
+            print(f"  ⚠ {w}")
+    if not errors and not warnings:
+        print("✓ config.yaml is valid.")
+    elif errors:
+        sys.exit(1)
+
+
+def generate_secret(args):
+    """Generate a cryptographically secure secret_key for config.yaml.
+
+    Uses Python's secrets module to produce a 64-byte (512-bit) URL-safe
+    random string. The output can be pasted directly into config.yaml.
+    """
+    import secrets as _secrets
+    key = _secrets.token_urlsafe(64)
+    print(f"\nPaste this into your config.yaml as secret_key:\n")
+    print(f'  secret_key: "{key}"')
 
 
 def hash_password(args):
@@ -166,8 +411,19 @@ def main():
     parser = argparse.ArgumentParser(description='resume-site management CLI')
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
 
-    # Database initialization
-    subparsers.add_parser('init-db', help='Initialize the database')
+    # Database initialization (delegates to migrate)
+    subparsers.add_parser('init-db', help='Initialize the database (runs all migrations)')
+
+    # Migration runner
+    migrate_parser = subparsers.add_parser('migrate', help='Apply pending migrations')
+    migrate_parser.add_argument('--status', action='store_true', help='Show migration status')
+    migrate_parser.add_argument('--dry-run', action='store_true', help='Print SQL without executing')
+
+    # Config validation
+    subparsers.add_parser('config', help='Validate config.yaml')
+
+    # Secret key generation
+    subparsers.add_parser('generate-secret', help='Generate a secure secret_key')
 
     # Password hash generation
     subparsers.add_parser('hash-password', help='Generate an admin password hash')
@@ -193,6 +449,12 @@ def main():
 
     if args.command == 'init-db':
         init_db(args)
+    elif args.command == 'migrate':
+        migrate(args)
+    elif args.command == 'config':
+        config_validate(args)
+    elif args.command == 'generate-secret':
+        generate_secret(args)
     elif args.command == 'hash-password':
         hash_password(args)
     elif args.command == 'generate-token':

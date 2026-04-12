@@ -9,6 +9,7 @@
         <h1 class="admin-login__title">Admin Login</h1>
 
         <form method="POST" class="admin-login__form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
                 <label for="username" class="form-label">Username</label>
                 <input type="text" id="username" name="username" class="form-input"

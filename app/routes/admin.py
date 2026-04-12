@@ -25,17 +25,23 @@ Admin features:
 
 import ipaddress
 import secrets
+from datetime import datetime, timezone
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app, session
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash
 
-from app import get_db
-from app.models import (
-    AdminUser, get_all_settings, get_setting, set_setting,
-    get_visible_services, get_visible_projects, get_visible_certifications,
-    get_all_approved_reviews,
+from app.db import get_db
+from app.models import AdminUser
+from app.services.content import get_all_blocks, save_block, create_block
+from app.services.reviews import (
+    get_reviews_by_status, approve_review, reject_review, update_review_tier,
 )
+from app.services.service_items import (
+    get_all_services, add_service, update_service, delete_service,
+)
+from app.services.stats import get_all_stats, add_stat, update_stat, delete_stat
+from app.services.settings_svc import get_all as get_all_settings_svc, save_many as save_settings
 
 admin_bp = Blueprint('admin', __name__, template_folder='../templates')
 
@@ -88,6 +94,43 @@ def restrict_to_allowed_networks():
 
     # No matching network found — block the request
     abort(403)
+
+
+@admin_bp.after_request
+def update_last_activity(response):
+    """Record the timestamp of each admin request for session timeout tracking."""
+    if current_user.is_authenticated:
+        session['_last_activity'] = datetime.now(timezone.utc).isoformat()
+    return response
+
+
+@admin_bp.before_request
+def check_session_timeout():
+    """Expire admin sessions after a period of inactivity.
+
+    The timeout is configurable via session_timeout_minutes in config.yaml
+    (default 60 minutes). Only applies to authenticated users — the login
+    page is always accessible. On timeout, the user is logged out and
+    redirected to the login page with a flash message.
+    """
+    if not current_user.is_authenticated:
+        return
+
+    last_activity = session.get('_last_activity')
+    if last_activity:
+        try:
+            last_dt = datetime.fromisoformat(last_activity)
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=timezone.utc)
+            timeout_minutes = current_app.config.get('SESSION_TIMEOUT_MINUTES', 60)
+            elapsed = (datetime.now(timezone.utc) - last_dt).total_seconds() / 60
+            if elapsed > timeout_minutes:
+                logout_user()
+                session.clear()
+                flash('Session expired due to inactivity. Please log in again.', 'error')
+                return redirect(url_for('admin.login'))
+        except (ValueError, TypeError):
+            pass  # Malformed timestamp — let the request proceed
 
 
 # ============================================================
@@ -188,7 +231,7 @@ def dashboard():
 def content():
     """List all content blocks for editing."""
     db = get_db()
-    blocks = db.execute('SELECT * FROM content_blocks ORDER BY sort_order').fetchall()
+    blocks = get_all_blocks(db)
     return render_template('admin/content.html', blocks=blocks)
 
 
@@ -198,26 +241,16 @@ def content_edit(slug):
     """Edit an existing content block or create one if the slug is new.
 
     The Quill.js editor on the frontend submits HTML content via a hidden
-    input field. The content is stored as-is in the database and rendered
-    with Jinja2's |safe filter in templates.
+    input field. Content is sanitized via nh3 before storage.
     """
     db = get_db()
-    block = db.execute('SELECT * FROM content_blocks WHERE slug = ?', (slug,)).fetchone()
+    from app.services.content import get_block_by_slug
+    block = get_block_by_slug(db, slug)
 
     if request.method == 'POST':
         title = request.form.get('title', '')
         content_html = request.form.get('content', '')
-        if block:
-            db.execute(
-                "UPDATE content_blocks SET title = ?, content = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE slug = ?",
-                (title, content_html, slug),
-            )
-        else:
-            db.execute(
-                "INSERT INTO content_blocks (slug, title, content) VALUES (?, ?, ?)",
-                (slug, title, content_html),
-            )
-        db.commit()
+        save_block(db, slug, title, content_html, create_if_missing=True)
         flash('Content saved.', 'success')
         return redirect(url_for('admin.content'))
 
@@ -227,22 +260,14 @@ def content_edit(slug):
 @admin_bp.route('/content/new', methods=['GET', 'POST'])
 @login_required
 def content_new():
-    """Create a new content block with a unique slug identifier.
-
-    Slugs are auto-normalized: lowercased and spaces replaced with underscores.
-    Templates reference blocks by slug (e.g., 'about', 'hero_description').
-    """
+    """Create a new content block with a unique slug identifier."""
     if request.method == 'POST':
         db = get_db()
-        slug = request.form.get('slug', '').strip().lower().replace(' ', '_')
+        slug = request.form.get('slug', '').strip()
         title = request.form.get('title', '').strip()
         content_html = request.form.get('content', '')
         if slug:
-            db.execute(
-                "INSERT OR IGNORE INTO content_blocks (slug, title, content) VALUES (?, ?, ?)",
-                (slug, title, content_html),
-            )
-            db.commit()
+            create_block(db, slug, title, content_html)
             flash('Content block created.', 'success')
         return redirect(url_for('admin.content'))
     return render_template('admin/content_edit.html', block=None, slug='')
@@ -283,6 +308,9 @@ def photos_upload():
     if result is None:
         flash('Invalid file type. Allowed: jpg, png, gif, webp.', 'error')
         return redirect(url_for('admin.photos'))
+    if isinstance(result, str):
+        flash(result, 'error')
+        return redirect(url_for('admin.photos'))
 
     # Read optional metadata from the upload form
     title = request.form.get('title', '')
@@ -291,7 +319,8 @@ def photos_upload():
     display_tier = request.form.get('display_tier', 'grid')
 
     db.execute(
-        'INSERT INTO photos (filename, storage_name, mime_type, width, height, file_size, title, description, category, display_tier) '
+        'INSERT INTO photos '
+        '(filename, storage_name, mime_type, width, height, file_size, title, description, category, display_tier) '
         'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         (result['filename'], result['storage_name'], result['mime_type'],
          result['width'], result['height'], result['file_size'],
@@ -348,40 +377,27 @@ def photos_delete(photo_id):
 def reviews():
     """List all reviews grouped by status (pending, approved, rejected)."""
     db = get_db()
-    pending = db.execute("SELECT * FROM reviews WHERE status = 'pending' ORDER BY created_at DESC").fetchall()
-    approved = db.execute("SELECT * FROM reviews WHERE status = 'approved' ORDER BY created_at DESC").fetchall()
-    rejected = db.execute("SELECT * FROM reviews WHERE status = 'rejected' ORDER BY created_at DESC").fetchall()
+    pending = get_reviews_by_status(db, 'pending')
+    approved = get_reviews_by_status(db, 'approved')
+    rejected = get_reviews_by_status(db, 'rejected')
     return render_template('admin/reviews.html', pending=pending, approved=approved, rejected=rejected)
 
 
 @admin_bp.route('/reviews/<int:review_id>/update', methods=['POST'])
 @login_required
 def reviews_update(review_id):
-    """Update a review's status or display tier.
-
-    Actions:
-    - 'approve': Set status to approved and assign a display tier.
-    - 'reject': Set status to rejected.
-    - 'update_tier': Change the display tier of an already-approved review.
-    """
+    """Update a review's status or display tier."""
     db = get_db()
     action = request.form.get('action', '')
     display_tier = request.form.get('display_tier', 'standard')
 
     if action == 'approve':
-        db.execute(
-            "UPDATE reviews SET status='approved', display_tier=?, reviewed_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id=?",
-            (display_tier, review_id),
-        )
+        approve_review(db, review_id, display_tier)
     elif action == 'reject':
-        db.execute(
-            "UPDATE reviews SET status='rejected', reviewed_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id=?",
-            (review_id,),
-        )
+        reject_review(db, review_id)
     elif action == 'update_tier':
-        db.execute("UPDATE reviews SET display_tier=? WHERE id=?", (display_tier, review_id))
+        update_review_tier(db, review_id, display_tier)
 
-    db.commit()
     flash('Review updated.', 'success')
     return redirect(url_for('admin.reviews'))
 
@@ -443,41 +459,15 @@ def tokens_delete(token_id):
 @admin_bp.route('/settings', methods=['GET', 'POST'])
 @login_required
 def settings():
-    """Display and save site-wide settings.
-
-    Settings are stored as key-value pairs in the SQLite settings table.
-    The form fields map directly to setting keys — each field is saved
-    individually using set_setting() (UPSERT semantics).
-
-    Settings categories:
-    - Site identity: title, tagline, footer text, accent color
-    - Hero section: heading, subheading, tagline, availability status
-    - Display: default theme, logo mode, testimonial display mode
-    - Contact & social: form toggle, email/phone visibility, social URLs
-    - Analytics: data retention period
-    """
+    """Display and save site-wide settings."""
     db = get_db()
 
     if request.method == 'POST':
-        # List of all setting keys to read from the form
-        settings_fields = [
-            'site_title', 'site_tagline', 'dark_mode_default',
-            'availability_status', 'contact_form_enabled',
-            'contact_email_visible', 'contact_phone_visible',
-            'contact_github_url', 'contact_linkedin_url',
-            'resume_visibility', 'case_studies_enabled',
-            'testimonial_display_mode', 'analytics_retention_days',
-            'hero_heading', 'hero_subheading', 'hero_tagline',
-            'accent_color', 'logo_mode', 'footer_text',
-        ]
-        for field in settings_fields:
-            value = request.form.get(field, '')
-            set_setting(db, field, value)
-
+        save_settings(db, request.form)
         flash('Settings saved.', 'success')
         return redirect(url_for('admin.settings'))
 
-    all_settings = get_all_settings(db)
+    all_settings = get_all_settings_svc(db)
     return render_template('admin/settings.html', settings=all_settings)
 
 
@@ -490,7 +480,7 @@ def settings():
 def services():
     """List all services with inline edit forms."""
     db = get_db()
-    service_list = db.execute('SELECT * FROM services ORDER BY sort_order').fetchall()
+    service_list = get_all_services(db)
     return render_template('admin/services.html', services=service_list)
 
 
@@ -502,14 +492,10 @@ def services_add():
     title = request.form.get('title', '').strip()
     description = request.form.get('description', '')
     icon = request.form.get('icon', '')
-    sort_order = int(request.form.get('sort_order', '0'))
+    sort_order = request.form.get('sort_order', '0')
 
     if title:
-        db.execute(
-            'INSERT INTO services (title, description, icon, sort_order) VALUES (?, ?, ?, ?)',
-            (title, description, icon, sort_order),
-        )
-        db.commit()
+        add_service(db, title, description, icon, sort_order)
         flash('Service added.', 'success')
     return redirect(url_for('admin.services'))
 
@@ -522,15 +508,10 @@ def services_edit(service_id):
     title = request.form.get('title', '').strip()
     description = request.form.get('description', '')
     icon = request.form.get('icon', '')
-    sort_order = int(request.form.get('sort_order', '0'))
-    visible = 1 if request.form.get('visible') else 0
+    sort_order = request.form.get('sort_order', '0')
+    visible = bool(request.form.get('visible'))
 
-    db.execute(
-        "UPDATE services SET title=?, description=?, icon=?, sort_order=?, visible=?, "
-        "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id=?",
-        (title, description, icon, sort_order, visible, service_id),
-    )
-    db.commit()
+    update_service(db, service_id, title, description, icon, sort_order, visible)
     flash('Service updated.', 'success')
     return redirect(url_for('admin.services'))
 
@@ -540,8 +521,7 @@ def services_edit(service_id):
 def services_delete(service_id):
     """Delete a service card."""
     db = get_db()
-    db.execute('DELETE FROM services WHERE id = ?', (service_id,))
-    db.commit()
+    delete_service(db, service_id)
     flash('Service deleted.', 'success')
     return redirect(url_for('admin.services'))
 
@@ -555,7 +535,7 @@ def services_delete(service_id):
 def stats():
     """List all stat counters with inline edit forms."""
     db = get_db()
-    stat_list = db.execute('SELECT * FROM stats ORDER BY sort_order').fetchall()
+    stat_list = get_all_stats(db)
     return render_template('admin/stats.html', stats=stat_list)
 
 
@@ -565,16 +545,12 @@ def stats_add():
     """Add a new animated stat counter for the landing page."""
     db = get_db()
     label = request.form.get('label', '').strip()
-    value = int(request.form.get('value', '0'))
-    suffix = request.form.get('suffix', '')         # e.g., "+", "%", "k"
-    sort_order = int(request.form.get('sort_order', '0'))
+    value = request.form.get('value', '0')
+    suffix = request.form.get('suffix', '')
+    sort_order = request.form.get('sort_order', '0')
 
     if label:
-        db.execute(
-            'INSERT INTO stats (label, value, suffix, sort_order) VALUES (?, ?, ?, ?)',
-            (label, value, suffix, sort_order),
-        )
-        db.commit()
+        add_stat(db, label, value, suffix, sort_order)
         flash('Stat added.', 'success')
     return redirect(url_for('admin.stats'))
 
@@ -585,16 +561,12 @@ def stats_edit(stat_id):
     """Update an existing stat counter."""
     db = get_db()
     label = request.form.get('label', '').strip()
-    value = int(request.form.get('value', '0'))
+    value = request.form.get('value', '0')
     suffix = request.form.get('suffix', '')
-    sort_order = int(request.form.get('sort_order', '0'))
-    visible = 1 if request.form.get('visible') else 0
+    sort_order = request.form.get('sort_order', '0')
+    visible = bool(request.form.get('visible'))
 
-    db.execute(
-        'UPDATE stats SET label=?, value=?, suffix=?, sort_order=?, visible=? WHERE id=?',
-        (label, value, suffix, sort_order, visible, stat_id),
-    )
-    db.commit()
+    update_stat(db, stat_id, label, value, suffix, sort_order, visible)
     flash('Stat updated.', 'success')
     return redirect(url_for('admin.stats'))
 
@@ -604,7 +576,6 @@ def stats_edit(stat_id):
 def stats_delete(stat_id):
     """Delete a stat counter."""
     db = get_db()
-    db.execute('DELETE FROM stats WHERE id = ?', (stat_id,))
-    db.commit()
+    delete_stat(db, stat_id)
     flash('Stat deleted.', 'success')
     return redirect(url_for('admin.stats'))

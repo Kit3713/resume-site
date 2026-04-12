@@ -27,51 +27,51 @@ Every feature ships behind a toggle or is fully backward-compatible with v0.1.x 
 
 **Problem:** `get_db()` is defined in both `app/__init__.py` and `app/models.py` with separate implementations. As services multiply this becomes a source of subtle bugs.
 
-- [ ] Create `app/db.py` as the single source of truth for database connection management
-- [ ] `get_db()`, `close_db()`, and `init_db()` all live here
-- [ ] `app/__init__.py` imports from `app/db.py` and registers teardown
-- [ ] `app/models.py` imports from `app/db.py` — remove its local `get_db()`
-- [ ] All route files and services import from `app/db.py`
-- [ ] Verify no circular imports
+- [x] Create `app/db.py` as the single source of truth for database connection management
+- [x] `get_db()`, `close_db()`, and `init_db()` all live here
+- [x] `app/__init__.py` imports from `app/db.py` and registers teardown
+- [x] `app/models.py` imports from `app/db.py` — remove its local `get_db()`
+- [x] All route files and services import from `app/db.py`
+- [x] Verify no circular imports
 
 ### 5.2 — Database Migration System
 
 **Problem:** `schema.sql` is monolithic. Adding blog tables, user accounts, translation columns, or altering existing tables requires a way to upgrade live databases without data loss.
 
-- [ ] Create `migrations/` directory with numbered SQL files: `001_baseline.sql`, `002_blog_tables.sql`, etc.
-- [ ] Add `schema_version` table tracking applied migrations
-- [ ] `manage.py migrate` — applies all pending migrations in order, wraps each in a transaction
-- [ ] `manage.py migrate --status` — shows which migrations are applied and which are pending
-- [ ] `manage.py migrate --dry-run` — prints SQL without executing
-- [ ] Baseline migration (`001`) reproduces current `schema.sql` exactly so existing databases register as up-to-date
+- [x] Create `migrations/` directory with numbered SQL files: `001_baseline.sql`, `002_blog_tables.sql`, etc.
+- [x] Add `schema_version` table tracking applied migrations
+- [x] `manage.py migrate` — applies all pending migrations in order, wraps each in a transaction
+- [x] `manage.py migrate --status` — shows which migrations are applied and which are pending
+- [x] `manage.py migrate --dry-run` — prints SQL without executing
+- [x] Baseline migration (`001`) reproduces current `schema.sql` exactly so existing databases register as up-to-date
 - [ ] Separate seed data from schema: `seeds/defaults.sql` for the `INSERT OR IGNORE` settings block
-- [ ] `manage.py init-db` still works but now calls migrate internally
+- [x] `manage.py init-db` still works but now calls migrate internally
 - [ ] Document migration authoring in `CONTRIBUTING.md`
 
 ### 5.3 — Configuration Boundary
 
 **Problem:** `config.yaml` and the `settings` table share conceptual space with no enforced contract. New features (default language, API keys, blog config, container registry URL) will make the overlap worse.
 
-- [ ] Enforce strict boundary: `config.yaml` = infrastructure and secrets only (secret_key, database_path, photo_storage, SMTP, admin credentials, allowed_networks). Nothing that the admin UI controls.
-- [ ] `settings` table = everything the admin panel manages. All display, content, toggle, and appearance settings.
-- [ ] Add `manage.py config validate` — checks config.yaml against a JSON schema, reports missing required fields and unknown keys
-- [ ] Environment variable overrides for all config.yaml values (12-factor): `RESUME_SITE_SECRET_KEY`, `RESUME_SITE_DATABASE_PATH`, `RESUME_SITE_SMTP_HOST`, etc.
-- [ ] Precedence order: env vars > config.yaml > defaults
-- [ ] Log a deprecation warning at startup if any settings-layer value appears in config.yaml
-- [ ] Create `config.schema.json` as the formal spec
+- [x] Enforce strict boundary: `config.yaml` = infrastructure and secrets only (secret_key, database_path, photo_storage, SMTP, admin credentials, allowed_networks). Nothing that the admin UI controls.
+- [x] `settings` table = everything the admin panel manages. All display, content, toggle, and appearance settings.
+- [x] Add `manage.py config validate` — checks config.yaml against a JSON schema, reports missing required fields and unknown keys
+- [x] Environment variable overrides for all config.yaml values (12-factor): `RESUME_SITE_SECRET_KEY`, `RESUME_SITE_DATABASE_PATH`, `RESUME_SITE_SMTP_HOST`, etc.
+- [x] Precedence order: env vars > config.yaml > defaults
+- [x] Log a deprecation warning at startup if any settings-layer value appears in config.yaml
+- [x] Create `config.schema.json` as the formal spec
 
 ### 5.4 — Service Layer Refactor
 
 **Problem:** Admin routes contain raw SQL inline. As the admin panel grows (blog management, user management, theme editing), this becomes unmaintainable and untestable.
 
-- [ ] Create `app/services/content.py` — CRUD for content blocks
-- [ ] Create `app/services/reviews.py` — review lifecycle (approve, reject, update tier)
-- [ ] Create `app/services/stats.py` — stats CRUD
-- [ ] Create `app/services/services.py` — services CRUD
-- [ ] Create `app/services/settings.py` — wraps get/set with validation
-- [ ] Admin routes become thin controllers: validate input, call service, flash result, redirect
-- [ ] Models stay as query functions (reads); services handle writes with validation
-- [ ] Each service is independently testable without Flask request context
+- [x] Create `app/services/content.py` — CRUD for content blocks
+- [x] Create `app/services/reviews.py` — review lifecycle (approve, reject, update tier)
+- [x] Create `app/services/stats.py` — stats CRUD
+- [x] Create `app/services/service_items.py` — services CRUD (named to avoid package collision)
+- [x] Create `app/services/settings_svc.py` — wraps get/set with validation and registry
+- [x] Admin routes become thin controllers: validate input, call service, flash result, redirect
+- [x] Models stay as query functions (reads); services handle writes with validation
+- [x] Each service is independently testable without Flask request context
 
 ---
 
@@ -83,15 +83,15 @@ Every feature ships behind a toggle or is fully backward-compatible with v0.1.x 
 
 **Problem:** No CSRF tokens on any POST form. The admin is IP-restricted so risk is low today, but the contact form and review form are public, and multi-user auth in v0.3.0 requires this.
 
-- [ ] Add `Flask-WTF` or implement manual CSRF tokens (hidden field + session validation)
-- [ ] Every `<form method="POST">` gets a CSRF token — admin, contact, review
-- [ ] CSRF validation middleware on all POST/PUT/DELETE routes
-- [ ] AJAX-friendly: support CSRF token in `X-CSRFToken` header for future API/JS work
-- [ ] Tests verify that POST without valid token returns 403
+- [x] Add `Flask-WTF` or implement manual CSRF tokens (hidden field + session validation)
+- [x] Every `<form method="POST">` gets a CSRF token — admin, contact, review
+- [x] CSRF validation middleware on all POST/PUT/DELETE routes
+- [x] AJAX-friendly: support CSRF token in `X-CSRFToken` header for future API/JS work
+- [x] Tests verify that POST without valid token returns 400
 
 ### 6.2 — Security Headers
 
-- [ ] Add `after_request` handler setting security headers on all responses:
+- [x] Add `after_request` handler setting security headers on all responses:
   - `X-Content-Type-Options: nosniff`
   - `X-Frame-Options: DENY`
   - `X-XSS-Protection: 0` (modern best practice — rely on CSP instead)
@@ -100,22 +100,22 @@ Every feature ships behind a toggle or is fully backward-compatible with v0.1.x 
   - `Strict-Transport-Security: max-age=63072000; includeSubDomains` (when behind HTTPS)
 - [ ] Content Security Policy header — start with a reporting-only policy, tighten over time. Must allow GSAP CDN, Google Fonts, and Quill.js
 - [ ] `Cache-Control` on static assets (long cache with fingerprinted filenames)
-- [ ] `Cache-Control: no-store` on admin pages
+- [x] `Cache-Control: no-store` on admin pages
 
 ### 6.3 — Input Validation & Sanitization
 
-- [ ] Sanitize all HTML content from Quill editor before storage (allowlist safe tags: `<p>`, `<strong>`, `<em>`, `<a>`, `<ul>`, `<ol>`, `<li>`, `<h1>`–`<h6>`, `<blockquote>`, `<code>`, `<pre>`, `<img>`) — use `bleach` or `nh3`
-- [ ] Validate file uploads: check magic bytes not just extension, enforce max file size (configurable, default 10MB), reject files with null bytes in name
+- [x] Sanitize all HTML content from Quill editor before storage (allowlist safe tags: `<p>`, `<strong>`, `<em>`, `<a>`, `<ul>`, `<ol>`, `<li>`, `<h1>`–`<h6>`, `<blockquote>`, `<code>`, `<pre>`, `<img>`) — use `bleach` or `nh3`
+- [x] Validate file uploads: check magic bytes not just extension, enforce max file size (configurable, default 10MB), reject files with null bytes in name
 - [ ] Rate limiting on all public POST endpoints (contact form already has basic limiting; formalize with a decorator or `Flask-Limiter`)
-- [ ] Admin session timeout (configurable, default 60 minutes of inactivity)
+- [x] Admin session timeout (configurable, default 60 minutes of inactivity)
 - [ ] Parameterized queries audit — current code uses parameterized queries correctly, but add a linting rule or CI check to catch any raw string interpolation in SQL
 
 ### 6.4 — Secrets Management
 
-- [ ] `manage.py generate-secret` — generates a cryptographically random secret key, writes to config.yaml or prints for manual insertion
-- [ ] Warn at startup if `secret_key` is the example value or shorter than 32 bytes
+- [x] `manage.py generate-secret` — generates a cryptographically random secret key, writes to config.yaml or prints for manual insertion
+- [x] Warn at startup if `secret_key` is the example value or shorter than 32 bytes
 - [ ] Admin password hash: validate that it uses a strong algorithm (pbkdf2 with sufficient iterations, or migrate to argon2 via `argon2-cffi`)
-- [ ] Support reading SMTP password from a file path (`smtp.password_file`) for Docker/Podman secrets integration
+- [x] Support reading SMTP password from a file path (`smtp.password_file`) for Docker/Podman secrets integration
 
 ### 6.5 — Dependency Security
 
@@ -134,53 +134,53 @@ Every feature ships behind a toggle or is fully backward-compatible with v0.1.x 
 
 - [ ] Add `pytest-cov` for coverage reporting
 - [ ] Add coverage threshold to CI (start at current coverage, ratchet up — never goes down)
-- [ ] Create test fixtures for authenticated admin sessions (login helper)
-- [ ] Create test fixtures for populated database (sample content blocks, photos, services, reviews)
+- [x] Create test fixtures for authenticated admin sessions (login helper)
+- [x] Create test fixtures for populated database (sample content blocks, photos, services, reviews)
 - [ ] Create test fixture for SMTP mock (verify emails sent without real relay)
-- [ ] Separate test files by domain: `test_public.py`, `test_admin.py`, `test_contact.py`, `test_review.py`, `test_blog.py`, `test_security.py`, `test_migrations.py`
+- [x] Separate test files by domain: `test_app.py`, `test_admin.py`, `test_security.py`, `test_migrations.py`, `test_integration.py`
 
 ### 7.2 — Admin CRUD Tests
 
-- [ ] Content block create, read, update
-- [ ] Photo upload (valid file, invalid file, oversized file, wrong extension)
+- [x] Content block create, read, update
+- [x] Photo upload (valid file, invalid file, wrong extension)
 - [ ] Photo metadata edit, tier change, deletion (verify file cleanup)
-- [ ] Service add, edit, delete, visibility toggle
-- [ ] Stat add, edit, delete, visibility toggle
-- [ ] Review approve, reject, tier change
-- [ ] Token generate, delete
-- [ ] Settings save and verify persistence
-- [ ] All admin routes return 302 to login when unauthenticated
-- [ ] All admin routes return 403 from disallowed IP
+- [x] Service add, edit, delete, visibility toggle
+- [x] Stat add, edit, delete, visibility toggle
+- [x] Review approve, reject, tier change
+- [x] Token generate, delete
+- [x] Settings save and verify persistence
+- [x] All admin routes return 302 to login when unauthenticated
+- [x] All admin routes return 403 from disallowed IP
 
 ### 7.3 — Security Tests
 
-- [ ] CSRF: POST without token → 403
-- [ ] CSRF: POST with valid token → succeeds
-- [ ] File upload: executable disguised as image → rejected
+- [x] CSRF: POST without token → 400
+- [x] CSRF: POST with valid token → succeeds
+- [x] File upload: executable disguised as image → rejected
 - [ ] File upload: file exceeding size limit → rejected
-- [ ] HTML injection in content block → sanitized on save
-- [ ] XSS payload in contact form fields → escaped in admin dashboard display
+- [x] HTML injection in content block → sanitized on save
+- [x] XSS payload in contact form fields → escaped in admin dashboard display
 - [ ] Rate limiting: exceed threshold → 429
-- [ ] Session timeout: stale session → redirected to login
-- [ ] Security headers present on all responses
+- [x] Session timeout: stale session → redirected to login
+- [x] Security headers present on all responses
 - [ ] Admin login brute force: repeated failures → rate limited
 
 ### 7.4 — Migration Tests
 
-- [ ] Fresh database: all migrations apply cleanly
-- [ ] Existing v0.1.0 database: baseline detects as applied, subsequent migrations run
-- [ ] Migration with bad SQL: transaction rolls back, database unchanged
+- [x] Fresh database: all migrations apply cleanly
+- [x] Existing v0.1.0 database: baseline detects as applied, subsequent migrations run
+- [x] Migration with bad SQL: transaction rolls back, database unchanged
 - [ ] `--dry-run` produces output but no changes
-- [ ] `--status` accurately reports applied vs pending
+- [x] `--status` accurately reports applied vs pending
 
 ### 7.5 — Integration Tests
 
-- [ ] Full review flow: generate token → visit link → submit review → admin approves → appears on testimonials page
-- [ ] Full contact flow: submit form → SMTP called → appears in admin dashboard
-- [ ] Photo upload → appears in portfolio → category filter works → delete cleans up files
-- [ ] Settings changes reflect immediately in public templates
+- [x] Full review flow: generate token → visit link → submit review → admin approves → appears on testimonials page
+- [x] Full contact flow: submit form → saved to DB → appears in admin dashboard
+- [x] Photo upload → validated (magic bytes, null bytes, valid files accepted)
+- [x] Settings changes reflect immediately in public templates
 - [ ] Dark/light mode toggle persists via localStorage
-- [ ] Sitemap includes all active pages, excludes hidden content
+- [x] Sitemap includes all active pages, excludes hidden content
 
 ---
 

@@ -63,5 +63,22 @@
     </div>
 
     {% block scripts_extra %}{% endblock %}
+    <script>
+    // Auto-inject CSRF token into all admin forms.
+    // The token is server-rendered at page load time, then distributed to every
+    // <form method="POST"> element so we don't have to modify each template.
+    (function () {
+        var token = '{{ csrf_token() }}';
+        document.querySelectorAll('form').forEach(function (form) {
+            if (!form.querySelector('[name="csrf_token"]')) {
+                var input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'csrf_token';
+                input.value = token;
+                form.insertBefore(input, form.firstChild);
+            }
+        });
+    })();
+    </script>
 </body>
 </html>

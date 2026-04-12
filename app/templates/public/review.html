@@ -37,6 +37,7 @@
             </h1>
 
             <form method="POST" class="review-form__form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="form-group">
                     <label for="reviewer_name" class="form-label">Your Name *</label>
                     <input type="text" id="reviewer_name" name="reviewer_name"

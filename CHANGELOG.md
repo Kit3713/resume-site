@@ -7,7 +7,37 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.2.0
 
-### Added
+### Added — Phase 5: Architecture Hardening
+- `app/db.py` — single source of truth for database connection management (consolidated from `__init__.py` and `models.py`)
+- Database migration system: `migrations/` directory with numbered SQL files, `schema_version` tracking table, auto-detection of existing v0.1.0 databases
+- `manage.py migrate` command with `--status` and `--dry-run` flags
+- `manage.py config` command — validates config.yaml structure, warns on typos and misplaced settings
+- `config.schema.json` — formal JSON Schema specification for config.yaml
+- Environment variable overrides for all config values (`RESUME_SITE_SECRET_KEY`, `RESUME_SITE_DATABASE_PATH`, `RESUME_SITE_SMTP_*`, etc.) — 12-factor app support
+- Service layer: `app/services/content.py`, `reviews.py`, `stats.py`, `service_items.py`, `settings_svc.py` — admin routes are now thin controllers
+- Settings registry with type validation and key whitelisting
+
+### Added — Phase 6: Security Hardening
+- CSRF protection on all POST forms via Flask-WTF (`CSRFProtect`)
+- CSRF tokens auto-injected into admin templates and manually added to public forms
+- Security response headers on every response: `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`, `Permissions-Policy`
+- `Cache-Control: no-store` on all admin pages
+- HTML sanitization via `nh3` on all content block writes (allowlisted tags only)
+- File upload hardening: magic byte validation, configurable size limits (`max_upload_size`), null byte filename rejection
+- Admin session timeout with configurable inactivity period (`session_timeout_minutes`, default 60 min)
+- Startup validation: warns on weak/placeholder secret keys and keys shorter than 32 characters
+- `manage.py generate-secret` command for cryptographically secure key generation
+- `smtp.password_file` support for Docker/Podman secrets integration
+
+### Added — Phase 7: Expanded Test Suite
+- `tests/test_admin.py` — 47 tests covering all admin CRUD operations, auth, and IP restriction
+- `tests/test_security.py` — 21 tests covering CSRF enforcement, security headers, HTML sanitization
+- `tests/test_migrations.py` — 13 tests covering migration system (fresh DB, v0.1.0 detection, bad SQL, status output)
+- `tests/test_integration.py` — 9 end-to-end tests (full review flow, contact flow, settings reflection, sitemap, file upload validation, session timeout)
+- Test fixtures: `auth_client` (pre-authenticated admin), `populated_db` (sample content), `csrf_app` (CSRF-enabled)
+- Total: 121 tests, all passing
+
+### Infrastructure
 - Multi-stage Containerfile with non-root user, health check, and OCI labels
 - `compose.yaml` for Podman/Docker Compose deployment
 - `resume-site.container` Podman Quadlet unit file for systemd integration
@@ -17,12 +47,6 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Updated `SECURITY.md` with v0.2.0 hardening commitments
 
 ### Planned
-- Database migration system (`migrations/` directory, `manage.py migrate`)
-- CSRF protection on all forms
-- Security headers (X-Content-Type-Options, X-Frame-Options, CSP, HSTS)
-- HTML sanitization on content input
-- Input validation hardening (file upload magic bytes, size limits)
-- Expanded test suite (admin CRUD, security, integration, migration tests)
 - Blog / articles engine with tags, RSS, markdown support
 - Admin panel customization (theme editor, nav ordering, custom CSS, settings registry)
 - i18n framework (Flask-Babel, string extraction, locale routing)

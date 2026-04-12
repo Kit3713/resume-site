@@ -12,7 +12,7 @@ Data retention is configurable via the analytics_retention_days setting,
 and old records can be purged with `python manage.py purge-analytics`.
 """
 
-from flask import request, g
+from flask import request
 
 
 def track_page_view():
@@ -36,7 +36,7 @@ def track_page_view():
         return
 
     try:
-        from app import get_db
+        from app.db import get_db
         db = get_db()
 
         # Extract the real client IP from the proxy chain

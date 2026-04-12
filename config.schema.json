@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "resume-site Configuration",
+  "description": "JSON Schema for config.yaml — infrastructure settings only.",
+  "type": "object",
+  "required": ["secret_key"],
+  "properties": {
+    "secret_key": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Flask secret key for sessions and CSRF. Must be at least 32 characters for production."
+    },
+    "database_path": {
+      "type": "string",
+      "default": "data/site.db",
+      "description": "Path to the SQLite database file."
+    },
+    "photo_storage": {
+      "type": "string",
+      "default": "photos",
+      "description": "Directory for uploaded photo storage."
+    },
+    "max_upload_size": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 10485760,
+      "description": "Maximum file upload size in bytes (default 10 MB)."
+    },
+    "session_timeout_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 60,
+      "description": "Admin session inactivity timeout in minutes."
+    },
+    "smtp": {
+      "type": "object",
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "user": { "type": "string" },
+        "password": { "type": "string" },
+        "password_file": { "type": "string", "description": "Path to file containing SMTP password (Docker/Podman secrets)." },
+        "recipient": { "type": "string", "description": "Email address for contact form submissions." }
+      },
+      "additionalProperties": false
+    },
+    "admin": {
+      "type": "object",
+      "properties": {
+        "username": { "type": "string", "minLength": 1 },
+        "password_hash": { "type": "string" },
+        "allowed_networks": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "CIDR ranges allowed to access admin routes."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

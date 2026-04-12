@@ -2,14 +2,20 @@
 Photo Processing and Serving Service
 
 Handles two responsibilities:
-1. Upload processing: Saves uploaded images, generates optimized versions
-   using Pillow (resizing images larger than 2000px), and returns metadata.
+1. Upload processing: Validates, saves, and optimizes uploaded images
+   using Pillow (resizing images larger than 2000px).
 2. File serving: Serves photo files from the configured storage directory
    via Flask's send_from_directory for proper caching and content types.
 
-Photos are stored with UUID-based filenames to avoid collisions and path
-traversal issues. The original upload filename is preserved in the database
-for reference but never used for file system access.
+Security:
+- File extension whitelist (.jpg, .jpeg, .png, .gif, .webp only).
+- Magic byte validation: verifies the file's actual content matches its
+  claimed extension, preventing disguised executables.
+- Null byte rejection: filenames containing null bytes are rejected to
+  prevent null byte injection attacks.
+- File size limit: enforced before writing to disk (configurable via
+  max_upload_size in config.yaml, default 10 MB).
+- UUID-based storage filenames prevent path traversal.
 
 Storage layout:
   photos/
@@ -25,30 +31,109 @@ from PIL import Image
 from flask import current_app, send_from_directory, abort
 
 
+# Magic byte signatures for each allowed image format.
+# These are the first N bytes of a valid file of that type.
+_MAGIC_BYTES = {
+    '.jpg':  [b'\xff\xd8\xff'],
+    '.jpeg': [b'\xff\xd8\xff'],
+    '.png':  [b'\x89PNG\r\n\x1a\n'],
+    '.gif':  [b'GIF87a', b'GIF89a'],
+    '.webp': [b'RIFF'],  # Full check: RIFF....WEBP (bytes 8-11 = "WEBP")
+}
+
+_DEFAULT_MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+def _validate_magic_bytes(file_storage, ext):
+    """Verify the file's magic bytes match its claimed extension.
+
+    Reads the first 12 bytes without consuming the stream (seeks back
+    to the start after reading). Returns True if the bytes match the
+    expected signature for the given extension, False otherwise.
+    """
+    signatures = _MAGIC_BYTES.get(ext)
+    if not signatures:
+        return False
+
+    header = file_storage.read(12)
+    file_storage.seek(0)
+
+    if not header:
+        return False
+
+    for sig in signatures:
+        if header[:len(sig)] == sig:
+            # Extra check for WebP: bytes 8-12 must be "WEBP"
+            if ext == '.webp' and header[8:12] != b'WEBP':
+                return False
+            return True
+
+    return False
+
+
+def _check_file_size(file_storage):
+    """Check the uploaded file's size against the configured limit.
+
+    Seeks to the end to determine size, then seeks back to the start.
+    Returns (size_bytes, error_message). error_message is None if OK.
+    """
+    file_storage.seek(0, os.SEEK_END)
+    size = file_storage.tell()
+    file_storage.seek(0)
+
+    max_size = current_app.config.get('MAX_UPLOAD_SIZE', _DEFAULT_MAX_UPLOAD_SIZE)
+    if isinstance(max_size, str):
+        max_size = int(max_size)
+
+    if size > max_size:
+        max_mb = max_size / (1024 * 1024)
+        return size, f"File exceeds maximum upload size ({max_mb:.0f} MB)."
+
+    return size, None
+
+
 def process_upload(file_storage):
-    """Process an uploaded photo: save to disk and optimize for web display.
+    """Process an uploaded photo: validate, save to disk, and optimize.
 
     The upload workflow:
-    1. Validate the file extension (jpg, png, gif, webp only).
-    2. Generate a UUID-based storage filename to prevent collisions.
-    3. Save the original file to the photo storage directory.
-    4. If the image exceeds 2000px on any dimension, resize it down
-       using Lanczos resampling (highest quality downscale algorithm).
-    5. Return metadata dict for database insertion.
+    1. Reject filenames containing null bytes.
+    2. Validate the file extension (jpg, png, gif, webp only).
+    3. Verify magic bytes match the claimed extension.
+    4. Check file size against the configured limit.
+    5. Generate a UUID-based storage filename to prevent collisions.
+    6. Save to the photo storage directory.
+    7. If the image exceeds 2000px on any dimension, resize it down.
+    8. Return metadata dict for database insertion.
 
     Args:
         file_storage: A Werkzeug FileStorage object from request.files.
 
     Returns:
-        dict: Photo metadata (storage_name, filename, mime_type, width,
-              height, file_size), or None if the file type is invalid.
+        dict with keys: storage_name, filename, mime_type, width, height,
+        file_size — on success.
+        None — if the file type is invalid.
+        str — if there's a specific error message (size limit, magic bytes).
     """
     filename = file_storage.filename or 'upload.jpg'
+
+    # Reject filenames with null bytes (null byte injection attack)
+    if '\x00' in filename:
+        return 'Invalid filename.'
+
     ext = os.path.splitext(filename)[1].lower() or '.jpg'
 
     # Whitelist of allowed image extensions
     if ext not in ('.jpg', '.jpeg', '.png', '.gif', '.webp'):
         return None
+
+    # Verify magic bytes match the claimed file type
+    if not _validate_magic_bytes(file_storage, ext):
+        return 'File content does not match its extension.'
+
+    # Check file size before writing to disk
+    reported_size, size_error = _check_file_size(file_storage)
+    if size_error:
+        return size_error
 
     # Generate a unique storage filename (UUID prevents collisions and path traversal)
     storage_name = f"{uuid.uuid4().hex}{ext}"

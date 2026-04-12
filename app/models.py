@@ -34,17 +34,6 @@ class AdminUser(UserMixin):
         self.username = username
 
 
-def get_db():
-    """Get the database connection from Flask's g object.
-
-    This is a convenience re-export for modules that don't want to import
-    from app.__init__ directly. The actual connection is managed by the
-    app factory's before_request/teardown_appcontext hooks.
-    """
-    from flask import g
-    return g.db
-
-
 # ============================================================
 # SETTINGS (key-value store in SQLite)
 # ============================================================

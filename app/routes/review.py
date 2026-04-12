@@ -17,7 +17,7 @@ Flow:
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 
-from app import get_db
+from app.db import get_db
 from app.models import create_review, mark_token_used
 from app.services.tokens import validate_token
 
