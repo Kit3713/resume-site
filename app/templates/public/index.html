@@ -1,3 +1,16 @@
+{#
+  Landing Page — Hero, About, Stats, Services Preview, Featured Content, CTA
+
+  This is the main entry point for visitors. It uses a single-page scroll layout
+  with data-driven sections that hide automatically when no content exists.
+
+  Context variables (from public.index route):
+  - about_block:      Content block with slug 'about' (rich text)
+  - stats:            Visible stat counters for the animated stats bar
+  - services:         Visible services for the preview cards
+  - featured_photos:  Top 3 featured portfolio photos
+  - featured_reviews: Top 3 featured testimonials
+#}
 {% extends "base.html" %}
 
 {% block title %}{{ site_settings.get('site_title', 'Portfolio') }} — {{ site_settings.get('site_tagline', '') }}{% endblock %}

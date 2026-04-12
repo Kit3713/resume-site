@@ -1,5 +1,52 @@
+/*
+ * ==========================================================================
+ * resume-site Stylesheet
+ * ==========================================================================
+ *
+ * Apple-inspired design system with dark/light theme support.
+ *
+ * Architecture:
+ *   - CSS custom properties for all design tokens (colors, spacing, typography).
+ *   - Theme switching via [data-theme="dark"] / [data-theme="light"] selectors.
+ *   - BEM naming convention for component classes (block__element--modifier).
+ *   - Fluid typography using clamp() — no breakpoints needed for font sizes.
+ *   - Mobile-first responsive with @media (max-width) overrides.
+ *
+ * Sections:
+ *   1. Reset & Base           — Box model reset, body defaults
+ *   2. Custom Properties      — Design tokens (fonts, spacing, layout)
+ *   3. Dark Theme             — Color tokens for dark mode (default)
+ *   4. Light Theme            — Color tokens for light mode
+ *   5. Navbar                 — Fixed nav with frosted glass effect
+ *   6. Theme Toggle           — Dark/light mode switch button
+ *   7. Hero                   — Full-viewport hero section with split layout
+ *   8. Buttons                — Primary and secondary button styles
+ *   9. Sections               — Generic scroll section containers
+ *   10. Flash Messages        — Toast notifications for form feedback
+ *   11. Footer                — Social links and copyright
+ *   12. Admin Login           — Centered login form
+ *   13. Forms                 — Input, textarea, label styles
+ *   14. Admin Dashboard       — Card grid layout
+ *   15. Admin Layout          — Sidebar + main content grid
+ *   16. Page Header           — Reusable header for detail pages
+ *   17. Stats Bar             — Animated counter display
+ *   18. Service Cards         — Service offering cards
+ *   19. Skill Accordion       — Expandable skill domain cards
+ *   20. Tag Pills             — Inline tag/badge elements
+ *   21. Portfolio             — Masonry grid, overlays, filters
+ *   22. Lightbox              — Full-screen image viewer
+ *   23. Testimonial Cards     — Quote cards with star ratings
+ *   24. Project Cards         — Project listing and detail styles
+ *   25. Certification Cards   — Credential badge cards
+ *   26. Case Study            — Problem/solution/result layout
+ *   27. Contact Page          — Two-column form + info layout
+ *   28. Review Form           — Token-based review submission
+ *   29. Empty States          — Placeholder for empty data sections
+ *   30. GSAP Targets          — Animation starting states
+ */
+
 /* ============================================================
-   RESET & BASE
+   1. RESET & BASE
    ============================================================ */
 
 *, *::before, *::after {

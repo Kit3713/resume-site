@@ -1,5 +1,25 @@
 #!/usr/bin/env python3
-"""CLI tools for resume-site management."""
+"""
+resume-site Management CLI
+
+Provides command-line tools for server administration tasks that don't
+require the admin panel (e.g., initial setup, headless management).
+
+Commands:
+    init-db          Initialize the SQLite database with the full schema.
+                     Safe to run multiple times (all CREATE TABLE use IF NOT EXISTS).
+    hash-password    Generate a pbkdf2:sha256 password hash for config.yaml.
+    generate-token   Create a review invitation token for a trusted contact.
+    list-reviews     Display reviews filtered by status (pending/approved/rejected).
+    purge-analytics  Delete page view records older than N days.
+
+Usage:
+    python manage.py init-db
+    python manage.py hash-password
+    python manage.py generate-token --name "John Doe" --type recommendation
+    python manage.py list-reviews --status pending
+    python manage.py purge-analytics --days 90
+"""
 
 import argparse
 import getpass
@@ -11,7 +31,13 @@ from werkzeug.security import generate_password_hash
 
 
 def init_db(args):
-    """Initialize the database with the full schema."""
+    """Initialize the database with the full schema.
+
+    Reads schema.sql and executes it against the configured database path.
+    All tables use CREATE TABLE IF NOT EXISTS, making this command safe to
+    run multiple times without data loss. Default settings are seeded via
+    INSERT OR IGNORE.
+    """
     from app import create_app
 
     app = create_app()
@@ -24,6 +50,7 @@ def init_db(args):
     with open(schema_path, 'r') as f:
         schema = f.read()
 
+    # Ensure the database directory exists
     db_path = app.config['DATABASE_PATH']
     os.makedirs(os.path.dirname(db_path) or '.', exist_ok=True)
 
@@ -35,7 +62,11 @@ def init_db(args):
 
 
 def hash_password(args):
-    """Generate a password hash for config.yaml."""
+    """Generate a secure password hash for the admin account.
+
+    Uses Werkzeug's generate_password_hash (pbkdf2:sha256 with 600k iterations).
+    The output should be pasted into config.yaml under admin.password_hash.
+    """
     password = getpass.getpass('Enter admin password: ')
     confirm = getpass.getpass('Confirm password: ')
 
@@ -53,7 +84,12 @@ def hash_password(args):
 
 
 def generate_token(args):
-    """Generate a review invite token."""
+    """Generate a review invitation token.
+
+    Creates a cryptographically secure URL-safe token and inserts it into
+    the review_tokens table. The resulting URL path can be shared with the
+    intended reviewer.
+    """
     import secrets
     from app import create_app
 
@@ -75,7 +111,11 @@ def generate_token(args):
 
 
 def list_reviews(args):
-    """List reviews by status."""
+    """List reviews filtered by status.
+
+    Displays a summary of each review: ID, reviewer name, rating (if any),
+    and a truncated message preview.
+    """
     from app import create_app
 
     app = create_app()
@@ -99,7 +139,11 @@ def list_reviews(args):
 
 
 def purge_analytics(args):
-    """Purge analytics data older than N days."""
+    """Purge page view records older than a specified number of days.
+
+    Helps manage database size over time. The retention period defaults to
+    90 days but can be customized via the --days flag.
+    """
     from app import create_app
 
     app = create_app()
@@ -118,23 +162,30 @@ def purge_analytics(args):
 
 
 def main():
+    """Parse command-line arguments and dispatch to the appropriate handler."""
     parser = argparse.ArgumentParser(description='resume-site management CLI')
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
 
+    # Database initialization
     subparsers.add_parser('init-db', help='Initialize the database')
+
+    # Password hash generation
     subparsers.add_parser('hash-password', help='Generate an admin password hash')
 
+    # Review token generation
     token_parser = subparsers.add_parser('generate-token', help='Generate a review invite token')
     token_parser.add_argument('--name', default='', help='Recipient name')
     token_parser.add_argument('--type', default='recommendation',
                               choices=['recommendation', 'client_review'],
                               help='Token type')
 
+    # Review listing
     reviews_parser = subparsers.add_parser('list-reviews', help='List reviews by status')
     reviews_parser.add_argument('--status', default='pending',
                                 choices=['pending', 'approved', 'rejected'],
                                 help='Filter by status')
 
+    # Analytics purge
     purge_parser = subparsers.add_parser('purge-analytics', help='Purge old analytics data')
     purge_parser.add_argument('--days', type=int, default=90, help='Days to retain')
 

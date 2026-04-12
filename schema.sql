@@ -1,11 +1,45 @@
+-- ==========================================================================
 -- resume-site Database Schema
--- All tables created at init; populated progressively across phases.
+-- ==========================================================================
+--
+-- Full schema for the resume-site portfolio engine. All tables are created
+-- at database initialization time (via `python manage.py init-db`). Tables
+-- are populated progressively as the admin adds content through the panel.
+--
+-- Design decisions:
+--   - All timestamps are ISO 8601 text (SQLite has no native datetime type).
+--   - Settings use a key-value store to avoid ALTER TABLE for new settings.
+--   - CHECK constraints enforce valid enum values (display_tier, status, type).
+--   - Foreign keys are enforced via PRAGMA (requires SQLite 3.6.19+).
+--   - WAL mode enables concurrent reads from Gunicorn workers.
+--   - All CREATE statements use IF NOT EXISTS for idempotent re-runs.
+--
+-- Table overview:
+--   settings            Site configuration (key-value pairs)
+--   content_blocks      Rich text content managed via Quill.js editor
+--   photos              Portfolio images with metadata and display tiers
+--   case_studies         Detailed portfolio write-ups (problem/solution/result)
+--   services            Service offerings displayed as cards
+--   skill_domains       Skill categories for the expandable accordion
+--   skills              Individual skills within each domain
+--   projects            Technical projects with optional detail pages
+--   certifications      Professional credentials and badges
+--   review_tokens       Invite-only tokens for the review submission system
+--   reviews             Testimonials submitted via tokens (pending admin approval)
+--   contact_submissions Contact form entries (including spam-flagged)
+--   page_views          Lightweight analytics (no cookies, no third parties)
+--   stats               Animated counter numbers for the landing page
+-- ==========================================================================
 
+-- WAL mode: enables concurrent reads while a write is in progress.
+-- Critical for Gunicorn with multiple workers.
 PRAGMA journal_mode=WAL;
+
+-- Enforce foreign key constraints (disabled by default in SQLite).
 PRAGMA foreign_keys=ON;
 
 -- ============================================================
--- SETTINGS (key-value store)
+-- SETTINGS (key-value store for admin-managed configuration)
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -148,7 +182,7 @@ CREATE TABLE IF NOT EXISTS certifications (
 );
 
 -- ============================================================
--- REVIEW TOKENS
+-- REVIEW TOKENS (invite-only review submission system)
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS review_tokens (
@@ -164,7 +198,7 @@ CREATE TABLE IF NOT EXISTS review_tokens (
 );
 
 -- ============================================================
--- REVIEWS
+-- REVIEWS (testimonials submitted via tokens, pending approval)
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS reviews (
@@ -203,8 +237,10 @@ CREATE TABLE IF NOT EXISTS contact_submissions (
 );
 
 -- ============================================================
--- ANALYTICS (page views)
+-- ANALYTICS (lightweight page view tracking, no cookies)
 -- ============================================================
+-- Indexes on path and created_at support the dashboard's
+-- popular pages and time-range queries efficiently.
 
 CREATE TABLE IF NOT EXISTS page_views (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -234,6 +270,8 @@ CREATE TABLE IF NOT EXISTS stats (
 -- ============================================================
 -- SEED DEFAULT SETTINGS
 -- ============================================================
+-- INSERT OR IGNORE ensures these only run on first initialization.
+-- Re-running init-db will not overwrite admin-modified settings.
 
 INSERT OR IGNORE INTO settings (key, value) VALUES
     ('site_title', 'My Portfolio'),

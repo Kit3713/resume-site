@@ -1,3 +1,15 @@
+{#
+  Testimonials Page — Featured and Standard Review Display
+
+  Shows approved reviews in two tiers: featured (large quote cards at top)
+  and standard (smaller grid cards below). Each card displays the reviewer's
+  name, title, message, optional star rating, and type badge.
+
+  Context variables (from public.testimonials route):
+  - featured:     Approved reviews with display_tier='featured'
+  - standard:     Approved reviews with display_tier='standard'
+  - display_mode: 'mixed', 'separate', or 'all' (controls type label display)
+#}
 {% extends "base.html" %}
 
 {% block title %}Testimonials — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}

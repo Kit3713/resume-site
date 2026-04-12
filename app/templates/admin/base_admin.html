@@ -1,3 +1,16 @@
+{#
+  Admin Base Template — Sidebar Navigation Layout
+
+  Root template for all admin panel pages. Provides a fixed sidebar
+  with navigation links, flash message display, and the main content area.
+  Separate from the public base.html to avoid navbar/footer on admin pages.
+
+  Available blocks:
+  - title:         Page title (appended with site title)
+  - head_extra:    Additional <head> content (e.g., Quill.js CSS)
+  - content:       Main admin content area
+  - scripts_extra: Additional scripts (e.g., Quill.js editor)
+#}
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>

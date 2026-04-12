@@ -1,3 +1,14 @@
+{#
+  Services & Skills Page — Service Cards with Expandable Skill Accordion
+
+  Displays service offerings as cards, followed by skill domains as
+  expandable accordion sections. Each domain reveals individual skills
+  with experience details and technology/tool tags.
+
+  Context variables (from public.services route):
+  - services: Visible service records ordered by sort_order
+  - domains:  List of {domain: Row, skills: [Row, ...]} dicts
+#}
 {% extends "base.html" %}
 
 {% block title %}Services — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}

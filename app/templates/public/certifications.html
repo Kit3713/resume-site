@@ -1,3 +1,12 @@
+{#
+  Certifications Page — Professional credential badges with details
+
+  Displays certification cards with badge images, issuer info, dates,
+  and optional verification links. Expired certs are visually dimmed.
+
+  Context variables (from public.certifications route):
+  - certifications: Visible certification records ordered by sort_order
+#}
 {% extends "base.html" %}
 
 {% block title %}Certifications — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}

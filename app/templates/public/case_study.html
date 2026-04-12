@@ -1,3 +1,13 @@
+{#
+  Case Study Detail — Problem / Solution / Result format
+
+  Displays a detailed portfolio write-up linked from the portfolio gallery.
+  Guarded by the 'case_studies_enabled' setting at the route level.
+
+  Context variables (from public.case_study route):
+  - study: The case_studies row (title, summary, problem, solution, result)
+  - photo: Optional associated photo row for the hero image
+#}
 {% extends "base.html" %}
 
 {% block title %}{{ study.title }} — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
