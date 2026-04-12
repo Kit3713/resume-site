@@ -7,6 +7,11 @@
 #   2. podman compose up -d
 #   3. podman compose exec resume-site python manage.py init-db
 #   4. Access admin at http://localhost:8080/admin
+#
+# With Caddy (HTTPS):
+#   1. Uncomment the caddy service and caddy volumes below
+#   2. Edit the Caddyfile with your domain
+#   3. podman compose up -d
 # =============================================================
 
 services:
@@ -24,15 +29,39 @@ services:
     # secrets:
     #   - smtp_password
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
 
+  # --- Optional: Caddy reverse proxy for automatic HTTPS ---
+  # Uncomment and create a Caddyfile with your domain:
+  #
+  #   portfolio.yourdomain.com {
+  #       reverse_proxy resume-site:8080
+  #   }
+  #
+  # caddy:
+  #   image: caddy:2-alpine
+  #   container_name: caddy
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #     - "443:443/udp"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy-data:/data
+  #     - caddy-config:/config
+  #   depends_on:
+  #     - resume-site
+
 volumes:
   resume-site-data:
   resume-site-photos:
+  # caddy-data:
+  # caddy-config:
 
 # secrets:
 #   smtp_password:

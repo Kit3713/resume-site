@@ -32,7 +32,7 @@ def track_page_view():
         return
 
     path = request.path
-    if path.startswith(('/static/', '/admin', '/photos/', '/favicon')):
+    if path.startswith(('/static/', '/admin', '/photos/', '/favicon', '/healthz', '/set-locale')):
         return
 
     try:

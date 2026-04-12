@@ -61,10 +61,12 @@ def create_app(config_path=None):
     2. Registers database teardown via app/db.py.
     3. Initializes Flask-Login for admin authentication.
     4. Enables CSRF protection on all POST/PUT/DELETE routes.
-    5. Registers all route blueprints (public, admin, contact, review).
-    6. Attaches the analytics middleware for page view tracking.
-    7. Sets security response headers on every reply.
-    8. Injects site settings into every template via a context processor.
+    5. Configures Flask-Babel for internationalization.
+    6. Registers all route blueprints (public, admin, blog, contact, review, locale).
+    7. Attaches the analytics middleware for page view tracking.
+    8. Sets security response headers on every reply.
+    9. Injects site settings and locale info into every template.
+    10. Ensures storage directories exist.
 
     Args:
         config_path: Optional path to config.yaml. Defaults to the project root,
@@ -145,7 +147,7 @@ def create_app(config_path=None):
 
     babel.init_app(app, locale_selector=get_locale)
 
-    # --- 6. Blueprint registration ---
+    # --- 6. Blueprints ---
     from app.routes.public import public_bp
     from app.routes.admin import admin_bp
     from app.routes.blog_admin import blog_admin_bp
@@ -162,11 +164,11 @@ def create_app(config_path=None):
     app.register_blueprint(review_bp)
     app.register_blueprint(locale_bp)
 
-    # --- 8. Analytics middleware ---
+    # --- 7. Analytics middleware ---
     from app.services.analytics import track_page_view
     app.before_request(track_page_view)
 
-    # --- 9. Security response headers ---
+    # --- 8. Security response headers ---
     @app.after_request
     def set_security_headers(response):
         """Add security headers to every response.
@@ -191,7 +193,7 @@ def create_app(config_path=None):
 
         return response
 
-    # --- 10. Template context processor ---
+    # --- 9. Template context processor ---
     @app.context_processor
     def inject_settings():
         """Make site settings and config available in all templates.
@@ -218,7 +220,7 @@ def create_app(config_path=None):
             current_locale=current_locale,
         )
 
-    # --- 11. Ensure storage directories exist ---
+    # --- 10. Ensure storage directories exist ---
     os.makedirs(os.path.dirname(app.config['DATABASE_PATH']) or '.', exist_ok=True)
     os.makedirs(app.config['PHOTO_STORAGE'], exist_ok=True)
 

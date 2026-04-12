@@ -98,8 +98,20 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tests/test_i18n.py` — 16 tests covering locale switching, session persistence, Accept-Language negotiation, hreflang tags, language switcher visibility, settings registry, translation files
 - Total test suite: 187 tests (185 passing, 2 pre-existing RSS feed tests pending implementation)
 
-### Planned
-- Container registry publishing via `podman pull ghcr.io/kit3713/resume-site`
+### Added — Phase 11: Container-Native Deployment
+- Multi-stage Containerfile: builder stage for compilation, minimal runtime image with non-root user (UID 1000)
+- Dedicated `/healthz` endpoint for container health checks (lightweight JSON, no DB/template rendering)
+- OCI labels: source, version, description, license, authors
+- `.containerignore` excluding tests, docs, .git, config, data, and photos from image
+- GitHub Actions CI: tests on Python 3.11/3.12, container build verification with smoke test, GHCR multi-arch publishing (amd64+arm64)
+- GHCR publishing: `:latest` and `:<version>` on tag push, rolling `:main` on merge to main
+- `compose.yaml` with Caddy reverse proxy sidecar (commented-out, ready to enable)
+- `resume-site.container` Podman Quadlet unit file for systemd integration with auto-update
+- README: 4 deployment options (container pull, compose, Quadlet, local dev), backup/upgrade docs, CLI reference
+- Translations directory included in container image for i18n support
+
+### Fixed
+- RSS feed tests: `_enable_blog` helper now preserves `enable_rss` setting (was being reset to false by settings save_many checkbox behavior)
 
 ---
 

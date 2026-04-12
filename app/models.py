@@ -50,19 +50,6 @@ def get_setting(db, key, default=''):
     return row['value'] if row else default
 
 
-def set_setting(db, key, value):
-    """Insert or update a setting using SQLite's UPSERT syntax.
-
-    The updated_at timestamp is set automatically to the current UTC time.
-    """
-    db.execute(
-        'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime(\'%Y-%m-%dT%H:%M:%SZ\', \'now\')) '
-        'ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
-        (key, str(value)),
-    )
-    db.commit()
-
-
 # ============================================================
 # CONTENT BLOCKS (rich text sections managed via admin)
 # ============================================================

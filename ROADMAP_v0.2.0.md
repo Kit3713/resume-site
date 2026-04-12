@@ -1,7 +1,7 @@
 # resume-site v0.2.0 Roadmap
 
 > **Codename:** Platform  
-> **Status:** In Development (Phases 5-10 complete, Phase 11 next)  
+> **Status:** Complete (All phases 5-11 done)  
 > **Baseline:** v0.1.0 (Phases 1-4 complete -- single-user portfolio engine)  
 > **Target:** A hardened, extensible, container-native portfolio and blog platform
 
@@ -313,34 +313,34 @@ Every feature ships behind a toggle or is fully backward-compatible with v0.1.x 
 
 ### 11.1 — Container Image Hardening
 
-- [ ] Multi-stage build: builder stage installs deps, final stage copies only what's needed
-- [ ] Run as non-root user (`USER 1000:1000`)
-- [ ] Read-only filesystem where possible (`--read-only` compatible with writable volumes for data/photos)
-- [ ] No shell in final image if feasible (or at minimum, no `sudo`, no package manager cache)
-- [ ] Health check: `HEALTHCHECK CMD curl -f http://localhost:8080/ || exit 1` (or a lightweight `/healthz` endpoint)
-- [ ] Labels: `org.opencontainers.image.source`, `org.opencontainers.image.version`, `org.opencontainers.image.description`
-- [ ] `.containerignore` / `.dockerignore`: exclude tests, docs, .git, config.yaml, data/, photos/
+- [x] Multi-stage build: builder stage installs deps, final stage copies only what's needed
+- [x] Run as non-root user (`USER 1000:1000`)
+- [x] Read-only filesystem where possible (`--read-only` compatible with writable volumes for data/photos)
+- [x] No `sudo`, no package manager cache in final image
+- [x] Health check: dedicated `/healthz` endpoint — lightweight JSON response, no DB or template rendering
+- [x] Labels: `org.opencontainers.image.source`, `org.opencontainers.image.version`, `org.opencontainers.image.description`
+- [x] `.containerignore`: exclude tests, docs, .git, config.yaml, data/, photos/
 
 ### 11.2 — GitHub Container Registry (GHCR) Publishing
 
-- [ ] CI workflow: on tag push (`v*`), build and push to `ghcr.io/kit3713/resume-site:<version>` and `ghcr.io/kit3713/resume-site:latest`
-- [ ] Multi-arch build (amd64 + arm64) for broader deployment targets
-- [ ] CI also pushes a `:main` tag on every merge to main (rolling latest)
-- [ ] README install instructions: `podman pull ghcr.io/kit3713/resume-site:latest`
+- [x] CI workflow: on tag push (`v*`), build and push to `ghcr.io/kit3713/resume-site:<version>` and `ghcr.io/kit3713/resume-site:latest`
+- [x] Multi-arch build (amd64 + arm64) for broader deployment targets
+- [x] CI also pushes a `:main` tag on every merge to main (rolling latest)
+- [x] README install instructions: `podman pull ghcr.io/kit3713/resume-site:latest`
 
 ### 11.3 — Compose / Quadlet Support
 
-- [ ] Ship a `compose.yaml` (Podman-compatible) with the full deployment stack: resume-site container + volume mounts + port mapping
-- [ ] Ship a `resume-site.container` Quadlet file for systemd-managed Podman on Fedora/RHEL
-- [ ] Document both paths in README
-- [ ] Example Caddy integration in compose (optional sidecar)
+- [x] Ship a `compose.yaml` (Podman-compatible) with the full deployment stack: resume-site container + volume mounts + port mapping
+- [x] Ship a `resume-site.container` Quadlet file for systemd-managed Podman on Fedora/RHEL
+- [x] Document both paths in README (Options A–C in Quick Start)
+- [x] Example Caddy integration in compose (commented-out sidecar with Caddyfile instructions)
 
 ### 11.4 — Deployment Documentation
 
-- [ ] Quick start: `podman pull` → `podman run` with volume mounts → configure Caddy → access admin
-- [ ] `manage.py` commands that work inside the running container: `podman exec resume-site python manage.py migrate`
-- [ ] Backup strategy: document which files/volumes to back up (data/site.db, photos/, config.yaml)
-- [ ] Upgrade path: pull new image → run migrations → restart
+- [x] Quick start: `podman pull` → `podman run` with volume mounts → configure Caddy → access admin
+- [x] `manage.py` commands that work inside the running container: `podman exec resume-site python manage.py migrate`
+- [x] Backup strategy: document which files/volumes to back up (data/site.db, photos/, config.yaml)
+- [x] Upgrade path: pull new image → run migrations → restart
 
 ---
 

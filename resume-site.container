@@ -25,7 +25,7 @@ Volume=%h/resume-site/config.yaml:/app/config.yaml:ro,Z
 Volume=resume-site-data:/app/data:Z
 Volume=resume-site-photos:/app/photos:Z
 
-HealthCmd=curl -f http://localhost:8080/ || exit 1
+HealthCmd=curl -f http://localhost:8080/healthz || exit 1
 HealthInterval=30s
 HealthTimeout=5s
 HealthRetries=3

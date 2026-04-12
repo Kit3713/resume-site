@@ -275,11 +275,15 @@ portfolio.yourdomain.com {
 
 ---
 
-## Future Considerations (not in scope)
+## v0.2.0 and Beyond
+
+Features originally listed here as "future considerations" — blog engine, i18n, container-native deployment, security hardening, and more — were implemented in v0.2.0. See [ROADMAP_v0.2.0.md](ROADMAP_v0.2.0.md) for the full plan and status.
+
+Remaining future considerations (v0.3.0+):
 
 - Multiple admin / viewer accounts
 - Public-facing login
-- i18n / multilingual support
-- Blog / articles section
 - API endpoints for headless usage
 - Automated backups
+- Visual theme editor with live preview
+- Plugin architecture

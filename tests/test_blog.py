@@ -24,6 +24,8 @@ def _enable_blog(auth_client):
     """Enable the blog feature via admin settings."""
     auth_client.post('/admin/settings', data={
         'blog_enabled': 'true',
+        'enable_rss': 'true',
+        'show_reading_time': 'true',
     })
 
 

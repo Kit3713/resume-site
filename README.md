@@ -1,8 +1,8 @@
 # resume-site
 
-> **Current release: v0.1.0** — Feature-complete portfolio engine. Content population and deployment ready.
+> **Current release: v0.2.0** — Hardened, extensible portfolio and blog platform with i18n, admin customization, and container-native deployment.
 >
-> **In development: [v0.2.0](ROADMAP_v0.2.0.md)** — Blog engine, security hardening, admin customization, i18n, container registry publishing.
+> See [ROADMAP_v0.2.0.md](ROADMAP_v0.2.0.md) for the full development history.
 
 A self-hosted, containerized resume and portfolio website engine built with Flask. Apple-inspired design, and admin panel for content management.
 
@@ -24,7 +24,8 @@ resume-site is a configurable portfolio website designed around the idea that **
 - **Dark/light mode** -- Visitor toggle with admin-configurable default.
 - **Built-in analytics** -- Page view tracking stored in SQLite with dashboard overview. No cookies, no third parties. Auto-purge via CLI.
 - **Contact form** -- Honeypot spam protection, rate limiting, SMTP relay to your personal email. Visitors never see your address.
-- **SEO ready** -- Open Graph meta tags, auto-generated sitemap.xml, robots.txt.
+- **Internationalization (i18n)** -- Flask-Babel integration with 220+ translatable strings. Session-based locale persistence, Accept-Language negotiation, hreflang SEO tags, language switcher. Ship with English, add languages via standard `.po` files.
+- **SEO ready** -- Open Graph meta tags, auto-generated sitemap.xml, robots.txt, hreflang tags.
 - **Mobile-first responsive** -- Equal priority desktop and mobile experience.
 - **Zero personal data in repo** -- All private info lives in your config file and database, never committed.
 - **CI pipeline** -- GitHub Actions running pytest + flake8 across Python 3.11/3.12 with container build verification and GHCR publishing.
@@ -139,9 +140,15 @@ resume-site/
 ├── Containerfile                 # Multi-stage OCI container build
 ├── compose.yaml                  # Podman/Docker Compose deployment
 ├── resume-site.container         # Podman Quadlet unit file
+├── babel.cfg                     # Babel extraction config for i18n
 ├── migrations/                   # Numbered SQL migration files
 │   ├── 001_baseline.sql
-│   └── 002_blog_tables.sql
+│   ├── 002_blog_tables.sql
+│   ├── 003_admin_customization.sql
+│   └── 004_i18n.sql
+├── translations/                 # i18n message catalogs
+│   ├── messages.pot              # Extracted translatable strings
+│   └── en/LC_MESSAGES/           # English reference catalog
 ├── .github/
 │   └── workflows/ci.yml          # CI + GHCR publishing pipeline
 ├── app/
@@ -155,7 +162,8 @@ resume-site/
 │   │   ├── blog.py               # Public blog routes + RSS feed
 │   │   ├── blog_admin.py         # Blog admin CRUD
 │   │   ├── contact.py            # Contact form with honeypot + SMTP
-│   │   └── review.py             # Token-based review submission
+│   │   ├── review.py             # Token-based review submission
+│   │   └── locale.py             # Language switching endpoint
 │   ├── services/
 │   │   ├── config.py             # YAML config loader + env var overrides
 │   │   ├── blog.py               # Blog CRUD, slug generation, tags
@@ -167,7 +175,8 @@ resume-site/
 │   │   ├── photos.py             # Photo upload, Pillow processing
 │   │   ├── mail.py               # SMTP relay for contact form
 │   │   ├── analytics.py          # Page view tracking middleware
-│   │   └── tokens.py             # Review token validation
+│   │   ├── tokens.py             # Review token validation
+│   │   └── activity_log.py       # Admin activity audit log
 │   ├── templates/
 │   │   ├── base.html             # Public layout, nav, footer, OG tags
 │   │   ├── public/               # All public page templates
@@ -182,7 +191,9 @@ resume-site/
     ├── test_blog.py              # Blog engine tests
     ├── test_security.py          # CSRF, headers, sanitization tests
     ├── test_migrations.py        # Migration system tests
-    └── test_integration.py       # End-to-end flow tests
+    ├── test_integration.py       # End-to-end flow tests
+    ├── test_customization.py     # Theme, colors, fonts, nav, activity log
+    └── test_i18n.py              # Locale switching, translations, hreflang
 ```
 
 ## Configuration
@@ -255,6 +266,12 @@ python manage.py list-reviews --status pending
 
 # Purge analytics older than N days
 python manage.py purge-analytics --days 90
+
+# Translation management (i18n)
+python manage.py translations extract        # Scan code, generate .pot file
+python manage.py translations init --locale es  # Create new locale
+python manage.py translations compile        # Compile .po to .mo
+python manage.py translations update         # Update .po with new strings
 ```
 
 All CLI commands work inside a running container:
@@ -272,7 +289,7 @@ The container image is published to GitHub Container Registry on every tagged re
 podman pull ghcr.io/kit3713/resume-site:latest
 
 # Specific version
-podman pull ghcr.io/kit3713/resume-site:0.1.0
+podman pull ghcr.io/kit3713/resume-site:0.2.0
 
 # Rolling development (main branch HEAD)
 podman pull ghcr.io/kit3713/resume-site:main
