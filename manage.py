@@ -231,7 +231,8 @@ def config_validate(args):
 
     _VALID_TOP_KEYS = {
         'secret_key', 'database_path', 'photo_storage', 'max_upload_size',
-        'session_timeout_minutes', 'smtp', 'admin',
+        'session_timeout_minutes', 'session_cookie_secure',
+        'smtp', 'admin',
     }
     _VALID_SMTP_KEYS = {'host', 'port', 'user', 'password', 'password_file', 'recipient'}
     _VALID_ADMIN_KEYS = {'username', 'password_hash', 'allowed_networks'}

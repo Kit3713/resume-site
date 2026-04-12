@@ -32,6 +32,11 @@
       "default": 60,
       "description": "Admin session inactivity timeout in minutes."
     },
+    "session_cookie_secure": {
+      "type": "boolean",
+      "default": true,
+      "description": "Set the Secure flag on the session cookie (HTTPS-only). Disable for plain-HTTP local development."
+    },
     "smtp": {
       "type": "object",
       "properties": {

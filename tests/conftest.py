@@ -29,16 +29,17 @@ def _write_test_config(tmp_path):
     config_path = tmp_path / 'config.yaml'
     db_path = str(tmp_path / 'test.db')
     photos_path = str(tmp_path / 'photos')
-    # Hash for "testpassword123" (pbkdf2:sha256)
+    # Hash for "testpassword123" (pbkdf2:sha256, 600k iterations).
+    # Generated with werkzeug.security.generate_password_hash().
     pw_hash = (
-        'pbkdf2:sha256:600000$test$'
-        'b109f3bbbc244eb82441917ed06d618b9008dd09b3befd1b5e07394c706a8bb9'
-        '80b1d7785e5976ec049b46df5f1326af5a2ea6d103fd07c95385ffab0cacbc86'
+        'pbkdf2:sha256:600000$bngNDaCGXphoecmK$'
+        '7e35934ae555af4c418e1399fa0c866411b05f64bf8c3ef64d50c93990a7497b'
     )
     config_path.write_text(
         'secret_key: "test-secret-key-for-testing-only"\n'
         f'database_path: "{db_path}"\n'
         f'photo_storage: "{photos_path}"\n'
+        'session_cookie_secure: false\n'  # Tests use HTTP, so disable Secure flag
         'admin:\n'
         '  username: "admin"\n'
         f'  password_hash: "{pw_hash}"\n'

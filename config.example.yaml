@@ -11,6 +11,10 @@ database_path: "data/site.db"
 # Photo storage directory
 photo_storage: "photos"
 
+# Mark the session cookie as Secure (HTTPS-only). Set to false for local
+# plain-HTTP development; keep true in production behind HTTPS.
+session_cookie_secure: true
+
 # SMTP relay for contact form emails
 smtp:
   host: "smtp.gmail.com"

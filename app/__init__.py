@@ -102,6 +102,15 @@ def create_app(config_path=None):
     app.config['SITE_CONFIG'] = site_config  # Full config dict available to services
     app.config['WTF_CSRF_TIME_LIMIT'] = 3600  # CSRF token expires after 1 hour
 
+    # Session cookie hardening. SECURE defaults to True in production; a
+    # `session_cookie_secure: false` entry in config.yaml disables it for
+    # plain-HTTP local development. SAMESITE=Lax blocks CSRF-style cross-site
+    # cookie leaks while still allowing top-level navigation (e.g., clicking a
+    # link from email).
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+    app.config['SESSION_COOKIE_SECURE'] = bool(site_config.get('session_cookie_secure', True))
+
     # --- 2. Database connection lifecycle ---
     # close_db is defined in app/db.py and tears down the per-request connection.
     app.teardown_appcontext(close_db)

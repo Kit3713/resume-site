@@ -69,6 +69,7 @@ _ENV_VAR_MAP = {
     'RESUME_SITE_PHOTO_STORAGE':      'photo_storage',
     'RESUME_SITE_MAX_UPLOAD_SIZE':    'max_upload_size',
     'RESUME_SITE_SESSION_TIMEOUT':    'session_timeout_minutes',
+    'RESUME_SITE_SESSION_COOKIE_SECURE': 'session_cookie_secure',
     'RESUME_SITE_SMTP_HOST':          'smtp.host',
     'RESUME_SITE_SMTP_PORT':          'smtp.port',
     'RESUME_SITE_SMTP_USER':          'smtp.user',

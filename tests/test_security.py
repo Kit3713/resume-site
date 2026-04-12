@@ -357,3 +357,102 @@ def test_rate_limiting_admin_login_returns_429(app):
         'password': 'another-wrong-password',
     })
     assert response.status_code == 429
+
+
+# ============================================================
+# OPEN REDIRECT (login ?next=)
+# ============================================================
+
+def test_login_rejects_absolute_next_url(client):
+    """?next=https://evil.com must NOT redirect offsite after login."""
+    response = client.post(
+        '/admin/login?next=https://evil.com/phish',
+        data={'username': 'admin', 'password': 'testpassword123'},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    # Must redirect to the local dashboard, not the attacker URL
+    location = response.headers.get('Location', '')
+    assert 'evil.com' not in location
+    assert '/admin' in location
+
+
+def test_login_rejects_scheme_relative_next_url(client):
+    """?next=//evil.com should also be rejected (scheme-relative URLs)."""
+    response = client.post(
+        '/admin/login?next=//evil.com/phish',
+        data={'username': 'admin', 'password': 'testpassword123'},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    location = response.headers.get('Location', '')
+    assert 'evil.com' not in location
+
+
+def test_login_accepts_relative_next_path(client):
+    """?next=/admin/photos is a safe same-origin path and should be honored."""
+    response = client.post(
+        '/admin/login?next=/admin/photos',
+        data={'username': 'admin', 'password': 'testpassword123'},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert response.headers.get('Location', '').endswith('/admin/photos')
+
+
+# ============================================================
+# SESSION COOKIE FLAGS
+# ============================================================
+
+def test_session_cookie_flags_configured(app):
+    """Session cookie must have HTTPONLY and SAMESITE configured."""
+    assert app.config.get('SESSION_COOKIE_HTTPONLY') is True
+    assert app.config.get('SESSION_COOKIE_SAMESITE') == 'Lax'
+    # Test config sets session_cookie_secure: false; the production default is True.
+    assert app.config.get('SESSION_COOKIE_SECURE') is False
+
+
+# ============================================================
+# XSS: MARKDOWN BLOG SANITIZATION (M3)
+# ============================================================
+
+def test_markdown_blog_post_strips_inline_script(app):
+    """Markdown posts rendered to HTML must have <script> tags stripped."""
+    from app.services.blog import render_post_content
+    post = {
+        'content_format': 'markdown',
+        'content': 'Hello\n\n<script>alert(1)</script>\n\nworld',
+    }
+    rendered = render_post_content(post)
+    assert '<script' not in rendered.lower()
+    assert 'alert(1)' not in rendered  # Sanitizer should drop the script body
+
+
+def test_markdown_blog_post_strips_event_handlers(app):
+    """Markdown posts must have inline event handlers stripped."""
+    from app.services.blog import render_post_content
+    post = {
+        'content_format': 'markdown',
+        'content': '<img src="x" onerror="alert(1)">',
+    }
+    rendered = render_post_content(post)
+    assert 'onerror' not in rendered.lower()
+
+
+# ============================================================
+# XSS: SERVICE DESCRIPTION SANITIZATION (M4)
+# ============================================================
+
+def test_service_description_sanitized_on_create(app):
+    """Service descriptions must be stripped of dangerous tags on write."""
+    import sqlite3
+    from app.services.service_items import add_service
+    db = sqlite3.connect(app.config['DATABASE_PATH'])
+    db.row_factory = sqlite3.Row
+    try:
+        add_service(db, 'Evil', '<script>alert(1)</script><p>ok</p>', '', 1)
+        row = db.execute("SELECT description FROM services WHERE title = 'Evil'").fetchone()
+        assert '<script' not in row['description'].lower()
+        assert '<p>ok</p>' in row['description']
+    finally:
+        db.close()

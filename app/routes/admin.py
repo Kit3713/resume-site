@@ -26,6 +26,7 @@ Admin features:
 import ipaddress
 import secrets
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app, session
 from flask_babel import gettext as _
@@ -166,9 +167,15 @@ def login():
         ):
             user = AdminUser(username)
             login_user(user)
-            # Redirect to the page they were trying to access, or the dashboard
-            next_page = request.args.get('next')
-            return redirect(next_page or url_for('admin.dashboard'))
+            # Redirect to the page they were trying to access, or the dashboard.
+            # Only accept same-origin relative paths — reject absolute URLs,
+            # scheme-relative URLs (//evil.com), and anything with a netloc to
+            # prevent open-redirect abuse of the ?next= query parameter.
+            next_page = request.args.get('next', '')
+            parsed = urlparse(next_page)
+            if next_page and not parsed.scheme and not parsed.netloc and next_page.startswith('/'):
+                return redirect(next_page)
+            return redirect(url_for('admin.dashboard'))
 
         flash(_('Invalid credentials.'), 'error')
 

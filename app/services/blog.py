@@ -70,11 +70,14 @@ def _ensure_unique_slug(db, slug, exclude_id=None):
 def render_post_content(post):
     """Render a post's content to HTML based on its content_format.
 
-    Markdown posts are converted to HTML via mistune. HTML posts are
-    returned as-is (already sanitized on save).
+    Markdown posts are converted to HTML via mistune, then passed through
+    sanitize_html() to strip any raw HTML the author embedded (mistune is
+    configured with escape=False so <script>/event handlers would survive
+    otherwise). HTML posts are returned as-is because they were sanitized
+    when they were saved.
     """
     if post['content_format'] == 'markdown':
-        return _markdown(post['content'] or '')
+        return sanitize_html(_markdown(post['content'] or ''))
     return post['content'] or ''
 
 

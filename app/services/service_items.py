@@ -4,8 +4,13 @@ Service Items Service (app/services/service_items.py)
 Business logic for the services table (service cards on public pages).
 Named service_items to avoid a naming collision with the services/ package.
 
-Admin routes call these functions instead of writing SQL inline.
+Admin routes call these functions instead of writing SQL inline. The
+description field is rendered with `| safe` in templates, so it is piped
+through sanitize_html() on every write as defense in depth against XSS
+(even though only the authenticated admin can write it).
 """
+
+from app.services.content import sanitize_html
 
 
 def get_all_services(db):
@@ -19,7 +24,7 @@ def add_service(db, title, description='', icon='', sort_order=0):
     Args:
         db: Database connection.
         title: Service name (required).
-        description: Body text shown on the card.
+        description: Body text shown on the card (HTML, sanitized on write).
         icon: Emoji or icon identifier.
         sort_order: Display order (lower = earlier).
     """
@@ -27,7 +32,7 @@ def add_service(db, title, description='', icon='', sort_order=0):
         raise ValueError("Service title cannot be empty.")
     db.execute(
         'INSERT INTO services (title, description, icon, sort_order) VALUES (?, ?, ?, ?)',
-        (title.strip(), description, icon, int(sort_order)),
+        (title.strip(), sanitize_html(description), icon, int(sort_order)),
     )
     db.commit()
 
@@ -39,7 +44,7 @@ def update_service(db, service_id, title, description='', icon='', sort_order=0,
         db: Database connection.
         service_id: The service's primary key.
         title: Service name.
-        description: Body text.
+        description: Body text (HTML, sanitized on write).
         icon: Emoji or icon identifier.
         sort_order: Display order.
         visible: Whether to show on the public site.
@@ -47,7 +52,8 @@ def update_service(db, service_id, title, description='', icon='', sort_order=0,
     db.execute(
         "UPDATE services SET title = ?, description = ?, icon = ?, sort_order = ?, visible = ?, "
         "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
-        (title.strip(), description, icon, int(sort_order), 1 if visible else 0, service_id),
+        (title.strip(), sanitize_html(description), icon, int(sort_order),
+         1 if visible else 0, service_id),
     )
     db.commit()
 

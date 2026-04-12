@@ -63,8 +63,9 @@ COPY --from=builder /install /usr/local
 COPY app/ ./app/
 COPY app.py manage.py schema.sql babel.cfg ./
 
-# Copy migrations and translations (v0.2.0+)
+# Copy migrations, seeds, and translations (v0.2.0+)
 COPY migration[s]/ ./migrations/
+COPY seed[s]/ ./seeds/
 COPY translation[s]/ ./translations/
 
 # Create writable directories and set ownership
