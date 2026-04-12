@@ -1,3 +1,12 @@
+{#
+  Project Detail Page — Full write-up for a single project
+
+  Only accessible for projects with has_detail_page=1. The route returns
+  404 for projects that don't have detail pages enabled.
+
+  Context variables (from public.project_detail route):
+  - project: The projects row (title, summary, description HTML, tech_stack, etc.)
+#}
 {% extends "base.html" %}
 
 {% block title %}{{ project.title }} — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}

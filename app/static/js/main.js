@@ -1,8 +1,24 @@
 /**
  * resume-site — Main JavaScript
- * Handles: theme toggle, navbar scroll, hamburger menu, GSAP animations,
- * portfolio lightbox, category filters, stat counters, skill accordion,
- * star rating, contact form validation
+ *
+ * All client-side interactivity for the portfolio site. Wrapped in an
+ * IIFE (Immediately Invoked Function Expression) to avoid polluting
+ * the global scope.
+ *
+ * Modules:
+ *   1. Theme Toggle          — Dark/light mode with localStorage persistence
+ *   2. Navbar Scroll          — IntersectionObserver for frosted glass effect
+ *   3. Hamburger Menu         — Mobile navigation slide-out panel
+ *   4. Portfolio Lightbox     — Full-screen image viewer with keyboard support
+ *   5. Category Filtering     — Client-side portfolio filter by category
+ *   6. Skill Accordion        — Expandable skill domain sections
+ *   7. Star Rating            — Interactive star input for review form
+ *   8. Contact Form           — Double-submit prevention
+ *   9. GSAP Animations        — Scroll-triggered reveals, stat counters
+ *
+ * Dependencies:
+ *   - GSAP 3.12.5 (loaded from CDN in base.html)
+ *   - ScrollTrigger plugin (loaded from CDN in base.html)
  */
 
 (function () {

@@ -1,3 +1,9 @@
+{#
+  Projects Listing — Cards with tech stack tags, GitHub links, and optional details
+
+  Context variables (from public.projects route):
+  - projects: Visible project records ordered by sort_order
+#}
 {% extends "base.html" %}
 
 {% block title %}Projects — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}

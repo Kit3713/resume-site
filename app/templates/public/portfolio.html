@@ -1,3 +1,19 @@
+{#
+  Portfolio Gallery — Masonry Grid with Category Filtering and Lightbox
+
+  Displays photos in a CSS column-based masonry layout with three-tier interaction:
+  - No metadata: Click opens lightbox for enlarged view.
+  - Has title/description: Hover reveals overlay with metadata.
+  - Has case study: Overlay includes a link to the case study detail page.
+
+  Featured photos are displayed large at the top. Category filter buttons
+  enable client-side filtering via JavaScript (data-category attributes).
+
+  Context variables (from public.portfolio route):
+  - featured:   Photos with display_tier='featured'
+  - photos:     All non-hidden photos
+  - categories: Distinct category names for the filter bar
+#}
 {% extends "base.html" %}
 
 {% block title %}Portfolio — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}

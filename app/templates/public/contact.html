@@ -1,3 +1,13 @@
+{#
+  Contact Page — Form with honeypot spam protection and contact info sidebar
+
+  Two-column layout: the contact form on the left, contact info on the right.
+  The form includes a hidden "website" honeypot field (invisible to users via
+  CSS) that catches automated bot submissions.
+
+  The form is conditionally shown based on the 'contact_form_enabled' setting.
+  Contact info items (email, GitHub, LinkedIn) are individually toggled.
+#}
 {% extends "base.html" %}
 
 {% block title %}Contact — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}

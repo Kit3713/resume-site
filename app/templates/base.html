@@ -1,3 +1,27 @@
+{#
+  Base Template — Layout, Navigation, Footer, Theme System
+
+  This is the root template that all public pages extend. It provides:
+  - Dark/light theme toggle (data-theme attribute on <html>)
+  - Fixed navbar with responsive hamburger menu
+  - Flash message display area
+  - Footer with social links
+  - GSAP animation library (CDN)
+  - Anti-FOUC theme script (prevents flash of wrong theme on load)
+
+  Available blocks for child templates:
+  - title:            Page title (browser tab)
+  - meta_description: Meta description tag content
+  - og_title:         Open Graph title for social sharing
+  - head_extra:       Additional <head> content (extra CSS, etc.)
+  - nav_extra:        Additional navigation items
+  - content:          Main page content
+  - scripts_extra:    Additional scripts (page-specific JS)
+
+  Context variables (injected by app factory's context processor):
+  - site_settings:    Dict of all settings from the SQLite settings table
+  - site_config:      Dict of infrastructure config from config.yaml
+#}
 <!DOCTYPE html>
 <html lang="en" data-theme="{{ 'dark' if site_settings.get('dark_mode_default', 'true') == 'true' else 'light' }}">
 <head>
