@@ -3,8 +3,36 @@
 All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [Unreleased] — v0.2.0
+
+### Added
+- Multi-stage Containerfile with non-root user, health check, and OCI labels
+- `compose.yaml` for Podman/Docker Compose deployment
+- `resume-site.container` Podman Quadlet unit file for systemd integration
+- `.containerignore` to minimize container image size
+- GitHub Actions CI pipeline with GHCR publishing (multi-arch amd64+arm64)
+- `ROADMAP_v0.2.0.md` development plan
+- Updated `SECURITY.md` with v0.2.0 hardening commitments
+
+### Planned
+- Database migration system (`migrations/` directory, `manage.py migrate`)
+- CSRF protection on all forms
+- Security headers (X-Content-Type-Options, X-Frame-Options, CSP, HSTS)
+- HTML sanitization on content input
+- Input validation hardening (file upload magic bytes, size limits)
+- Expanded test suite (admin CRUD, security, integration, migration tests)
+- Blog / articles engine with tags, RSS, markdown support
+- Admin panel customization (theme editor, nav ordering, custom CSS, settings registry)
+- i18n framework (Flask-Babel, string extraction, locale routing)
+- Container registry publishing via `podman pull ghcr.io/kit3713/resume-site`
+
+---
+
+## [0.1.0] — 2026-04-11
+
+Initial release. Feature-complete portfolio engine with admin panel.
 
 ### Added — Phase 4: Polish
 - Open Graph meta tags (`og:title`, `og:description`, `og:type`, `og:site_name`) in base template
@@ -40,7 +68,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added — GitHub Community Files
 - MIT LICENSE file
-- GitHub Actions CI workflow (pytest + flake8 on Python 3.11/3.12 + container build)
+- GitHub Actions CI workflow (pytest + flake8 on Python 3.11/3.12 with container build)
 - Issue templates (bug report, feature request)
 - Pull request template with checklist
 - CONTRIBUTING.md
