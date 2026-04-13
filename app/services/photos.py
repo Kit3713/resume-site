@@ -155,7 +155,21 @@ def process_upload(file_storage):
     file_storage.save(file_path)
     file_size = os.path.getsize(file_path)
 
-    # Optimize the image with Pillow
+    # Optimize the image with Pillow.
+    #
+    # We *always* re-save through Pillow — even for small images that don't
+    # need downscaling — for two reasons:
+    #   1. EXIF stripping (privacy): Pillow's save() drops metadata unless
+    #      you explicitly pass `exif=...`. A phone photo uploaded at 500px
+    #      would otherwise retain GPS coordinates, camera model, etc.
+    #      This also satisfies the Phase 13.7 privacy deliverable.
+    #   2. Consistent optimization: re-encoding at quality=85 with
+    #      `optimize=True` and `progressive=True` (for JPEG) produces
+    #      smaller files and better perceived load time on slow links.
+    #
+    # GIFs are deliberately *not* re-saved because Pillow's animated-GIF
+    # support is lossy (frames can be lost) and animation is part of the
+    # user's intent.
     try:
         with Image.open(file_path) as img:
             width, height = img.size
@@ -165,21 +179,24 @@ def process_upload(file_storage):
             if width > max_dim or height > max_dim:
                 img.thumbnail((max_dim, max_dim), Image.LANCZOS)
 
-                # Re-save with format-specific optimization
-                if ext in ('.jpg', '.jpeg'):
-                    img.save(file_path, 'JPEG', quality=85, optimize=True)
-                elif ext == '.png':
-                    img.save(file_path, 'PNG', optimize=True)
-                elif ext == '.webp':
-                    img.save(file_path, 'WebP', quality=85)
-                else:
-                    img.save(file_path)
+            # Re-save with format-specific optimization. Not passing `exif=`
+            # means any embedded EXIF block is dropped on write.
+            if ext in ('.jpg', '.jpeg'):
+                img.save(file_path, 'JPEG', quality=85, optimize=True, progressive=True)
+            elif ext == '.png':
+                img.save(file_path, 'PNG', optimize=True)
+            elif ext == '.webp':
+                img.save(file_path, 'WebP', quality=85)
+            # GIFs: intentionally left untouched (see comment above).
 
-                # Update dimensions and file size after optimization
-                width, height = img.size
-                file_size = os.path.getsize(file_path)
-    except Exception:
-        # If Pillow can't process the image, keep the original as-is
+            # Update dimensions and file size after optimization
+            width, height = img.size
+            file_size = os.path.getsize(file_path)
+    except (OSError, ValueError, Image.DecompressionBombError):
+        # Pillow raises OSError for unreadable/corrupt images, ValueError for
+        # unsupported modes, and DecompressionBombError for pixel-count DoS.
+        # Keep the original file on disk with the admin-provided metadata so
+        # the upload isn't a silent data loss.
         width, height = None, None
 
     # Map file extensions to MIME types

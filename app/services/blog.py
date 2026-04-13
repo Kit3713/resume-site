@@ -16,22 +16,11 @@ import re
 import mistune
 
 from app.services.content import sanitize_html
+from app.services.pagination import offset_for
+from app.services.text import slugify
 
 # Markdown renderer (initialized once, reused across requests)
 _markdown = mistune.create_markdown(escape=False)
-
-
-def _slugify(text):
-    """Convert a title into a URL-safe slug.
-
-    Lowercases, replaces non-alphanumeric characters with hyphens,
-    collapses consecutive hyphens, and strips leading/trailing hyphens.
-    """
-    slug = text.lower().strip()
-    slug = re.sub(r'[^\w\s-]', '', slug)
-    slug = re.sub(r'[\s_]+', '-', slug)
-    slug = re.sub(r'-+', '-', slug)
-    return slug.strip('-')
 
 
 def _calculate_reading_time(content, content_format='html'):
@@ -96,11 +85,10 @@ def get_published_posts(db, page=1, per_page=10):
         "SELECT COUNT(*) as cnt FROM blog_posts WHERE status = 'published'"
     ).fetchone()['cnt']
 
-    offset = (page - 1) * per_page
     posts = db.execute(
         "SELECT * FROM blog_posts WHERE status = 'published' "
         'ORDER BY published_at DESC LIMIT ? OFFSET ?',
-        (per_page, offset),
+        (per_page, offset_for(page, per_page)),
     ).fetchall()
 
     return posts, total
@@ -144,14 +132,13 @@ def get_posts_by_tag(db, tag_slug, page=1, per_page=10):
         (tag_slug,),
     ).fetchone()['cnt']
 
-    offset = (page - 1) * per_page
     posts = db.execute(
         'SELECT bp.* FROM blog_posts bp '
         'JOIN blog_post_tags bpt ON bp.id = bpt.post_id '
         'JOIN blog_tags bt ON bt.id = bpt.tag_id '
         "WHERE bp.status = 'published' AND bt.slug = ? "
         'ORDER BY bp.published_at DESC LIMIT ? OFFSET ?',
-        (tag_slug, per_page, offset),
+        (tag_slug, per_page, offset_for(page, per_page)),
     ).fetchall()
 
     return posts, total
@@ -206,8 +193,8 @@ def get_tags_for_posts(db, post_ids):
     if not post_ids:
         return {}
     # `placeholders` is a string of `?` chars — no caller-supplied values are
-    # interpolated into the SQL. Values still bind through db.execute params.
-    # ruff S608 / bandit B608 both flag this as a false positive.
+    # interpolated into the SQL. Values still bind through db.execute params,
+    # so this is not a SQL-injection vector.
     placeholders = ','.join(['?'] * len(post_ids))
     sql = (
         'SELECT bpt.post_id AS _post_id, bt.* FROM blog_tags bt '  # noqa: S608  # nosec B608
@@ -237,7 +224,7 @@ def _sync_tags(db, post_id, tag_string):
     # Ensure each tag exists in blog_tags
     tag_ids = []
     for name in tag_names:
-        slug = _slugify(name)
+        slug = slugify(name)
         if not slug:
             continue
         row = db.execute('SELECT id FROM blog_tags WHERE slug = ?', (slug,)).fetchone()
@@ -284,7 +271,7 @@ def create_post(
     Returns:
         int: The new post's ID.
     """
-    slug = _ensure_unique_slug(db, _slugify(title))
+    slug = _ensure_unique_slug(db, slugify(title))
     if content_format == 'html':
         content = sanitize_html(content)
     reading_time = _calculate_reading_time(content, content_format)
@@ -336,9 +323,9 @@ def update_post(
     provided slug (after ensuring uniqueness). Recalculates reading time.
     """
     if slug:
-        slug = _ensure_unique_slug(db, _slugify(slug), exclude_id=post_id)
+        slug = _ensure_unique_slug(db, slugify(slug), exclude_id=post_id)
     else:
-        slug = _ensure_unique_slug(db, _slugify(title), exclude_id=post_id)
+        slug = _ensure_unique_slug(db, slugify(title), exclude_id=post_id)
 
     if content_format == 'html':
         content = sanitize_html(content)

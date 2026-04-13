@@ -7,6 +7,8 @@ approval, rejection, display tier updates, and listing by status.
 Admin routes call these functions instead of writing SQL inline.
 """
 
+from app.exceptions import ValidationError
+
 _VALID_STATUSES = ('pending', 'approved', 'rejected')
 _VALID_TIERS = ('featured', 'standard', 'hidden')
 
@@ -22,7 +24,7 @@ def get_reviews_by_status(db, status):
         List of sqlite3.Row objects.
     """
     if status not in _VALID_STATUSES:
-        raise ValueError(f'Invalid review status: {status!r}')
+        raise ValidationError(f'Invalid review status: {status!r}')
     return db.execute(
         'SELECT * FROM reviews WHERE status = ? ORDER BY created_at DESC',
         (status,),

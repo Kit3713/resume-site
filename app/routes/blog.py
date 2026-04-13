@@ -14,7 +14,6 @@ URL structure:
     /blog/feed.xml          RSS 2.0 feed
 """
 
-import math
 from html import escape
 
 from flask import Blueprint, abort, make_response, render_template, request
@@ -30,6 +29,7 @@ from app.services.blog import (
     get_tags_for_posts,
     render_post_content,
 )
+from app.services.pagination import clamp_page, paginate
 
 blog_bp = Blueprint('blog', __name__, template_folder='../templates')
 
@@ -58,13 +58,11 @@ def blog_index():
     db = get_db()
     _check_blog_enabled(db)
 
-    page = request.args.get('page', 1, type=int)
-    if page < 1:
-        page = 1
+    page = clamp_page(request.args.get('page', 1))
     per_page = int(get_setting(db, 'posts_per_page', '10'))
 
     posts, total = get_published_posts(db, page=page, per_page=per_page)
-    total_pages = max(1, math.ceil(total / per_page))
+    pagination = paginate(page=page, per_page=per_page, total=total)
 
     blog_title = get_setting(db, 'blog_title', 'Blog')
     show_reading_time = get_setting(db, 'show_reading_time', 'true') == 'true'
@@ -75,7 +73,7 @@ def blog_index():
         blog_title=blog_title,
         show_reading_time=show_reading_time,
         page=page,
-        total_pages=total_pages,
+        total_pages=pagination.total_pages,
     )
 
 
@@ -126,13 +124,11 @@ def blog_tag(tag_slug):
     if tag is None:
         abort(404)
 
-    page = request.args.get('page', 1, type=int)
-    if page < 1:
-        page = 1
+    page = clamp_page(request.args.get('page', 1))
     per_page = int(get_setting(db, 'posts_per_page', '10'))
 
     posts, total = get_posts_by_tag(db, tag_slug, page=page, per_page=per_page)
-    total_pages = max(1, math.ceil(total / per_page))
+    pagination = paginate(page=page, per_page=per_page, total=total)
 
     blog_title = get_setting(db, 'blog_title', 'Blog')
     show_reading_time = get_setting(db, 'show_reading_time', 'true') == 'true'
@@ -143,7 +139,7 @@ def blog_tag(tag_slug):
         blog_title=blog_title,
         show_reading_time=show_reading_time,
         page=page,
-        total_pages=total_pages,
+        total_pages=pagination.total_pages,
         active_tag=tag,
     )
 

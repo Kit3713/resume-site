@@ -111,8 +111,8 @@ def get_skill_domains_with_skills(db):
 
     domain_ids = [d['id'] for d in domains]
     # `placeholders` is a string of `?` chars — no caller-supplied values are
-    # interpolated into the SQL. Values still bind through db.execute params.
-    # ruff S608 / bandit B608 both flag this as a false positive.
+    # interpolated into the SQL. Values still bind through db.execute params,
+    # so this is not a SQL-injection vector.
     placeholders = ','.join(['?'] * len(domain_ids))
     skills_sql = (
         'SELECT * FROM skills '  # noqa: S608  # nosec B608

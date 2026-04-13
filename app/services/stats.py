@@ -5,6 +5,8 @@ Business logic for the stats table (animated counter cards on the landing page).
 Admin routes call these functions instead of writing SQL inline.
 """
 
+from app.exceptions import ValidationError
+
 
 def get_all_stats(db):
     """Return all stat counters ordered by sort_order."""
@@ -22,7 +24,7 @@ def add_stat(db, label, value, suffix='', sort_order=0):
         sort_order: Display order (lower = earlier).
     """
     if not label:
-        raise ValueError('Stat label cannot be empty.')
+        raise ValidationError('Stat label cannot be empty.')
     db.execute(
         'INSERT INTO stats (label, value, suffix, sort_order) VALUES (?, ?, ?, ?)',
         (label.strip(), int(value), suffix, int(sort_order)),

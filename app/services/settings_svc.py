@@ -27,6 +27,8 @@ Caching (Phase 12.1):
 import threading
 import time
 
+from app.exceptions import NotFoundError
+
 # Registry of known setting keys with metadata for the admin UI.
 #
 # Fields:
@@ -442,10 +444,11 @@ def set_one(db, key, value):
     """Set a single setting and commit immediately.
 
     Raises:
-        KeyError: If the key is not in the registry.
+        NotFoundError: If the key is not in the registry. Inherits from
+            LookupError/KeyError so existing handlers keep working.
     """
     if key not in SETTINGS_REGISTRY:
-        raise KeyError(f'Unknown setting key: {key!r}')
+        raise NotFoundError(f'Unknown setting key: {key!r}')
     _upsert(db, key, str(value))
     db.commit()
     invalidate_cache()

@@ -10,6 +10,7 @@ through sanitize_html() on every write as defense in depth against XSS
 (even though only the authenticated admin can write it).
 """
 
+from app.exceptions import ValidationError
 from app.services.content import sanitize_html
 
 
@@ -29,7 +30,7 @@ def add_service(db, title, description='', icon='', sort_order=0):
         sort_order: Display order (lower = earlier).
     """
     if not title:
-        raise ValueError('Service title cannot be empty.')
+        raise ValidationError('Service title cannot be empty.')
     db.execute(
         'INSERT INTO services (title, description, icon, sort_order) VALUES (?, ?, ?, ?)',
         (title.strip(), sanitize_html(description), icon, int(sort_order)),

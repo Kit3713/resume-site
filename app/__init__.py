@@ -31,6 +31,7 @@ from flask_wtf.csrf import CSRFProtect
 
 from app.db import close_db, get_db
 from app.services.config import load_config
+from app.services.settings_svc import get_all_cached
 
 # Extension instances (initialized in create_app)
 csrf = CSRFProtect()
@@ -49,8 +50,6 @@ def _get_available_locales(app):
     is not yet initialized. Reads through the settings cache so the
     locale selector (called on every request) doesn't re-query SQLite.
     """
-    from app.services.settings_svc import get_all_cached
-
     # Best-effort: the DB may not yet exist (first boot, migrations pending).
     # Any failure falls through to the ['en'] default.
     with contextlib.suppress(Exception), app.app_context():
@@ -248,8 +247,6 @@ def create_app(config_path=None):
         SQLite at most once per cache TTL window. Wrapped in suppress() to
         handle first-run when the DB doesn't exist yet.
         """
-        from app.services.settings_svc import get_all_cached
-
         settings = {}
         with contextlib.suppress(Exception):
             db = get_db()
