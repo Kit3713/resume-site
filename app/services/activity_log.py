@@ -19,8 +19,7 @@ def log_action(db, action, category='', detail='', admin_user='admin'):
         admin_user: The admin username (for future multi-user support).
     """
     db.execute(
-        "INSERT INTO admin_activity_log (action, category, detail, admin_user) "
-        "VALUES (?, ?, ?, ?)",
+        'INSERT INTO admin_activity_log (action, category, detail, admin_user) VALUES (?, ?, ?, ?)',
         (action, category, detail, admin_user),
     )
     db.commit()
@@ -29,7 +28,7 @@ def log_action(db, action, category='', detail='', admin_user='admin'):
 def get_recent_activity(db, limit=20):
     """Return the most recent activity log entries for the dashboard."""
     return db.execute(
-        "SELECT * FROM admin_activity_log ORDER BY created_at DESC LIMIT ?",
+        'SELECT * FROM admin_activity_log ORDER BY created_at DESC LIMIT ?',
         (limit,),
     ).fetchall()
 
@@ -41,7 +40,7 @@ def purge_old_entries(db, days=90):
         int: Number of entries deleted.
     """
     cursor = db.execute(
-        "DELETE FROM admin_activity_log "
+        'DELETE FROM admin_activity_log '
         "WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)",
         (f'-{days} days',),
     )

@@ -29,7 +29,7 @@ def add_service(db, title, description='', icon='', sort_order=0):
         sort_order: Display order (lower = earlier).
     """
     if not title:
-        raise ValueError("Service title cannot be empty.")
+        raise ValueError('Service title cannot be empty.')
     db.execute(
         'INSERT INTO services (title, description, icon, sort_order) VALUES (?, ?, ?, ?)',
         (title.strip(), sanitize_html(description), icon, int(sort_order)),
@@ -50,10 +50,16 @@ def update_service(db, service_id, title, description='', icon='', sort_order=0,
         visible: Whether to show on the public site.
     """
     db.execute(
-        "UPDATE services SET title = ?, description = ?, icon = ?, sort_order = ?, visible = ?, "
+        'UPDATE services SET title = ?, description = ?, icon = ?, sort_order = ?, visible = ?, '
         "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
-        (title.strip(), sanitize_html(description), icon, int(sort_order),
-         1 if visible else 0, service_id),
+        (
+            title.strip(),
+            sanitize_html(description),
+            icon,
+            int(sort_order),
+            1 if visible else 0,
+            service_id,
+        ),
     )
     db.commit()
 

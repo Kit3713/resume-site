@@ -22,9 +22,9 @@ def get_reviews_by_status(db, status):
         List of sqlite3.Row objects.
     """
     if status not in _VALID_STATUSES:
-        raise ValueError(f"Invalid review status: {status!r}")
+        raise ValueError(f'Invalid review status: {status!r}')
     return db.execute(
-        "SELECT * FROM reviews WHERE status = ? ORDER BY created_at DESC",
+        'SELECT * FROM reviews WHERE status = ? ORDER BY created_at DESC',
         (status,),
     ).fetchall()
 
@@ -68,7 +68,7 @@ def update_review_tier(db, review_id, display_tier):
     if display_tier not in _VALID_TIERS:
         display_tier = 'standard'
     db.execute(
-        "UPDATE reviews SET display_tier = ? WHERE id = ?",
+        'UPDATE reviews SET display_tier = ? WHERE id = ?',
         (display_tier, review_id),
     )
     db.commit()
@@ -76,7 +76,5 @@ def update_review_tier(db, review_id, display_tier):
 
 def count_pending(db):
     """Return the number of reviews awaiting approval."""
-    row = db.execute(
-        "SELECT COUNT(*) as cnt FROM reviews WHERE status = 'pending'"
-    ).fetchone()
+    row = db.execute("SELECT COUNT(*) as cnt FROM reviews WHERE status = 'pending'").fetchone()
     return row['cnt'] if row else 0

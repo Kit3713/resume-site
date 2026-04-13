@@ -1,0 +1,35 @@
+# Development dependencies — NEVER shipped in the container image.
+#
+# Compiled to requirements-dev.txt with:
+#   pip-compile --generate-hashes --output-file=requirements-dev.txt requirements-dev.in
+#
+# These tools are used by developers, pre-commit hooks, and CI only.
+# The runtime container uses requirements.txt exclusively.
+
+# --- Include all runtime deps so dev env can actually run the app ---
+-c requirements.txt
+
+# --- Test runner (already in use; listed here for explicitness) ---
+pytest>=9.0.3
+pytest-cov>=7.1.0
+
+# --- Phase 12.5: Static analysis + quality gates ---
+ruff>=0.8.0
+bandit>=1.8.0
+vulture>=2.14
+pre-commit>=4.0.0
+detect-secrets>=1.5.0
+
+# --- Phase 13: Fuzz / property-based testing ---
+hypothesis>=6.120.0
+
+# --- Phase 18: Observability / performance / mutation testing ---
+mutmut>=3.2.0
+locust>=2.32.0
+playwright>=1.49.0
+
+# --- pip-tools itself (so pip-compile / pip-sync are always present) ---
+pip-tools>=7.4.1
+
+# --- Supply chain (already used manually; pin for consistency) ---
+pip-audit>=2.8.0

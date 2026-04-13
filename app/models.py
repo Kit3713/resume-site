@@ -38,21 +38,21 @@ class AdminUser(UserMixin):
 # SETTINGS (key-value store in SQLite)
 # ============================================================
 
+
 def get_setting(db, key, default=''):
     """Return a single setting value by key, or default if not found.
 
     All values are stored as text strings; callers must cast to
     int/bool as needed (e.g., `get_setting(db, 'contact_form_enabled') == 'true'`).
     """
-    row = db.execute(
-        'SELECT value FROM settings WHERE key = ?', (key,)
-    ).fetchone()
+    row = db.execute('SELECT value FROM settings WHERE key = ?', (key,)).fetchone()
     return row['value'] if row else default
 
 
 # ============================================================
 # CONTENT BLOCKS (rich text sections managed via admin)
 # ============================================================
+
 
 def get_content_block(db, slug):
     """Return a single content block by its slug identifier, or None.
@@ -61,14 +61,13 @@ def get_content_block(db, slug):
     them by slug (e.g., 'about', 'hero_description') to render editable
     sections without changing template code.
     """
-    return db.execute(
-        'SELECT * FROM content_blocks WHERE slug = ?', (slug,)
-    ).fetchone()
+    return db.execute('SELECT * FROM content_blocks WHERE slug = ?', (slug,)).fetchone()
 
 
 # ============================================================
 # STATS (animated counters on the landing page)
 # ============================================================
+
 
 def get_visible_stats(db):
     """Return all visible stat counters ordered by sort_order.
@@ -76,25 +75,23 @@ def get_visible_stats(db):
     Stats display as animated number counters on the landing page
     (e.g., "42+ Projects", "99% Uptime").
     """
-    return db.execute(
-        'SELECT * FROM stats WHERE visible = 1 ORDER BY sort_order'
-    ).fetchall()
+    return db.execute('SELECT * FROM stats WHERE visible = 1 ORDER BY sort_order').fetchall()
 
 
 # ============================================================
 # SERVICES
 # ============================================================
 
+
 def get_visible_services(db):
     """Return all visible services ordered by sort_order."""
-    return db.execute(
-        'SELECT * FROM services WHERE visible = 1 ORDER BY sort_order'
-    ).fetchall()
+    return db.execute('SELECT * FROM services WHERE visible = 1 ORDER BY sort_order').fetchall()
 
 
 # ============================================================
 # SKILLS (grouped by domain for expandable accordion display)
 # ============================================================
+
 
 def get_skill_domains_with_skills(db):
     """Return visible skill domains, each with a nested list of skills.
@@ -119,6 +116,7 @@ def get_skill_domains_with_skills(db):
 # ============================================================
 # PHOTOS (portfolio gallery)
 # ============================================================
+
 
 def get_photos_by_tier(db, tier='grid'):
     """Return photos filtered by display tier ('featured', 'grid', or 'hidden').
@@ -157,6 +155,7 @@ def get_photo_categories(db):
 # CASE STUDIES (detailed portfolio write-ups)
 # ============================================================
 
+
 def get_case_study_by_slug(db, slug):
     """Return a published case study by its URL slug, or None.
 
@@ -171,6 +170,7 @@ def get_case_study_by_slug(db, slug):
 # ============================================================
 # REVIEWS / TESTIMONIALS
 # ============================================================
+
 
 def get_approved_reviews_by_tier(db, tier='featured'):
     """Return approved reviews filtered by display tier.
@@ -195,7 +195,7 @@ def get_all_approved_reviews(db):
     return db.execute(
         "SELECT * FROM reviews WHERE status = 'approved' "
         "ORDER BY CASE display_tier WHEN 'featured' THEN 0 WHEN 'standard' THEN 1 ELSE 2 END, "
-        "created_at DESC"
+        'created_at DESC'
     ).fetchall()
 
 
@@ -203,11 +203,10 @@ def get_all_approved_reviews(db):
 # PROJECTS
 # ============================================================
 
+
 def get_visible_projects(db):
     """Return all visible projects ordered by sort_order."""
-    return db.execute(
-        'SELECT * FROM projects WHERE visible = 1 ORDER BY sort_order'
-    ).fetchall()
+    return db.execute('SELECT * FROM projects WHERE visible = 1 ORDER BY sort_order').fetchall()
 
 
 def get_project_by_slug(db, slug):
@@ -226,6 +225,7 @@ def get_project_by_slug(db, slug):
 # CERTIFICATIONS
 # ============================================================
 
+
 def get_visible_certifications(db):
     """Return all visible certifications ordered by sort_order."""
     return db.execute(
@@ -236,6 +236,7 @@ def get_visible_certifications(db):
 # ============================================================
 # CONTACT SUBMISSIONS
 # ============================================================
+
 
 def save_contact_submission(db, name, email, message, ip_address, user_agent, is_spam=False):
     """Insert a contact form submission into the database.
@@ -262,7 +263,7 @@ def count_recent_submissions(db, ip_address, minutes=60):
     the count exceeds 5 per hour from the same IP address.
     """
     row = db.execute(
-        "SELECT COUNT(*) as cnt FROM contact_submissions "
+        'SELECT COUNT(*) as cnt FROM contact_submissions '
         "WHERE ip_address = ? AND created_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)",
         (ip_address, f'-{minutes} minutes'),
     ).fetchone()
@@ -273,11 +274,10 @@ def count_recent_submissions(db, ip_address, minutes=60):
 # REVIEW TOKENS (invite-only review system)
 # ============================================================
 
+
 def get_review_token(db, token_string):
     """Return a review token row by its URL-safe token string, or None."""
-    return db.execute(
-        'SELECT * FROM review_tokens WHERE token = ?', (token_string,)
-    ).fetchone()
+    return db.execute('SELECT * FROM review_tokens WHERE token = ?', (token_string,)).fetchone()
 
 
 def mark_token_used(db, token_id):
@@ -297,7 +297,10 @@ def mark_token_used(db, token_id):
 # REVIEWS (submission/creation)
 # ============================================================
 
-def create_review(db, token_id, reviewer_name, reviewer_title, relationship, message, rating, review_type):
+
+def create_review(
+    db, token_id, reviewer_name, reviewer_title, relationship, message, rating, review_type
+):
     """Insert a new review with 'pending' status for admin approval.
 
     Reviews submitted via invite tokens are always pending — the admin
@@ -318,7 +321,16 @@ def create_review(db, token_id, reviewer_name, reviewer_title, relationship, mes
     cursor = db.execute(
         'INSERT INTO reviews (token_id, reviewer_name, reviewer_title, relationship, message, rating, type, status) '
         'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        (token_id, reviewer_name, reviewer_title, relationship, message, rating, review_type, 'pending'),
+        (
+            token_id,
+            reviewer_name,
+            reviewer_title,
+            relationship,
+            message,
+            rating,
+            review_type,
+            'pending',
+        ),
     )
     db.commit()
     return cursor.lastrowid

@@ -24,21 +24,24 @@ operations have a real target.
 
 import pytest
 
-
 # ============================================================
 # UNAUTHENTICATED ACCESS — all admin routes must redirect
 # ============================================================
 
-@pytest.mark.parametrize('path', [
-    '/admin/',
-    '/admin/content',
-    '/admin/photos',
-    '/admin/reviews',
-    '/admin/tokens',
-    '/admin/settings',
-    '/admin/services',
-    '/admin/stats',
-])
+
+@pytest.mark.parametrize(
+    'path',
+    [
+        '/admin/',
+        '/admin/content',
+        '/admin/photos',
+        '/admin/reviews',
+        '/admin/tokens',
+        '/admin/settings',
+        '/admin/services',
+        '/admin/stats',
+    ],
+)
 def test_admin_requires_auth(client, path):
     """Every admin route should redirect unauthenticated users to /admin/login."""
     response = client.get(path, follow_redirects=False)
@@ -50,11 +53,15 @@ def test_admin_requires_auth(client, path):
 # IP RESTRICTION — disallowed IPs get 403 before auth check
 # ============================================================
 
-@pytest.mark.parametrize('path', [
-    '/admin/',
-    '/admin/login',
-    '/admin/content',
-])
+
+@pytest.mark.parametrize(
+    'path',
+    [
+        '/admin/',
+        '/admin/login',
+        '/admin/content',
+    ],
+)
 def test_admin_ip_restriction(app, path):
     """Requests from IPs outside allowed_networks must get 403."""
     client = app.test_client()
@@ -66,6 +73,7 @@ def test_admin_ip_restriction(app, path):
 # ============================================================
 # DASHBOARD
 # ============================================================
+
 
 def test_dashboard_loads(auth_client):
     """Authenticated dashboard request should return 200."""
@@ -84,6 +92,7 @@ def test_dashboard_shows_metrics(auth_client):
 # ============================================================
 # CONTENT BLOCKS
 # ============================================================
+
 
 def test_content_list_loads(auth_client):
     """Content block list should return 200."""
@@ -107,20 +116,28 @@ def test_content_edit_get(auth_client, populated_db):
 
 def test_content_edit_post_saves(auth_client, populated_db):
     """POST /admin/content/edit/<slug> should update the block and redirect."""
-    response = auth_client.post('/admin/content/edit/about', data={
-        'title': 'Updated About',
-        'content': '<p>New content.</p>',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/content/edit/about',
+        data={
+            'title': 'Updated About',
+            'content': '<p>New content.</p>',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
     assert '/admin/content' in response.headers['Location']
 
 
 def test_content_edit_creates_missing_slug(auth_client):
     """Editing a non-existent slug should create the block (create_if_missing)."""
-    response = auth_client.post('/admin/content/edit/new-block', data={
-        'title': 'New Block Title',
-        'content': '<p>Hello world.</p>',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/content/edit/new-block',
+        data={
+            'title': 'New Block Title',
+            'content': '<p>Hello world.</p>',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
 
 
@@ -132,28 +149,37 @@ def test_content_new_get(auth_client):
 
 def test_content_new_post_creates(auth_client):
     """POST /admin/content/new should create a block and redirect."""
-    response = auth_client.post('/admin/content/new', data={
-        'slug': 'hero',
-        'title': 'Hero Section',
-        'content': '<h1>Welcome</h1>',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/content/new',
+        data={
+            'slug': 'hero',
+            'title': 'Hero Section',
+            'content': '<h1>Welcome</h1>',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
     assert '/admin/content' in response.headers['Location']
 
 
 def test_content_new_post_no_slug_redirects(auth_client):
     """POST /admin/content/new without a slug should redirect without creating."""
-    response = auth_client.post('/admin/content/new', data={
-        'slug': '',
-        'title': '',
-        'content': '',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/content/new',
+        data={
+            'slug': '',
+            'title': '',
+            'content': '',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
 
 
 # ============================================================
 # SERVICES CRUD
 # ============================================================
+
 
 def test_services_list_loads(auth_client):
     """Services list should return 200."""
@@ -163,44 +189,55 @@ def test_services_list_loads(auth_client):
 
 def test_services_add(auth_client):
     """POST /admin/services/add should create a service and redirect."""
-    response = auth_client.post('/admin/services/add', data={
-        'title': 'Photography',
-        'description': 'Portrait and event photography.',
-        'icon': '📷',
-        'sort_order': '1',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/services/add',
+        data={
+            'title': 'Photography',
+            'description': 'Portrait and event photography.',
+            'icon': '📷',
+            'sort_order': '1',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
     assert '/admin/services' in response.headers['Location']
 
 
 def test_services_add_no_title_skips(auth_client):
     """POST without a title should not create a service (guard in route)."""
-    response = auth_client.post('/admin/services/add', data={
-        'title': '',
-        'description': 'No title provided.',
-        'icon': '',
-        'sort_order': '0',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/services/add',
+        data={
+            'title': '',
+            'description': 'No title provided.',
+            'icon': '',
+            'sort_order': '0',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
 
 
 def test_services_edit(auth_client, populated_db):
     """POST /admin/services/1/edit should update service and redirect."""
-    response = auth_client.post('/admin/services/1/edit', data={
-        'title': 'Web Dev Updated',
-        'description': 'Updated description.',
-        'icon': '💻',
-        'sort_order': '2',
-        'visible': 'on',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/services/1/edit',
+        data={
+            'title': 'Web Dev Updated',
+            'description': 'Updated description.',
+            'icon': '💻',
+            'sort_order': '2',
+            'visible': 'on',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
     assert '/admin/services' in response.headers['Location']
 
 
 def test_services_delete(auth_client, populated_db):
     """POST /admin/services/1/delete should delete service and redirect."""
-    response = auth_client.post('/admin/services/1/delete',
-                                follow_redirects=False)
+    response = auth_client.post('/admin/services/1/delete', follow_redirects=False)
     assert response.status_code == 302
     assert '/admin/services' in response.headers['Location']
 
@@ -213,6 +250,7 @@ def test_services_delete(auth_client, populated_db):
 # STATS CRUD
 # ============================================================
 
+
 def test_stats_list_loads(auth_client):
     """Stats list should return 200."""
     response = auth_client.get('/admin/stats')
@@ -221,43 +259,54 @@ def test_stats_list_loads(auth_client):
 
 def test_stats_add(auth_client):
     """POST /admin/stats/add should create a stat and redirect."""
-    response = auth_client.post('/admin/stats/add', data={
-        'label': 'Happy Clients',
-        'value': '50',
-        'suffix': '+',
-        'sort_order': '1',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/stats/add',
+        data={
+            'label': 'Happy Clients',
+            'value': '50',
+            'suffix': '+',
+            'sort_order': '1',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
     assert '/admin/stats' in response.headers['Location']
 
 
 def test_stats_add_no_label_skips(auth_client):
     """POST without a label should not create a stat."""
-    response = auth_client.post('/admin/stats/add', data={
-        'label': '',
-        'value': '0',
-        'suffix': '',
-        'sort_order': '0',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/stats/add',
+        data={
+            'label': '',
+            'value': '0',
+            'suffix': '',
+            'sort_order': '0',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
 
 
 def test_stats_edit(auth_client, populated_db):
     """POST /admin/stats/1/edit should update stat and redirect."""
-    response = auth_client.post('/admin/stats/1/edit', data={
-        'label': 'Projects Completed',
-        'value': '100',
-        'suffix': '+',
-        'sort_order': '1',
-        'visible': 'on',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/stats/1/edit',
+        data={
+            'label': 'Projects Completed',
+            'value': '100',
+            'suffix': '+',
+            'sort_order': '1',
+            'visible': 'on',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
 
 
 def test_stats_delete(auth_client, populated_db):
     """POST /admin/stats/1/delete should delete stat and redirect."""
-    response = auth_client.post('/admin/stats/1/delete',
-                                follow_redirects=False)
+    response = auth_client.post('/admin/stats/1/delete', follow_redirects=False)
     assert response.status_code == 302
 
     # Verify the stat row is gone — check for the empty-state message
@@ -268,6 +317,7 @@ def test_stats_delete(auth_client, populated_db):
 # ============================================================
 # REVIEW MANAGER
 # ============================================================
+
 
 def test_reviews_list_loads(auth_client):
     """Reviews list should return 200."""
@@ -284,35 +334,48 @@ def test_reviews_list_shows_approved(auth_client, populated_db):
 
 def test_reviews_reject(auth_client, populated_db):
     """POST /admin/reviews/1/update with action=reject should reject review."""
-    response = auth_client.post('/admin/reviews/1/update', data={
-        'action': 'reject',
-        'display_tier': 'standard',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/reviews/1/update',
+        data={
+            'action': 'reject',
+            'display_tier': 'standard',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
     assert '/admin/reviews' in response.headers['Location']
 
 
 def test_reviews_approve(auth_client, populated_db):
     """POST /admin/reviews/1/update with action=approve should approve review."""
-    response = auth_client.post('/admin/reviews/1/update', data={
-        'action': 'approve',
-        'display_tier': 'featured',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/reviews/1/update',
+        data={
+            'action': 'approve',
+            'display_tier': 'featured',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
 
 
 def test_reviews_update_tier(auth_client, populated_db):
     """POST /admin/reviews/1/update with action=update_tier should change tier."""
-    response = auth_client.post('/admin/reviews/1/update', data={
-        'action': 'update_tier',
-        'display_tier': 'standard',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/reviews/1/update',
+        data={
+            'action': 'update_tier',
+            'display_tier': 'standard',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
 
 
 # ============================================================
 # TOKEN GENERATOR
 # ============================================================
+
 
 def test_tokens_list_loads(auth_client):
     """Tokens list should return 200."""
@@ -329,36 +392,47 @@ def test_tokens_list_shows_existing(auth_client, populated_db):
 
 def test_tokens_generate(auth_client):
     """POST /admin/tokens/generate should create a token and redirect."""
-    response = auth_client.post('/admin/tokens/generate', data={
-        'name': 'Bob Jones',
-        'type': 'client_review',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/tokens/generate',
+        data={
+            'name': 'Bob Jones',
+            'type': 'client_review',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
     assert '/admin/tokens' in response.headers['Location']
 
 
 def test_tokens_generate_recommendation_type(auth_client):
     """POST /admin/tokens/generate with type=recommendation should work."""
-    response = auth_client.post('/admin/tokens/generate', data={
-        'name': 'Carol White',
-        'type': 'recommendation',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/tokens/generate',
+        data={
+            'name': 'Carol White',
+            'type': 'recommendation',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
 
 
 def test_tokens_generate_invalid_type_defaults(auth_client):
     """POST with an invalid type should default to 'recommendation'."""
-    response = auth_client.post('/admin/tokens/generate', data={
-        'name': 'Malicious User',
-        'type': 'admin_override',  # Invalid type
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/tokens/generate',
+        data={
+            'name': 'Malicious User',
+            'type': 'admin_override',  # Invalid type
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
 
 
 def test_tokens_delete(auth_client, populated_db):
     """POST /admin/tokens/1/delete should delete the token and redirect."""
-    response = auth_client.post('/admin/tokens/1/delete',
-                                follow_redirects=False)
+    response = auth_client.post('/admin/tokens/1/delete', follow_redirects=False)
     assert response.status_code == 302
     assert '/admin/tokens' in response.headers['Location']
 
@@ -366,6 +440,7 @@ def test_tokens_delete(auth_client, populated_db):
 # ============================================================
 # SETTINGS
 # ============================================================
+
 
 def test_settings_page_loads(auth_client):
     """Settings page should return 200."""
@@ -375,31 +450,40 @@ def test_settings_page_loads(auth_client):
 
 def test_settings_save(auth_client):
     """POST /admin/settings should save settings and redirect."""
-    response = auth_client.post('/admin/settings', data={
-        'site_title': 'My Test Portfolio',
-        'site_tagline': 'Tagline here',
-        'theme': 'light',
-        'resume_visibility': 'off',
-        'testimonial_display_mode': 'mixed',
-        'case_studies_enabled': 'false',
-        'contact_visible': 'true',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/settings',
+        data={
+            'site_title': 'My Test Portfolio',
+            'site_tagline': 'Tagline here',
+            'theme': 'light',
+            'resume_visibility': 'off',
+            'testimonial_display_mode': 'mixed',
+            'case_studies_enabled': 'false',
+            'contact_visible': 'true',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
     assert '/admin/settings' in response.headers['Location']
 
 
 def test_settings_unknown_key_ignored(auth_client):
     """POST with unknown keys should not cause an error (save_many filters them)."""
-    response = auth_client.post('/admin/settings', data={
-        'site_title': 'Clean Title',
-        '__evil_key__': 'injected_value',  # Should be silently ignored
-    }, follow_redirects=False)
+    response = auth_client.post(
+        '/admin/settings',
+        data={
+            'site_title': 'Clean Title',
+            '__evil_key__': 'injected_value',  # Should be silently ignored
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
 
 
 # ============================================================
 # PHOTOS PAGE (no upload — Pillow dependency not guaranteed)
 # ============================================================
+
 
 def test_photos_list_loads(auth_client):
     """Photos list page should return 200 even when empty."""
@@ -410,29 +494,34 @@ def test_photos_list_loads(auth_client):
 def test_photos_edit_metadata(auth_client, app):
     """Editing photo metadata should persist changes."""
     import sqlite3
+
     db_path = app.config['DATABASE_PATH']
     conn = sqlite3.connect(db_path)
     conn.execute(
-        "INSERT INTO photos (filename, storage_name, mime_type, width, height, file_size, title, display_tier) "
+        'INSERT INTO photos (filename, storage_name, mime_type, width, height, file_size, title, display_tier) '
         "VALUES ('test.jpg', 'abc123.jpg', 'image/jpeg', 800, 600, 50000, 'Original', 'grid')"
     )
     conn.commit()
     photo_id = conn.execute("SELECT id FROM photos WHERE filename='test.jpg'").fetchone()[0]
     conn.close()
 
-    response = auth_client.post(f'/admin/photos/{photo_id}/edit', data={
-        'title': 'Updated Title',
-        'description': 'A new description',
-        'tech_used': 'Python',
-        'category': 'screenshots',
-        'display_tier': 'featured',
-        'sort_order': '5',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        f'/admin/photos/{photo_id}/edit',
+        data={
+            'title': 'Updated Title',
+            'description': 'A new description',
+            'tech_used': 'Python',
+            'category': 'screenshots',
+            'display_tier': 'featured',
+            'sort_order': '5',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    photo = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+    photo = conn.execute('SELECT * FROM photos WHERE id=?', (photo_id,)).fetchone()
     conn.close()
     assert photo['title'] == 'Updated Title'
     assert photo['description'] == 'A new description'
@@ -443,28 +532,32 @@ def test_photos_edit_metadata(auth_client, app):
 def test_photos_tier_change(auth_client, app):
     """Changing a photo's display tier should update the database."""
     import sqlite3
+
     db_path = app.config['DATABASE_PATH']
     conn = sqlite3.connect(db_path)
     conn.execute(
-        "INSERT INTO photos (filename, storage_name, mime_type, width, height, file_size, title, display_tier) "
+        'INSERT INTO photos (filename, storage_name, mime_type, width, height, file_size, title, display_tier) '
         "VALUES ('tier.jpg', 'tier123.jpg', 'image/jpeg', 800, 600, 50000, 'Tier Test', 'grid')"
     )
     conn.commit()
     photo_id = conn.execute("SELECT id FROM photos WHERE filename='tier.jpg'").fetchone()[0]
     conn.close()
 
-    auth_client.post(f'/admin/photos/{photo_id}/edit', data={
-        'title': 'Tier Test',
-        'description': '',
-        'tech_used': '',
-        'category': '',
-        'display_tier': 'hidden',
-        'sort_order': '0',
-    })
+    auth_client.post(
+        f'/admin/photos/{photo_id}/edit',
+        data={
+            'title': 'Tier Test',
+            'description': '',
+            'tech_used': '',
+            'category': '',
+            'display_tier': 'hidden',
+            'sort_order': '0',
+        },
+    )
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    photo = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+    photo = conn.execute('SELECT * FROM photos WHERE id=?', (photo_id,)).fetchone()
     conn.close()
     assert photo['display_tier'] == 'hidden'
 
@@ -472,10 +565,11 @@ def test_photos_tier_change(auth_client, app):
 def test_photos_delete(auth_client, app):
     """Deleting a photo should remove the database record."""
     import sqlite3
+
     db_path = app.config['DATABASE_PATH']
     conn = sqlite3.connect(db_path)
     conn.execute(
-        "INSERT INTO photos (filename, storage_name, mime_type, width, height, file_size, title, display_tier) "
+        'INSERT INTO photos (filename, storage_name, mime_type, width, height, file_size, title, display_tier) '
         "VALUES ('delete_me.jpg', 'del123.jpg', 'image/jpeg', 800, 600, 50000, 'Delete Me', 'grid')"
     )
     conn.commit()
@@ -486,6 +580,6 @@ def test_photos_delete(auth_client, app):
     assert response.status_code == 302
 
     conn = sqlite3.connect(db_path)
-    photo = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+    photo = conn.execute('SELECT * FROM photos WHERE id=?', (photo_id,)).fetchone()
     conn.close()
     assert photo is None

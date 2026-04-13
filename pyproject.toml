@@ -1,0 +1,186 @@
+# ================================================================
+# resume-site — project tooling configuration
+#
+# This file holds configuration for development-time quality gates.
+# It does NOT declare the project as a Python package (the app is
+# a Flask application run directly, not installed). Adding a
+# [project] / [build-system] section would ask pip to build a
+# wheel, which we don't want.
+#
+# Runtime dependencies are pinned in requirements.txt (compiled
+# from requirements.in). Development dependencies (the tools
+# configured below) live in requirements-dev.txt.
+#
+# Scope:
+#   [tool.ruff]         — lint + format (replaces flake8, isort, black)
+#   [tool.bandit]       — security-focused static analysis
+#   [tool.vulture]      — dead code detection
+#   [tool.mutmut]       — mutation testing (v0.3.0 Phase 18.8)
+#   [tool.pytest.ini_options] — test runner configuration
+#   [tool.coverage]     — coverage measurement
+# ================================================================
+
+# ----------------------------------------------------------------
+# ruff — linter + formatter
+# ----------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"   # Match runtime (Containerfile uses python:3.12-slim)
+line-length = 100
+extend-exclude = [
+    "migrations",          # Plain SQL, not Python
+    "translations",        # Generated .po/.mo files
+    ".venv",
+    "venv",
+    "photos",
+    "data",
+]
+
+[tool.ruff.lint]
+# Rule set rationale — matches ROADMAP_v0.3.0.md Phase 12.5:
+#   E/W  — pycodestyle errors + warnings
+#   F    — pyflakes (unused imports, undefined names)
+#   I    — isort (import ordering)
+#   B    — flake8-bugbear (likely bugs)
+#   S    — flake8-bandit-lite (common security anti-patterns)
+#   C4   — comprehensions (prefer list/set/dict comprehensions)
+#   SIM  — simplify (code simplification suggestions)
+#   UP   — pyupgrade (modern syntax opportunities)
+select = ["E", "W", "F", "I", "B", "S", "C4", "SIM", "UP"]
+ignore = [
+    "E501",  # Line length — handled by formatter, don't double-flag
+    "B008",  # Do not perform function calls in argument defaults —
+             # Flask uses `field = StringField(validators=[...])` heavily
+    "SIM108", # Use ternary — ternaries hurt readability in places we
+              # already chose if/else intentionally
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately use assert, hardcoded passwords in fixtures, and
+# mock-like patterns that trigger S-rules. Relax there.
+"tests/**/*.py" = [
+    "S101",   # assert statements (pytest uses them by design)
+    "S105",   # hardcoded-password-string (test fixtures)
+    "S106",   # hardcoded-password-func-arg (test credentials)
+    "S311",   # non-crypto random (test data generation)
+]
+# conftest imports private helpers intentionally
+"tests/conftest.py" = ["S101", "S105", "S106"]
+# manage.py is a CLI script that shells out to babel via subprocess with
+# hardcoded argument vectors — the `shell=` concern driving S603 doesn't apply.
+"manage.py" = [
+    "T201",   # print() is the primary output channel for a CLI
+    "S603",   # subprocess calls use fixed argv lists, not shell strings
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "single"        # Match existing codebase convention
+indent-style = "space"
+line-ending = "lf"
+skip-magic-trailing-comma = false
+docstring-code-format = false # Don't reformat code inside docstrings
+
+# ----------------------------------------------------------------
+# bandit — security static analysis
+# ----------------------------------------------------------------
+[tool.bandit]
+exclude_dirs = [
+    "tests",          # Test fixtures legitimately contain credentials
+    ".venv",
+    "venv",
+    "migrations",
+    "translations",
+]
+# Project-level skips — every finding here was reviewed and confirmed to
+# be a structural false positive. New findings under these IDs still warrant
+# review (remove the skip temporarily to re-audit).
+#
+#   B101 (assert_used)              — we don't use assert in production code;
+#                                     ruff's S101 with per-file-ignores for
+#                                     tests covers this more precisely.
+#   B105 (hardcoded_password_string) — keyword-based; every occurrence in
+#                                     this codebase is a config-key name or
+#                                     empty default, not a credential. Real
+#                                     credentials come from config.yaml / env
+#                                     and are covered by B106/B107.
+skips = ["B101", "B105"]
+
+# ----------------------------------------------------------------
+# vulture — dead code detection
+# ----------------------------------------------------------------
+[tool.vulture]
+paths = ["app", "manage.py"]
+exclude = ["migrations/", "translations/", ".venv/", "venv/"]
+min_confidence = 80    # Lower → more noise; 80 is a reasonable balance
+ignore_decorators = [
+    "@app.route",
+    "@app.errorhandler",
+    "@app.before_request",
+    "@app.after_request",
+    "@app.context_processor",
+    "@app.template_filter",
+    "@app.template_global",
+    "@bp.route",
+    "@bp.before_request",
+    "@login_manager.user_loader",
+    "@limiter.limit",
+    "@pytest.fixture",
+]
+ignore_names = [
+    "setUp", "tearDown",   # pytest/unittest lifecycle
+    "create_app",          # Flask app factory — invoked by gunicorn
+]
+
+# ----------------------------------------------------------------
+# mutmut — mutation testing (v0.3.0 Phase 18.8)
+# ----------------------------------------------------------------
+[tool.mutmut]
+paths_to_mutate = ["app/"]
+tests_dir = "tests/"
+runner = "python -m pytest -x -q"
+
+# ----------------------------------------------------------------
+# pytest — test runner
+# ----------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = [
+    "-ra",              # Report summary for all non-passing outcomes
+    "--strict-markers", # Unregistered @pytest.mark.* fails the suite
+    "--strict-config",  # Unknown config keys fail the suite
+]
+filterwarnings = [
+    "error",            # Treat warnings as errors by default
+    # Third-party deprecations we can't fix:
+    "ignore::DeprecationWarning:flask_limiter.*",
+    "ignore::DeprecationWarning:werkzeug.*",
+    # Python 3.14 + Flask test-client: static-asset responses emit an
+    # "unraisable" warning when the underlying FileIO is finalized during
+    # GC. Flask owns the file handle — we can't close it from tests.
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]
+
+# ----------------------------------------------------------------
+# coverage — measurement + reporting
+# ----------------------------------------------------------------
+[tool.coverage.run]
+source = ["app"]
+branch = true           # Branch coverage tracked for Phase 18 target (≥85%)
+omit = [
+    "app/__init__.py",  # App factory is mostly glue; covered by integration tests
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+precision = 1
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

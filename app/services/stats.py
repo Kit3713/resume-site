@@ -22,7 +22,7 @@ def add_stat(db, label, value, suffix='', sort_order=0):
         sort_order: Display order (lower = earlier).
     """
     if not label:
-        raise ValueError("Stat label cannot be empty.")
+        raise ValueError('Stat label cannot be empty.')
     db.execute(
         'INSERT INTO stats (label, value, suffix, sort_order) VALUES (?, ?, ?, ?)',
         (label.strip(), int(value), suffix, int(sort_order)),

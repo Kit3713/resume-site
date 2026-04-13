@@ -26,39 +26,54 @@ requires only a registry entry and a migration for the default value.
 SETTINGS_REGISTRY = {
     # --- Site Identity ---
     'site_title': {
-        'type': 'str', 'default': 'My Portfolio',
-        'label': 'Site Title', 'category': 'Site Identity',
+        'type': 'str',
+        'default': 'My Portfolio',
+        'label': 'Site Title',
+        'category': 'Site Identity',
     },
     'site_tagline': {
-        'type': 'str', 'default': 'Welcome to my portfolio',
-        'label': 'Site Tagline', 'category': 'Site Identity',
+        'type': 'str',
+        'default': 'Welcome to my portfolio',
+        'label': 'Site Tagline',
+        'category': 'Site Identity',
     },
     'footer_text': {
-        'type': 'str', 'default': '',
-        'label': 'Footer Text', 'category': 'Site Identity',
+        'type': 'str',
+        'default': '',
+        'label': 'Footer Text',
+        'category': 'Site Identity',
     },
     'logo_mode': {
-        'type': 'select', 'default': 'title',
-        'label': 'Logo Mode', 'category': 'Site Identity',
+        'type': 'select',
+        'default': 'title',
+        'label': 'Logo Mode',
+        'category': 'Site Identity',
         'options': [('title', 'Site Title'), ('initials', 'Initials')],
     },
-
     # --- Hero Section ---
     'hero_heading': {
-        'type': 'str', 'default': '',
-        'label': 'Heading (your name)', 'category': 'Hero Section',
+        'type': 'str',
+        'default': '',
+        'label': 'Heading (your name)',
+        'category': 'Hero Section',
     },
     'hero_subheading': {
-        'type': 'str', 'default': '',
-        'label': 'Subheading (your title)', 'category': 'Hero Section',
+        'type': 'str',
+        'default': '',
+        'label': 'Subheading (your title)',
+        'category': 'Hero Section',
     },
     'hero_tagline': {
-        'type': 'str', 'default': '',
-        'label': 'Tagline (value proposition)', 'category': 'Hero Section',
+        'type': 'str',
+        'default': '',
+        'label': 'Tagline (value proposition)',
+        'category': 'Hero Section',
     },
     'availability_status': {
-        'type': 'select', 'default': 'available',
-        'label': 'Availability Status', 'category': 'Hero Section',
+        'type': 'select',
+        'default': 'available',
+        'label': 'Availability Status',
+        'category': 'Hero Section',
         'options': [
             ('available', 'Available'),
             ('open', 'Open to Opportunities'),
@@ -66,19 +81,24 @@ SETTINGS_REGISTRY = {
             ('off', 'Hidden'),
         ],
     },
-
     # --- Appearance ---
     'dark_mode_default': {
-        'type': 'bool', 'default': 'true',
-        'label': 'Default Theme', 'category': 'Appearance',
+        'type': 'bool',
+        'default': 'true',
+        'label': 'Default Theme',
+        'category': 'Appearance',
     },
     'accent_color': {
-        'type': 'color', 'default': '#0071e3',
-        'label': 'Accent Color', 'category': 'Appearance',
+        'type': 'color',
+        'default': '#0071e3',
+        'label': 'Accent Color',
+        'category': 'Appearance',
     },
     'color_preset': {
-        'type': 'select', 'default': 'default',
-        'label': 'Color Preset', 'category': 'Appearance',
+        'type': 'select',
+        'default': 'default',
+        'label': 'Color Preset',
+        'category': 'Appearance',
         'options': [
             ('default', 'Default Blue (#0071e3)'),
             ('ocean', 'Ocean Teal (#00897B)'),
@@ -89,8 +109,10 @@ SETTINGS_REGISTRY = {
         ],
     },
     'font_pairing': {
-        'type': 'select', 'default': 'inter',
-        'label': 'Font Pairing', 'category': 'Appearance',
+        'type': 'select',
+        'default': 'inter',
+        'label': 'Font Pairing',
+        'category': 'Appearance',
         'options': [
             ('inter', 'Inter (default)'),
             ('space-grotesk', 'Space Grotesk + Inter'),
@@ -100,72 +122,97 @@ SETTINGS_REGISTRY = {
         ],
     },
     'custom_css': {
-        'type': 'textarea', 'default': '',
-        'label': 'Custom CSS', 'category': 'Appearance',
+        'type': 'textarea',
+        'default': '',
+        'label': 'Custom CSS',
+        'category': 'Appearance',
         'description': 'Injected after the main stylesheet. Override any CSS variable or add custom rules.',
     },
-
     # --- Navigation Visibility ---
     'nav_hide_about': {
-        'type': 'bool', 'default': 'false',
-        'label': 'Hide About', 'category': 'Navigation',
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Hide About',
+        'category': 'Navigation',
     },
     'nav_hide_services': {
-        'type': 'bool', 'default': 'false',
-        'label': 'Hide Services', 'category': 'Navigation',
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Hide Services',
+        'category': 'Navigation',
     },
     'nav_hide_portfolio': {
-        'type': 'bool', 'default': 'false',
-        'label': 'Hide Portfolio', 'category': 'Navigation',
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Hide Portfolio',
+        'category': 'Navigation',
     },
     'nav_hide_projects': {
-        'type': 'bool', 'default': 'false',
-        'label': 'Hide Projects', 'category': 'Navigation',
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Hide Projects',
+        'category': 'Navigation',
     },
     'nav_hide_testimonials': {
-        'type': 'bool', 'default': 'false',
-        'label': 'Hide Testimonials', 'category': 'Navigation',
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Hide Testimonials',
+        'category': 'Navigation',
     },
     'nav_hide_contact': {
-        'type': 'bool', 'default': 'false',
-        'label': 'Hide Contact', 'category': 'Navigation',
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Hide Contact',
+        'category': 'Navigation',
     },
     'nav_hide_certifications': {
-        'type': 'bool', 'default': 'false',
-        'label': 'Hide Certifications', 'category': 'Navigation',
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Hide Certifications',
+        'category': 'Navigation',
     },
-
     # --- Content ---
     'case_studies_enabled': {
-        'type': 'bool', 'default': 'false',
-        'label': 'Case Studies', 'category': 'Content',
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Case Studies',
+        'category': 'Content',
     },
     'testimonial_display_mode': {
-        'type': 'select', 'default': 'mixed',
-        'label': 'Testimonial Display', 'category': 'Content',
+        'type': 'select',
+        'default': 'mixed',
+        'label': 'Testimonial Display',
+        'category': 'Content',
         'options': [
             ('mixed', 'Mixed with Labels'),
             ('separate', 'Separate Sections'),
             ('all', 'All Together'),
         ],
     },
-
     # --- Contact & Social ---
     'contact_form_enabled': {
-        'type': 'bool', 'default': 'true',
-        'label': 'Contact Form', 'category': 'Contact & Social',
+        'type': 'bool',
+        'default': 'true',
+        'label': 'Contact Form',
+        'category': 'Contact & Social',
     },
     'contact_email_visible': {
-        'type': 'bool', 'default': 'false',
-        'label': 'Show Email', 'category': 'Contact & Social',
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Show Email',
+        'category': 'Contact & Social',
     },
     'contact_phone_visible': {
-        'type': 'bool', 'default': 'false',
-        'label': 'Show Phone', 'category': 'Contact & Social',
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Show Phone',
+        'category': 'Contact & Social',
     },
     'resume_visibility': {
-        'type': 'select', 'default': 'off',
-        'label': 'Resume Visibility', 'category': 'Contact & Social',
+        'type': 'select',
+        'default': 'off',
+        'label': 'Resume Visibility',
+        'category': 'Contact & Social',
         'options': [
             ('public', 'Public'),
             ('private', 'Private Link'),
@@ -173,50 +220,67 @@ SETTINGS_REGISTRY = {
         ],
     },
     'contact_github_url': {
-        'type': 'str', 'default': '',
-        'label': 'GitHub URL', 'category': 'Contact & Social',
+        'type': 'str',
+        'default': '',
+        'label': 'GitHub URL',
+        'category': 'Contact & Social',
     },
     'contact_linkedin_url': {
-        'type': 'str', 'default': '',
-        'label': 'LinkedIn URL', 'category': 'Contact & Social',
+        'type': 'str',
+        'default': '',
+        'label': 'LinkedIn URL',
+        'category': 'Contact & Social',
     },
-
     # --- Blog ---
     'blog_enabled': {
-        'type': 'bool', 'default': 'false',
-        'label': 'Blog Enabled', 'category': 'Blog',
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Blog Enabled',
+        'category': 'Blog',
     },
     'blog_title': {
-        'type': 'str', 'default': 'Blog',
-        'label': 'Blog Title', 'category': 'Blog',
+        'type': 'str',
+        'default': 'Blog',
+        'label': 'Blog Title',
+        'category': 'Blog',
     },
     'posts_per_page': {
-        'type': 'int', 'default': '10',
-        'label': 'Posts Per Page', 'category': 'Blog',
+        'type': 'int',
+        'default': '10',
+        'label': 'Posts Per Page',
+        'category': 'Blog',
     },
     'show_reading_time': {
-        'type': 'bool', 'default': 'true',
-        'label': 'Show Reading Time', 'category': 'Blog',
+        'type': 'bool',
+        'default': 'true',
+        'label': 'Show Reading Time',
+        'category': 'Blog',
     },
     'enable_rss': {
-        'type': 'bool', 'default': 'true',
-        'label': 'Enable RSS Feed', 'category': 'Blog',
+        'type': 'bool',
+        'default': 'true',
+        'label': 'Enable RSS Feed',
+        'category': 'Blog',
     },
-
     # --- Internationalization ---
     'default_locale': {
-        'type': 'str', 'default': 'en',
-        'label': 'Default Locale', 'category': 'Internationalization',
+        'type': 'str',
+        'default': 'en',
+        'label': 'Default Locale',
+        'category': 'Internationalization',
     },
     'available_locales': {
-        'type': 'str', 'default': 'en',
-        'label': 'Available Locales (comma-separated)', 'category': 'Internationalization',
+        'type': 'str',
+        'default': 'en',
+        'label': 'Available Locales (comma-separated)',
+        'category': 'Internationalization',
     },
-
     # --- Analytics ---
     'analytics_retention_days': {
-        'type': 'int', 'default': '90',
-        'label': 'Retention Days', 'category': 'Analytics',
+        'type': 'int',
+        'default': '90',
+        'label': 'Retention Days',
+        'category': 'Analytics',
     },
 }
 
@@ -236,11 +300,11 @@ SETTINGS_CATEGORIES = [
 # Color preset definitions: preset name → accent color hex value.
 COLOR_PRESETS = {
     'default': '#0071e3',
-    'ocean':   '#00897B',
-    'forest':  '#2E7D32',
-    'sunset':  '#E65100',
+    'ocean': '#00897B',
+    'forest': '#2E7D32',
+    'sunset': '#E65100',
     'minimal': '#616161',
-    'royal':   '#6200EA',
+    'royal': '#6200EA',
 }
 
 # Font pairing definitions: key → (display_font, body_font, google_fonts_families).
@@ -284,9 +348,7 @@ def get_all(db):
 
 def get(db, key, default=''):
     """Return a single setting value by key, or default if not found."""
-    row = db.execute(
-        'SELECT value FROM settings WHERE key = ?', (key,)
-    ).fetchone()
+    row = db.execute('SELECT value FROM settings WHERE key = ?', (key,)).fetchone()
     return row['value'] if row else default
 
 
@@ -321,7 +383,7 @@ def set_one(db, key, value):
         KeyError: If the key is not in the registry.
     """
     if key not in SETTINGS_REGISTRY:
-        raise KeyError(f"Unknown setting key: {key!r}")
+        raise KeyError(f'Unknown setting key: {key!r}')
     _upsert(db, key, str(value))
     db.commit()
 
@@ -339,11 +401,13 @@ def get_grouped_settings(db):
         items = []
         for key, meta in SETTINGS_REGISTRY.items():
             if meta['category'] == category:
-                items.append({
-                    'key': key,
-                    'value': current.get(key, meta['default']),
-                    **meta,
-                })
+                items.append(
+                    {
+                        'key': key,
+                        'value': current.get(key, meta['default']),
+                        **meta,
+                    }
+                )
         if items:
             grouped.append((category, items))
 
@@ -353,8 +417,8 @@ def get_grouped_settings(db):
 def _upsert(db, key, value):
     """INSERT OR UPDATE a single setting row (no commit -- caller commits)."""
     db.execute(
-        "INSERT INTO settings (key, value, updated_at) "
+        'INSERT INTO settings (key, value, updated_at) '
         "VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) "
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        'ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
         (key, value),
     )

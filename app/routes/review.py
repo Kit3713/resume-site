@@ -15,7 +15,7 @@ Flow:
 6. Review appears in the admin panel for approval.
 """
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_babel import gettext as _
 
 from app import limiter
@@ -27,7 +27,7 @@ review_bp = Blueprint('review', __name__, template_folder='../templates')
 
 
 @review_bp.route('/review/<token>', methods=['GET', 'POST'])
-@limiter.limit("5 per minute", methods=["POST"])
+@limiter.limit('5 per minute', methods=['POST'])
 def review_form(token):
     """Handle the review submission form.
 
@@ -58,7 +58,11 @@ def review_form(token):
 
         # Parse optional star rating (1-5 integer, or None)
         rating_str = request.form.get('rating', '')
-        rating = int(rating_str) if rating_str and rating_str.isdigit() and 1 <= int(rating_str) <= 5 else None
+        rating = (
+            int(rating_str)
+            if rating_str and rating_str.isdigit() and 1 <= int(rating_str) <= 5
+            else None
+        )
 
         # Validate required fields
         if not reviewer_name or not message:
@@ -74,7 +78,9 @@ def review_form(token):
             relationship=relationship,
             message=message,
             rating=rating,
-            review_type=token_row['type'],  # Inherited from the token ('recommendation' or 'client_review')
+            review_type=token_row[
+                'type'
+            ],  # Inherited from the token ('recommendation' or 'client_review')
         )
 
         # Mark the token as used so it cannot be resubmitted

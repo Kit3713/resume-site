@@ -19,8 +19,8 @@ saves to the database first, so no submission is lost even if SMTP fails.
 """
 
 import smtplib
-from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 from flask import current_app
 
@@ -55,15 +55,10 @@ def send_contact_email(name, email, message):
     msg = MIMEMultipart()
     msg['From'] = user
     msg['To'] = recipient
-    msg['Reply-To'] = email       # Allows the admin to reply directly to the submitter
+    msg['Reply-To'] = email  # Allows the admin to reply directly to the submitter
     msg['Subject'] = f'New Contact: {name}'
 
-    body = (
-        f"Name: {name}\n"
-        f"Email: {email}\n"
-        f"\n---\n\n"
-        f"{message}"
-    )
+    body = f'Name: {name}\nEmail: {email}\n\n---\n\n{message}'
     msg.attach(MIMEText(body, 'plain'))
 
     # Send via SMTP with appropriate TLS method

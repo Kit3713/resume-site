@@ -18,18 +18,28 @@ Covers the full blog system:
 # HELPER: Enable blog and create posts
 # ============================================================
 
+
 def _enable_blog(auth_client):
     """Enable the blog feature via admin settings."""
-    auth_client.post('/admin/settings', data={
-        'blog_enabled': 'true',
-        'enable_rss': 'true',
-        'show_reading_time': 'true',
-    })
+    auth_client.post(
+        '/admin/settings',
+        data={
+            'blog_enabled': 'true',
+            'enable_rss': 'true',
+            'show_reading_time': 'true',
+        },
+    )
 
 
-def _create_post(auth_client, title='Test Post', summary='A test post',
-                 content='<p>Test content with enough words to calculate reading time.</p>',
-                 tags='', action='save', **kwargs):
+def _create_post(
+    auth_client,
+    title='Test Post',
+    summary='A test post',
+    content='<p>Test content with enough words to calculate reading time.</p>',
+    tags='',
+    action='save',
+    **kwargs,
+):
     """Create a blog post via the admin interface and return the response."""
     data = {
         'title': title,
@@ -49,6 +59,7 @@ def _create_post(auth_client, title='Test Post', summary='A test post',
 # ============================================================
 # ADMIN CRUD
 # ============================================================
+
 
 def test_blog_list_loads(auth_client):
     """Blog admin list page should return 200."""
@@ -86,6 +97,7 @@ def test_blog_edit_page_loads(auth_client, app):
 
     with app.app_context():
         from app.db import get_db
+
         db = get_db()
         post = db.execute("SELECT id FROM blog_posts WHERE title='Editable Post'").fetchone()
 
@@ -100,21 +112,26 @@ def test_blog_edit_saves(auth_client, app):
 
     with app.app_context():
         from app.db import get_db
+
         db = get_db()
         post = db.execute("SELECT id FROM blog_posts WHERE title='Original Title'").fetchone()
         post_id = post['id']
 
-    response = auth_client.post(f'/admin/blog/{post_id}/edit', data={
-        'title': 'Updated Title',
-        'summary': 'Updated summary',
-        'content': '<p>Updated content.</p>',
-        'content_format': 'html',
-        'cover_image': '',
-        'author': 'Author',
-        'tags': 'python, flask',
-        'meta_description': '',
-        'action': 'save',
-    }, follow_redirects=False)
+    response = auth_client.post(
+        f'/admin/blog/{post_id}/edit',
+        data={
+            'title': 'Updated Title',
+            'summary': 'Updated summary',
+            'content': '<p>Updated content.</p>',
+            'content_format': 'html',
+            'cover_image': '',
+            'author': 'Author',
+            'tags': 'python, flask',
+            'meta_description': '',
+            'action': 'save',
+        },
+        follow_redirects=False,
+    )
     assert response.status_code == 302
 
 
@@ -124,25 +141,30 @@ def test_blog_unpublish(auth_client, app):
 
     with app.app_context():
         from app.db import get_db
+
         db = get_db()
         post = db.execute("SELECT id FROM blog_posts WHERE title='To Unpublish'").fetchone()
         post_id = post['id']
 
-    auth_client.post(f'/admin/blog/{post_id}/edit', data={
-        'title': 'To Unpublish',
-        'summary': '',
-        'content': '<p>Content.</p>',
-        'content_format': 'html',
-        'cover_image': '',
-        'author': '',
-        'tags': '',
-        'meta_description': '',
-        'action': 'unpublish',
-    }, follow_redirects=False)
+    auth_client.post(
+        f'/admin/blog/{post_id}/edit',
+        data={
+            'title': 'To Unpublish',
+            'summary': '',
+            'content': '<p>Content.</p>',
+            'content_format': 'html',
+            'cover_image': '',
+            'author': '',
+            'tags': '',
+            'meta_description': '',
+            'action': 'unpublish',
+        },
+        follow_redirects=False,
+    )
 
     with app.app_context():
         db = get_db()
-        post = db.execute("SELECT status FROM blog_posts WHERE id=?", (post_id,)).fetchone()
+        post = db.execute('SELECT status FROM blog_posts WHERE id=?', (post_id,)).fetchone()
         assert post['status'] == 'draft'
 
 
@@ -152,25 +174,29 @@ def test_blog_archive(auth_client, app):
 
     with app.app_context():
         from app.db import get_db
+
         db = get_db()
         post = db.execute("SELECT id FROM blog_posts WHERE title='To Archive'").fetchone()
         post_id = post['id']
 
-    auth_client.post(f'/admin/blog/{post_id}/edit', data={
-        'title': 'To Archive',
-        'summary': '',
-        'content': '<p>Content.</p>',
-        'content_format': 'html',
-        'cover_image': '',
-        'author': '',
-        'tags': '',
-        'meta_description': '',
-        'action': 'archive',
-    })
+    auth_client.post(
+        f'/admin/blog/{post_id}/edit',
+        data={
+            'title': 'To Archive',
+            'summary': '',
+            'content': '<p>Content.</p>',
+            'content_format': 'html',
+            'cover_image': '',
+            'author': '',
+            'tags': '',
+            'meta_description': '',
+            'action': 'archive',
+        },
+    )
 
     with app.app_context():
         db = get_db()
-        post = db.execute("SELECT status FROM blog_posts WHERE id=?", (post_id,)).fetchone()
+        post = db.execute('SELECT status FROM blog_posts WHERE id=?', (post_id,)).fetchone()
         assert post['status'] == 'archived'
 
 
@@ -180,6 +206,7 @@ def test_blog_delete(auth_client, app):
 
     with app.app_context():
         from app.db import get_db
+
         db = get_db()
         post = db.execute("SELECT id FROM blog_posts WHERE title='To Delete'").fetchone()
         post_id = post['id']
@@ -189,7 +216,7 @@ def test_blog_delete(auth_client, app):
 
     with app.app_context():
         db = get_db()
-        post = db.execute("SELECT id FROM blog_posts WHERE id=?", (post_id,)).fetchone()
+        post = db.execute('SELECT id FROM blog_posts WHERE id=?', (post_id,)).fetchone()
         assert post is None
 
 
@@ -204,12 +231,14 @@ def test_blog_create_no_title_rejects(auth_client):
 # SLUG GENERATION
 # ============================================================
 
+
 def test_slug_generated_from_title(auth_client, app):
     """Slug should be auto-generated from the title."""
     _create_post(auth_client, title='My First Blog Post')
 
     with app.app_context():
         from app.db import get_db
+
         db = get_db()
         post = db.execute("SELECT slug FROM blog_posts WHERE title='My First Blog Post'").fetchone()
         assert post['slug'] == 'my-first-blog-post'
@@ -222,6 +251,7 @@ def test_slug_uniqueness(auth_client, app):
 
     with app.app_context():
         from app.db import get_db
+
         db = get_db()
         posts = db.execute(
             "SELECT slug FROM blog_posts WHERE title='Duplicate Title' ORDER BY id"
@@ -234,6 +264,7 @@ def test_slug_uniqueness(auth_client, app):
 # ============================================================
 # PUBLIC ROUTES: BLOG DISABLED
 # ============================================================
+
 
 def test_blog_disabled_returns_404(client):
     """When blog_enabled is false, /blog should return 404."""
@@ -250,6 +281,7 @@ def test_blog_disabled_hides_nav_link(client):
 # ============================================================
 # PUBLIC ROUTES: BLOG ENABLED
 # ============================================================
+
 
 def test_blog_enabled_shows_nav_link(auth_client, app):
     """When blog_enabled is true, the Blog nav link should appear."""
@@ -312,6 +344,7 @@ def test_draft_post_page_returns_404(auth_client, app):
 # TAG FILTERING
 # ============================================================
 
+
 def test_tag_filter_returns_correct_posts(auth_client, app):
     """Filtering by tag should only return posts with that tag."""
     _enable_blog(auth_client)
@@ -336,6 +369,7 @@ def test_nonexistent_tag_returns_404(auth_client, app):
 # ============================================================
 # RSS FEED
 # ============================================================
+
 
 def test_rss_feed_valid_xml(auth_client, app):
     """RSS feed should return valid XML with application/rss+xml content type."""
@@ -369,10 +403,13 @@ def test_rss_feed_excludes_drafts(auth_client, app):
 def test_rss_disabled_returns_404(auth_client, app):
     """When enable_rss is false, /blog/feed.xml should return 404."""
     _enable_blog(auth_client)
-    auth_client.post('/admin/settings', data={
-        'blog_enabled': 'true',
-        'enable_rss': 'false',
-    })
+    auth_client.post(
+        '/admin/settings',
+        data={
+            'blog_enabled': 'true',
+            'enable_rss': 'false',
+        },
+    )
 
     public_client = app.test_client()
     response = public_client.get('/blog/feed.xml')
@@ -383,9 +420,11 @@ def test_rss_disabled_returns_404(auth_client, app):
 # READING TIME
 # ============================================================
 
+
 def test_reading_time_calculated():
     """Reading time should be calculated from word count (words / 200, ceil)."""
     from app.services.blog import _calculate_reading_time
+
     # 200 words = 1 min
     assert _calculate_reading_time(' '.join(['word'] * 200)) == 1
     # 201 words = 2 min (ceiling)
@@ -399,6 +438,7 @@ def test_reading_time_calculated():
 # ============================================================
 # ADMIN STATUS FILTER
 # ============================================================
+
 
 def test_admin_status_filter_draft(auth_client):
     """Filtering by draft should only show draft posts."""
@@ -424,17 +464,21 @@ def test_admin_status_filter_published(auth_client):
 # PAGINATION BOUNDARY TESTS
 # ============================================================
 
+
 def test_pagination_exact_boundary(auth_client, app):
     """With exactly N posts and per_page=N, there should be 1 page."""
     _enable_blog(auth_client)
 
     # Set posts_per_page to 3
-    auth_client.post('/admin/settings', data={
-        'blog_enabled': 'true',
-        'enable_rss': 'true',
-        'show_reading_time': 'true',
-        'posts_per_page': '3',
-    })
+    auth_client.post(
+        '/admin/settings',
+        data={
+            'blog_enabled': 'true',
+            'enable_rss': 'true',
+            'show_reading_time': 'true',
+            'posts_per_page': '3',
+        },
+    )
 
     # Create exactly 3 published posts
     for i in range(3):
@@ -456,12 +500,15 @@ def test_pagination_overflow(auth_client, app):
     """With N+1 posts and per_page=N, page 2 should have 1 post."""
     _enable_blog(auth_client)
 
-    auth_client.post('/admin/settings', data={
-        'blog_enabled': 'true',
-        'enable_rss': 'true',
-        'show_reading_time': 'true',
-        'posts_per_page': '2',
-    })
+    auth_client.post(
+        '/admin/settings',
+        data={
+            'blog_enabled': 'true',
+            'enable_rss': 'true',
+            'show_reading_time': 'true',
+            'posts_per_page': '2',
+        },
+    )
 
     for i in range(3):
         _create_post(auth_client, title=f'Overflow Post {i}', action='publish')
@@ -480,20 +527,24 @@ def test_pagination_overflow(auth_client, app):
 # MARKDOWN RENDERING
 # ============================================================
 
+
 def test_markdown_post_rendered(auth_client, app):
     """A post with content_format='markdown' should render to HTML."""
     _enable_blog(auth_client)
-    auth_client.post('/admin/blog/new', data={
-        'title': 'Markdown Post',
-        'summary': 'A markdown test',
-        'content': '# Hello World\n\nThis is **bold** and *italic*.',
-        'content_format': 'markdown',
-        'cover_image': '',
-        'author': 'Test',
-        'tags': '',
-        'meta_description': '',
-        'action': 'publish',
-    })
+    auth_client.post(
+        '/admin/blog/new',
+        data={
+            'title': 'Markdown Post',
+            'summary': 'A markdown test',
+            'content': '# Hello World\n\nThis is **bold** and *italic*.',
+            'content_format': 'markdown',
+            'cover_image': '',
+            'author': 'Test',
+            'tags': '',
+            'meta_description': '',
+            'action': 'publish',
+        },
+    )
 
     public_client = app.test_client()
     response = public_client.get('/blog/markdown-post')

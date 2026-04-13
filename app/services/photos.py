@@ -27,17 +27,16 @@ Storage layout:
 import os
 import uuid
 
+from flask import abort, current_app, send_from_directory
 from PIL import Image
-from flask import current_app, send_from_directory, abort
-
 
 # Magic byte signatures for each allowed image format.
 # These are the first N bytes of a valid file of that type.
 _MAGIC_BYTES = {
-    '.jpg':  [b'\xff\xd8\xff'],
+    '.jpg': [b'\xff\xd8\xff'],
     '.jpeg': [b'\xff\xd8\xff'],
-    '.png':  [b'\x89PNG\r\n\x1a\n'],
-    '.gif':  [b'GIF87a', b'GIF89a'],
+    '.png': [b'\x89PNG\r\n\x1a\n'],
+    '.gif': [b'GIF87a', b'GIF89a'],
     '.webp': [b'RIFF'],  # Full check: RIFF....WEBP (bytes 8-11 = "WEBP")
 }
 
@@ -73,11 +72,9 @@ def _validate_magic_bytes(file_storage, ext):
         return False
 
     for sig in signatures:
-        if header[:len(sig)] == sig:
+        if header[: len(sig)] == sig:
             # Extra check for WebP: bytes 8-12 must be "WEBP"
-            if ext == '.webp' and header[8:12] != b'WEBP':
-                return False
-            return True
+            return not (ext == '.webp' and header[8:12] != b'WEBP')
 
     return False
 
@@ -98,7 +95,7 @@ def _check_file_size(file_storage):
 
     if size > max_size:
         max_mb = max_size / (1024 * 1024)
-        return size, f"File exceeds maximum upload size ({max_mb:.0f} MB)."
+        return size, f'File exceeds maximum upload size ({max_mb:.0f} MB).'
 
     return size, None
 
@@ -147,7 +144,7 @@ def process_upload(file_storage):
         return size_error
 
     # Generate a unique storage filename (UUID prevents collisions and path traversal)
-    storage_name = f"{uuid.uuid4().hex}{ext}"
+    storage_name = f'{uuid.uuid4().hex}{ext}'
 
     photo_dir = _get_photo_dir()
     os.makedirs(photo_dir, exist_ok=True)
@@ -187,8 +184,11 @@ def process_upload(file_storage):
 
     # Map file extensions to MIME types
     mime_map = {
-        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-        '.gif': 'image/gif', '.webp': 'image/webp',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
     }
 
     return {

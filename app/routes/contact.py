@@ -17,18 +17,18 @@ All submissions are persisted to the contact_submissions table regardless
 of spam status, giving the admin full visibility in the dashboard.
 """
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_babel import gettext as _
 
 from app import limiter
 from app.db import get_db
-from app.models import save_contact_submission, count_recent_submissions, get_setting
+from app.models import count_recent_submissions, get_setting, save_contact_submission
 
 contact_bp = Blueprint('contact', __name__, template_folder='../templates')
 
 
 @contact_bp.route('/contact', methods=['GET', 'POST'])
-@limiter.limit("10 per minute", methods=["POST"])
+@limiter.limit('10 per minute', methods=['POST'])
 def contact_page():
     """Handle the contact page display and form submission.
 
@@ -75,7 +75,10 @@ def contact_page():
 
         # Persist to database (always, even for spam — for admin visibility)
         save_contact_submission(
-            db, name, email, message,
+            db,
+            name,
+            email,
+            message,
             ip_address=client_ip,
             user_agent=request.user_agent.string,
             is_spam=is_spam,
@@ -84,11 +87,12 @@ def contact_page():
         # Relay via email (only for legitimate, non-spam submissions)
         if not is_spam:
             from app.services.mail import send_contact_email
+
             send_contact_email(name, email, message)
 
         # Show the same success message for both spam and real submissions
         # to avoid revealing the honeypot detection to bots
-        flash(_('Message sent successfully! I\'ll get back to you soon.'), 'success')
+        flash(_("Message sent successfully! I'll get back to you soon."), 'success')
         return redirect(url_for('contact.contact_page'))
 
     return render_template('public/contact.html')

@@ -26,16 +26,31 @@ URL structure:
 
 import os
 
-from flask import Blueprint, render_template, abort, send_from_directory, request, make_response, jsonify
+from flask import (
+    Blueprint,
+    abort,
+    jsonify,
+    make_response,
+    render_template,
+    request,
+    send_from_directory,
+)
 
 from app.db import get_db
 from app.models import (
-    get_content_block, get_visible_stats, get_visible_services,
-    get_photos_by_tier, get_all_visible_photos, get_photo_categories,
-    get_case_study_by_slug, get_approved_reviews_by_tier,
-    get_visible_projects, get_project_by_slug,
-    get_visible_certifications, get_skill_domains_with_skills,
+    get_all_visible_photos,
+    get_approved_reviews_by_tier,
+    get_case_study_by_slug,
+    get_content_block,
+    get_photo_categories,
+    get_photos_by_tier,
+    get_project_by_slug,
     get_setting,
+    get_skill_domains_with_skills,
+    get_visible_certifications,
+    get_visible_projects,
+    get_visible_services,
+    get_visible_stats,
 )
 from app.services.blog import get_featured_posts
 
@@ -45,6 +60,7 @@ public_bp = Blueprint('public', __name__, template_folder='../templates')
 # ============================================================
 # LANDING PAGE
 # ============================================================
+
 
 @public_bp.route('/')
 def index():
@@ -58,7 +74,7 @@ def index():
     about_block = get_content_block(db, 'about')
     stats = get_visible_stats(db)
     services = get_visible_services(db)
-    featured_photos = get_photos_by_tier(db, 'featured')[:3]       # Top 3 featured photos
+    featured_photos = get_photos_by_tier(db, 'featured')[:3]  # Top 3 featured photos
     featured_reviews = get_approved_reviews_by_tier(db, 'featured')[:3]  # Top 3 featured reviews
 
     # Featured blog posts (only when blog is enabled)
@@ -66,18 +82,21 @@ def index():
     if get_setting(db, 'blog_enabled', 'false') == 'true':
         featured_blog_posts = get_featured_posts(db, n=3)
 
-    return render_template('public/index.html',
-                           about_block=about_block,
-                           stats=stats,
-                           services=services,
-                           featured_photos=featured_photos,
-                           featured_reviews=featured_reviews,
-                           featured_blog_posts=featured_blog_posts)
+    return render_template(
+        'public/index.html',
+        about_block=about_block,
+        stats=stats,
+        services=services,
+        featured_photos=featured_photos,
+        featured_reviews=featured_reviews,
+        featured_blog_posts=featured_blog_posts,
+    )
 
 
 # ============================================================
 # PORTFOLIO
 # ============================================================
+
 
 @public_bp.route('/portfolio')
 def portfolio():
@@ -95,10 +114,9 @@ def portfolio():
     featured = get_photos_by_tier(db, 'featured')
     photos = get_all_visible_photos(db)
     categories = get_photo_categories(db)
-    return render_template('public/portfolio.html',
-                           featured=featured,
-                           photos=photos,
-                           categories=categories)
+    return render_template(
+        'public/portfolio.html', featured=featured, photos=photos, categories=categories
+    )
 
 
 @public_bp.route('/portfolio/<slug>')
@@ -126,6 +144,7 @@ def case_study(slug):
 # SERVICES & SKILLS
 # ============================================================
 
+
 @public_bp.route('/services')
 def services():
     """Render the services page with skill domain accordion.
@@ -137,14 +156,13 @@ def services():
     db = get_db()
     service_list = get_visible_services(db)
     domains = get_skill_domains_with_skills(db)
-    return render_template('public/services.html',
-                           services=service_list,
-                           domains=domains)
+    return render_template('public/services.html', services=service_list, domains=domains)
 
 
 # ============================================================
 # TESTIMONIALS
 # ============================================================
+
 
 @public_bp.route('/testimonials')
 def testimonials():
@@ -159,15 +177,15 @@ def testimonials():
     featured = get_approved_reviews_by_tier(db, 'featured')
     standard = get_approved_reviews_by_tier(db, 'standard')
     display_mode = get_setting(db, 'testimonial_display_mode', 'mixed')
-    return render_template('public/testimonials.html',
-                           featured=featured,
-                           standard=standard,
-                           display_mode=display_mode)
+    return render_template(
+        'public/testimonials.html', featured=featured, standard=standard, display_mode=display_mode
+    )
 
 
 # ============================================================
 # PROJECTS
 # ============================================================
+
 
 @public_bp.route('/projects')
 def projects():
@@ -195,6 +213,7 @@ def project_detail(slug):
 # CERTIFICATIONS
 # ============================================================
 
+
 @public_bp.route('/certifications')
 def certifications():
     """Render the certifications page with badge cards."""
@@ -206,6 +225,7 @@ def certifications():
 # ============================================================
 # RESUME DOWNLOAD
 # ============================================================
+
 
 @public_bp.route('/resume')
 def resume_download():
@@ -236,6 +256,7 @@ def resume_download():
 # PHOTO SERVING
 # ============================================================
 
+
 @public_bp.route('/photos/<storage_name>')
 def serve_photo(storage_name):
     """Serve an uploaded photo from the storage directory.
@@ -244,12 +265,14 @@ def serve_photo(storage_name):
     and 404 responses for missing files.
     """
     from app.services.photos import serve_photo as _serve
+
     return _serve(storage_name)
 
 
 # ============================================================
 # SEO ENDPOINTS
 # ============================================================
+
 
 @public_bp.route('/sitemap.xml')
 def sitemap():
@@ -277,22 +300,20 @@ def sitemap():
     projects = get_visible_projects(db)
     for p in projects:
         if p['has_detail_page']:
-            pages.append((f"/projects/{p['slug']}", '0.6'))
+            pages.append((f'/projects/{p["slug"]}', '0.6'))
 
     # Add case study pages if the feature is enabled
     if get_setting(db, 'case_studies_enabled', 'false') == 'true':
-        studies = db.execute("SELECT slug FROM case_studies WHERE published = 1").fetchall()
+        studies = db.execute('SELECT slug FROM case_studies WHERE published = 1').fetchall()
         for s in studies:
-            pages.append((f"/portfolio/{s['slug']}", '0.6'))
+            pages.append((f'/portfolio/{s["slug"]}', '0.6'))
 
     # Add blog pages if the blog is enabled
     if get_setting(db, 'blog_enabled', 'false') == 'true':
         pages.append(('/blog', '0.8'))
-        blog_posts = db.execute(
-            "SELECT slug FROM blog_posts WHERE status = 'published'"
-        ).fetchall()
+        blog_posts = db.execute("SELECT slug FROM blog_posts WHERE status = 'published'").fetchall()
         for bp in blog_posts:
-            pages.append((f"/blog/{bp['slug']}", '0.6'))
+            pages.append((f'/blog/{bp["slug"]}', '0.6'))
 
     # Build the XML response
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -314,12 +335,7 @@ def robots():
     and points to the sitemap for discovery.
     """
     base_url = request.url_root.rstrip('/')
-    txt = (
-        "User-agent: *\n"
-        "Allow: /\n"
-        "Disallow: /admin\n"
-        f"Sitemap: {base_url}/sitemap.xml\n"
-    )
+    txt = f'User-agent: *\nAllow: /\nDisallow: /admin\nSitemap: {base_url}/sitemap.xml\n'
     response = make_response(txt)
     response.headers['Content-Type'] = 'text/plain'
     return response

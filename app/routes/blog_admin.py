@@ -11,18 +11,30 @@ restriction and authentication requirements as the main admin panel
 blueprint is registered with the /admin prefix).
 """
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+import contextlib
+
+from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_babel import gettext as _
 from flask_login import login_required
 
 from app.db import get_db
-from app.routes.admin import restrict_to_allowed_networks, check_session_timeout, update_last_activity
-from app.services.blog import (
-    get_all_posts, get_post_by_id, get_tags_for_post,
-    create_post, update_post, publish_post, unpublish_post,
-    archive_post, delete_post,
+from app.routes.admin import (
+    check_session_timeout,
+    restrict_to_allowed_networks,
+    update_last_activity,
 )
 from app.services.activity_log import log_action
+from app.services.blog import (
+    archive_post,
+    create_post,
+    delete_post,
+    get_all_posts,
+    get_post_by_id,
+    get_tags_for_post,
+    publish_post,
+    unpublish_post,
+    update_post,
+)
 
 blog_admin_bp = Blueprint('blog_admin', __name__, template_folder='../templates')
 
@@ -41,9 +53,7 @@ def blog_list():
     if status_filter and status_filter not in ('draft', 'published', 'archived'):
         status_filter = None
     posts = get_all_posts(db, status_filter)
-    return render_template('admin/blog_list.html',
-                           posts=posts,
-                           status_filter=status_filter)
+    return render_template('admin/blog_list.html', posts=posts, status_filter=status_filter)
 
 
 @blog_admin_bp.route('/blog/new', methods=['GET', 'POST'])
@@ -74,16 +84,12 @@ def blog_new():
         if action == 'publish':
             publish_post(db, post_id)
             flash(_('Post published.'), 'success')
-            try:
+            with contextlib.suppress(Exception):
                 log_action(db, 'Published post', 'blog', title)
-            except Exception:
-                pass
         else:
             flash(_('Draft saved.'), 'success')
-            try:
+            with contextlib.suppress(Exception):
                 log_action(db, 'Created draft', 'blog', title)
-            except Exception:
-                pass
 
         return redirect(url_for('blog_admin.blog_edit', post_id=post_id))
 
@@ -151,9 +157,7 @@ def blog_delete(post_id):
     post = get_post_by_id(db, post_id)
     detail = post['title'] if post else f'ID {post_id}'
     delete_post(db, post_id)
-    try:
+    with contextlib.suppress(Exception):
         log_action(db, 'Deleted post', 'blog', detail)
-    except Exception:
-        pass
     flash(_('Post deleted.'), 'success')
     return redirect(url_for('blog_admin.blog_list'))

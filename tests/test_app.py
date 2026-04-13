@@ -18,6 +18,7 @@ routes and security boundaries.
 # PHASE 1: FOUNDATION
 # ============================================================
 
+
 def test_index_page_loads(client):
     """Landing page should return 200 and contain the hero section."""
     response = client.get('/')
@@ -53,10 +54,14 @@ def test_admin_login_page_loads(client):
 
 def test_admin_login_invalid_credentials(client):
     """Invalid login attempts should show an error message."""
-    response = client.post('/admin/login', data={
-        'username': 'admin',
-        'password': 'wrongpassword',
-    }, follow_redirects=True)
+    response = client.post(
+        '/admin/login',
+        data={
+            'username': 'admin',
+            'password': 'wrongpassword',
+        },
+        follow_redirects=True,
+    )
     assert b'Invalid credentials' in response.data
 
 
@@ -64,9 +69,12 @@ def test_admin_ip_restriction(app):
     """Requests from IPs outside allowed_networks should get 403."""
     client = app.test_client()
     # Simulate a request from an external IP via the X-Forwarded-For header
-    response = client.get('/admin/login', headers={
-        'X-Forwarded-For': '203.0.113.1'  # TEST-NET-3 (RFC 5737) — not in allowed_networks
-    })
+    response = client.get(
+        '/admin/login',
+        headers={
+            'X-Forwarded-For': '203.0.113.1'  # TEST-NET-3 (RFC 5737) — not in allowed_networks
+        },
+    )
     assert response.status_code == 403
 
 
@@ -93,6 +101,7 @@ def test_static_js_loads(client):
 # ============================================================
 # PHASE 2: PUBLIC PAGES
 # ============================================================
+
 
 def test_portfolio_page(client):
     """Portfolio page should load with empty state when no photos exist."""
@@ -141,24 +150,32 @@ def test_contact_page(client):
 
 def test_contact_form_submit(client, app):
     """Valid contact form submissions should save and show a success message."""
-    response = client.post('/contact', data={
-        'name': 'Test User',
-        'email': 'test@example.com',
-        'message': 'Hello, this is a test message.',
-        'website': '',  # Honeypot field — empty for legitimate submissions
-    }, follow_redirects=True)
+    response = client.post(
+        '/contact',
+        data={
+            'name': 'Test User',
+            'email': 'test@example.com',
+            'message': 'Hello, this is a test message.',
+            'website': '',  # Honeypot field — empty for legitimate submissions
+        },
+        follow_redirects=True,
+    )
     assert response.status_code == 200
     assert b'Message sent successfully' in response.data
 
 
 def test_contact_form_honeypot(client, app):
     """Honeypot-filled submissions should be silently accepted (flagged as spam)."""
-    response = client.post('/contact', data={
-        'name': 'Bot',
-        'email': 'bot@spam.com',
-        'message': 'Buy stuff now!',
-        'website': 'http://spam.com',  # Honeypot filled — indicates a bot
-    }, follow_redirects=True)
+    response = client.post(
+        '/contact',
+        data={
+            'name': 'Bot',
+            'email': 'bot@spam.com',
+            'message': 'Buy stuff now!',
+            'website': 'http://spam.com',  # Honeypot filled — indicates a bot
+        },
+        follow_redirects=True,
+    )
     assert response.status_code == 200
     # Same success message shown to avoid revealing the honeypot to bots
     assert b'Message sent successfully' in response.data
@@ -166,11 +183,15 @@ def test_contact_form_honeypot(client, app):
 
 def test_contact_form_validation(client):
     """Submissions with missing required fields should show a validation error."""
-    response = client.post('/contact', data={
-        'name': '',
-        'email': '',
-        'message': '',
-    }, follow_redirects=True)
+    response = client.post(
+        '/contact',
+        data={
+            'name': '',
+            'email': '',
+            'message': '',
+        },
+        follow_redirects=True,
+    )
     assert b'Please fill in all required fields' in response.data
 
 

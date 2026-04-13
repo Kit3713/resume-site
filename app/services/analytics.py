@@ -12,6 +12,8 @@ Data retention is configurable via the analytics_retention_days setting,
 and old records can be purged with `python manage.py purge-analytics`.
 """
 
+import contextlib
+
 from flask import request
 
 
@@ -35,8 +37,11 @@ def track_page_view():
     if path.startswith(('/static/', '/admin', '/photos/', '/favicon', '/healthz', '/set-locale')):
         return
 
-    try:
+    # Never let analytics tracking break the actual page response —
+    # a failed page_view insert is not worth a 500 error.
+    with contextlib.suppress(Exception):
         from app.db import get_db
+
         db = get_db()
 
         # Extract the real client IP from the proxy chain
@@ -50,6 +55,3 @@ def track_page_view():
             (path, request.referrer or '', request.user_agent.string, client_ip or ''),
         )
         db.commit()
-    except Exception:
-        # Never let analytics tracking break the actual page response
-        pass

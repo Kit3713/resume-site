@@ -15,7 +15,7 @@ Token lifecycle:
 Tokens may optionally have an expiration date (expires_at field).
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def validate_token(db, token_string):
@@ -32,9 +32,7 @@ def validate_token(db, token_string):
         (or None if not found) and error is one of None, 'invalid',
         'used', or 'expired'.
     """
-    row = db.execute(
-        'SELECT * FROM review_tokens WHERE token = ?', (token_string,)
-    ).fetchone()
+    row = db.execute('SELECT * FROM review_tokens WHERE token = ?', (token_string,)).fetchone()
 
     if row is None:
         return None, 'invalid'
@@ -46,8 +44,8 @@ def validate_token(db, token_string):
         try:
             expires = datetime.fromisoformat(row['expires_at'])
             if expires.tzinfo is None:
-                expires = expires.replace(tzinfo=timezone.utc)
-            if datetime.now(timezone.utc) > expires:
+                expires = expires.replace(tzinfo=UTC)
+            if datetime.now(UTC) > expires:
                 return row, 'expired'
         except ValueError:
             pass  # Malformed date — treat as non-expiring

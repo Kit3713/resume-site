@@ -12,18 +12,35 @@ the Quill.js editor from being rendered to public visitors.
 
 try:
     import nh3
+
     _HAS_NH3 = True
 except ImportError:
     _HAS_NH3 = False
 
 # Tags that the Quill editor legitimately produces and we allow in storage.
 _ALLOWED_TAGS = {
-    'p', 'br', 'strong', 'em', 'u', 's',
-    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-    'ul', 'ol', 'li',
-    'blockquote', 'pre', 'code',
-    'a', 'img',
-    'span', 'div',
+    'p',
+    'br',
+    'strong',
+    'em',
+    'u',
+    's',
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    'ul',
+    'ol',
+    'li',
+    'blockquote',
+    'pre',
+    'code',
+    'a',
+    'img',
+    'span',
+    'div',
 }
 
 _ALLOWED_ATTRS = {
@@ -57,9 +74,7 @@ def get_all_blocks(db):
 
 def get_block_by_slug(db, slug):
     """Return a single content block by slug, or None."""
-    return db.execute(
-        'SELECT * FROM content_blocks WHERE slug = ?', (slug,)
-    ).fetchone()
+    return db.execute('SELECT * FROM content_blocks WHERE slug = ?', (slug,)).fetchone()
 
 
 def save_block(db, slug, title, content_html, create_if_missing=True):
@@ -81,13 +96,13 @@ def save_block(db, slug, title, content_html, create_if_missing=True):
 
     if existing:
         db.execute(
-            "UPDATE content_blocks SET title = ?, content = ?, "
+            'UPDATE content_blocks SET title = ?, content = ?, '
             "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE slug = ?",
             (title, safe_html, slug),
         )
     elif create_if_missing:
         db.execute(
-            "INSERT OR IGNORE INTO content_blocks (slug, title, content) VALUES (?, ?, ?)",
+            'INSERT OR IGNORE INTO content_blocks (slug, title, content) VALUES (?, ?, ?)',
             (slug, title, safe_html),
         )
 
@@ -103,7 +118,7 @@ def create_block(db, slug, title, content_html):
     slug = slug.strip().lower().replace(' ', '_')
     safe_html = sanitize_html(content_html)
     db.execute(
-        "INSERT OR IGNORE INTO content_blocks (slug, title, content) VALUES (?, ?, ?)",
+        'INSERT OR IGNORE INTO content_blocks (slug, title, content) VALUES (?, ?, ?)',
         (slug, title, safe_html),
     )
     db.commit()

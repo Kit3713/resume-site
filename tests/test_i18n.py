@@ -15,10 +15,10 @@ Verifies the i18n infrastructure:
 import os
 import sqlite3
 
-
 # ============================================================
 # LOCALE SWITCHING
 # ============================================================
+
 
 def test_set_locale_stores_in_session(client):
     """GET /set-locale/es should set session['locale'] and redirect."""
@@ -52,13 +52,14 @@ def test_set_locale_redirects_to_home_without_referrer(client):
 # ACCEPT-LANGUAGE NEGOTIATION
 # ============================================================
 
+
 def test_accept_language_negotiation(app):
     """The locale selector should respect the Accept-Language header."""
     # Seed 'es' as an available locale
     db_path = app.config['DATABASE_PATH']
     conn = sqlite3.connect(db_path)
     conn.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+        'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
         ('available_locales', 'en,es'),
     )
     conn.commit()
@@ -80,6 +81,7 @@ def test_accept_language_falls_back_to_default(client):
 # SESSION LOCALE PERSISTENCE
 # ============================================================
 
+
 def test_session_locale_persists_across_requests(client):
     """Once set, the locale should persist in subsequent requests."""
     # Set locale
@@ -94,12 +96,13 @@ def test_session_locale_persists_across_requests(client):
 # HREFLANG TAGS
 # ============================================================
 
+
 def test_hreflang_tags_shown_when_multiple_locales(app):
     """When available_locales has > 1 locale, hreflang tags should appear."""
     db_path = app.config['DATABASE_PATH']
     conn = sqlite3.connect(db_path)
     conn.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+        'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
         ('available_locales', 'en,es'),
     )
     conn.commit()
@@ -124,6 +127,7 @@ def test_no_hreflang_tags_with_single_locale(client):
 # LANGUAGE SWITCHER
 # ============================================================
 
+
 def test_language_switcher_hidden_with_single_locale(client):
     """Language switcher should not appear when only one locale is available."""
     response = client.get('/')
@@ -136,7 +140,7 @@ def test_language_switcher_shown_with_multiple_locales(app):
     db_path = app.config['DATABASE_PATH']
     conn = sqlite3.connect(db_path)
     conn.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+        'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
         ('available_locales', 'en,fr'),
     )
     conn.commit()
@@ -152,6 +156,7 @@ def test_language_switcher_shown_with_multiple_locales(app):
 # CONTEXT PROCESSOR
 # ============================================================
 
+
 def test_context_processor_injects_locale_vars(app):
     """The context processor should inject available_locales and current_locale."""
     with app.test_request_context('/'):
@@ -164,6 +169,7 @@ def test_context_processor_injects_locale_vars(app):
 # ============================================================
 # MIGRATION 004 SETTINGS
 # ============================================================
+
 
 def test_i18n_settings_seeded(app):
     """Migration 004 should seed default_locale and available_locales settings."""
@@ -189,9 +195,10 @@ def test_i18n_settings_seeded(app):
 # SETTINGS REGISTRY
 # ============================================================
 
+
 def test_i18n_settings_in_registry():
     """The settings registry should include i18n settings."""
-    from app.services.settings_svc import SETTINGS_REGISTRY, SETTINGS_CATEGORIES
+    from app.services.settings_svc import SETTINGS_CATEGORIES, SETTINGS_REGISTRY
 
     assert 'default_locale' in SETTINGS_REGISTRY
     assert 'available_locales' in SETTINGS_REGISTRY
@@ -203,11 +210,13 @@ def test_i18n_settings_in_registry():
 # TRANSLATION FILES
 # ============================================================
 
+
 def test_messages_pot_exists():
     """The extracted messages.pot file should exist after extraction."""
     pot_path = os.path.join(
         os.path.dirname(os.path.dirname(__file__)),
-        'translations', 'messages.pot',
+        'translations',
+        'messages.pot',
     )
     assert os.path.exists(pot_path), "messages.pot not found — run 'manage.py translations extract'"
 
@@ -216,7 +225,10 @@ def test_english_catalog_compiled():
     """The compiled English .mo file should exist."""
     mo_path = os.path.join(
         os.path.dirname(os.path.dirname(__file__)),
-        'translations', 'en', 'LC_MESSAGES', 'messages.mo',
+        'translations',
+        'en',
+        'LC_MESSAGES',
+        'messages.mo',
     )
     assert os.path.exists(mo_path), "English .mo not found — run 'manage.py translations compile'"
 
@@ -225,10 +237,11 @@ def test_messages_pot_has_entries():
     """The messages.pot should contain extracted translatable strings."""
     pot_path = os.path.join(
         os.path.dirname(os.path.dirname(__file__)),
-        'translations', 'messages.pot',
+        'translations',
+        'messages.pot',
     )
-    with open(pot_path, 'r') as f:
+    with open(pot_path) as f:
         content = f.read()
     # Should have a reasonable number of msgid entries
     msgid_count = content.count('\nmsgid ')
-    assert msgid_count > 50, f"Expected >50 translatable strings, found {msgid_count}"
+    assert msgid_count > 50, f'Expected >50 translatable strings, found {msgid_count}'

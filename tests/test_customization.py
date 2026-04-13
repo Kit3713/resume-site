@@ -16,9 +16,11 @@ Covers:
 # SETTINGS REGISTRY
 # ============================================================
 
+
 def test_settings_registry_has_categories():
     """Every setting in the registry must have a category."""
     from app.services.settings_svc import SETTINGS_REGISTRY
+
     for key, meta in SETTINGS_REGISTRY.items():
         assert 'category' in meta, f"Setting '{key}' missing 'category'"
         assert 'label' in meta, f"Setting '{key}' missing 'label'"
@@ -28,6 +30,7 @@ def test_settings_registry_has_categories():
 def test_settings_registry_select_has_options():
     """Select-type settings must define options."""
     from app.services.settings_svc import SETTINGS_REGISTRY
+
     for key, meta in SETTINGS_REGISTRY.items():
         if meta['type'] == 'select':
             assert 'options' in meta, f"Select setting '{key}' missing 'options'"
@@ -36,9 +39,11 @@ def test_settings_registry_select_has_options():
 
 def test_grouped_settings_returns_all_categories(app):
     """get_grouped_settings should return all defined categories."""
-    from app.services.settings_svc import get_grouped_settings, SETTINGS_CATEGORIES
+    from app.services.settings_svc import SETTINGS_CATEGORIES, get_grouped_settings
+
     with app.app_context():
         from app.db import get_db
+
         db = get_db()
         grouped = get_grouped_settings(db)
         categories = [cat for cat, _ in grouped]
@@ -49,8 +54,10 @@ def test_grouped_settings_returns_all_categories(app):
 def test_grouped_settings_includes_values(app):
     """Grouped settings should include current values from the database."""
     from app.services.settings_svc import get_grouped_settings
+
     with app.app_context():
         from app.db import get_db
+
         db = get_db()
         grouped = get_grouped_settings(db)
         # Find the Site Identity category and check site_title
@@ -66,6 +73,7 @@ def test_grouped_settings_includes_values(app):
 # ============================================================
 # SETTINGS PAGE (auto-rendered)
 # ============================================================
+
 
 def test_settings_page_renders_categories(auth_client):
     """Settings page should render category headings from the registry."""
@@ -103,12 +111,16 @@ def test_settings_page_renders_custom_css_textarea(auth_client):
 # CUSTOM CSS INJECTION
 # ============================================================
 
+
 def test_custom_css_injected_into_public_page(auth_client, app):
     """Custom CSS from settings should appear in the public page <head>."""
-    auth_client.post('/admin/settings', data={
-        'custom_css': '.my-custom-class { color: red; }',
-        'site_title': 'Test Site',
-    })
+    auth_client.post(
+        '/admin/settings',
+        data={
+            'custom_css': '.my-custom-class { color: red; }',
+            'site_title': 'Test Site',
+        },
+    )
 
     public_client = app.test_client()
     response = public_client.get('/')
@@ -130,12 +142,16 @@ def test_empty_custom_css_no_extra_style_tag(client):
 # FONT PAIRING
 # ============================================================
 
+
 def test_font_pairing_reflected_in_google_fonts_link(auth_client, app):
     """Changing font_pairing should load the correct Google Fonts family."""
-    auth_client.post('/admin/settings', data={
-        'font_pairing': 'space-grotesk',
-        'site_title': 'Test Site',
-    })
+    auth_client.post(
+        '/admin/settings',
+        data={
+            'font_pairing': 'space-grotesk',
+            'site_title': 'Test Site',
+        },
+    )
 
     public_client = app.test_client()
     response = public_client.get('/')
@@ -152,12 +168,16 @@ def test_default_font_loads_inter(client):
 # ACCENT COLOR
 # ============================================================
 
+
 def test_accent_color_in_css_variables(auth_client, app):
     """The accent color setting should be reflected in CSS custom properties."""
-    auth_client.post('/admin/settings', data={
-        'accent_color': '#E65100',
-        'site_title': 'Test Site',
-    })
+    auth_client.post(
+        '/admin/settings',
+        data={
+            'accent_color': '#E65100',
+            'site_title': 'Test Site',
+        },
+    )
 
     public_client = app.test_client()
     response = public_client.get('/')
@@ -168,12 +188,16 @@ def test_accent_color_in_css_variables(auth_client, app):
 # NAV VISIBILITY
 # ============================================================
 
+
 def test_nav_hide_services_removes_link(auth_client, app):
     """Setting nav_hide_services=true should remove Services from the nav."""
-    auth_client.post('/admin/settings', data={
-        'nav_hide_services': 'true',
-        'site_title': 'Test Site',
-    })
+    auth_client.post(
+        '/admin/settings',
+        data={
+            'nav_hide_services': 'true',
+            'site_title': 'Test Site',
+        },
+    )
 
     public_client = app.test_client()
     response = public_client.get('/')
@@ -192,11 +216,14 @@ def test_nav_visible_by_default(client):
 
 def test_nav_hide_multiple_items(auth_client, app):
     """Multiple nav items can be hidden simultaneously."""
-    auth_client.post('/admin/settings', data={
-        'nav_hide_portfolio': 'true',
-        'nav_hide_testimonials': 'true',
-        'site_title': 'Test Site',
-    })
+    auth_client.post(
+        '/admin/settings',
+        data={
+            'nav_hide_portfolio': 'true',
+            'nav_hide_testimonials': 'true',
+            'site_title': 'Test Site',
+        },
+    )
 
     public_client = app.test_client()
     response = public_client.get('/')
@@ -210,15 +237,19 @@ def test_nav_hide_multiple_items(auth_client, app):
 # ACTIVITY LOG
 # ============================================================
 
+
 def test_activity_log_records_action(app):
     """log_action should insert an entry into admin_activity_log."""
     with app.app_context():
         from app.db import get_db
+
         db = get_db()
         # Ensure the table exists by running migration
-        db.executescript(open('migrations/003_admin_customization.sql').read())
+        with open('migrations/003_admin_customization.sql') as f:
+            db.executescript(f.read())
 
-        from app.services.activity_log import log_action, get_recent_activity
+        from app.services.activity_log import get_recent_activity, log_action
+
         log_action(db, 'Test action', 'test', 'detail here')
 
         entries = get_recent_activity(db, limit=5)
@@ -233,17 +264,24 @@ def test_activity_log_on_settings_save(auth_client, app):
     # Apply migration first
     with app.app_context():
         from app.db import get_db
-        db = get_db()
-        db.executescript(open('migrations/003_admin_customization.sql').read())
 
-    auth_client.post('/admin/settings', data={
-        'site_title': 'Activity Test',
-    })
+        db = get_db()
+        with open('migrations/003_admin_customization.sql') as f:
+            db.executescript(f.read())
+
+    auth_client.post(
+        '/admin/settings',
+        data={
+            'site_title': 'Activity Test',
+        },
+    )
 
     with app.app_context():
         from app.db import get_db
+
         db = get_db()
         from app.services.activity_log import get_recent_activity
+
         entries = get_recent_activity(db, limit=5)
         actions = [e['action'] for e in entries]
         assert 'Updated settings' in actions
@@ -253,9 +291,12 @@ def test_dashboard_shows_activity_log(auth_client, app):
     """Dashboard should display the activity log section when entries exist."""
     with app.app_context():
         from app.db import get_db
+
         db = get_db()
-        db.executescript(open('migrations/003_admin_customization.sql').read())
+        with open('migrations/003_admin_customization.sql') as f:
+            db.executescript(f.read())
         from app.services.activity_log import log_action
+
         log_action(db, 'Test dashboard action', 'test', 'visible on dashboard')
 
     response = auth_client.get('/admin/')
@@ -268,43 +309,56 @@ def test_dashboard_shows_activity_log(auth_client, app):
 # SETTINGS SAVE WITH NEW KEYS
 # ============================================================
 
+
 def test_settings_save_custom_css(auth_client, app):
     """Custom CSS should be persisted through the settings form."""
-    auth_client.post('/admin/settings', data={
-        'custom_css': 'body { background: pink; }',
-        'site_title': 'CSS Test',
-    })
+    auth_client.post(
+        '/admin/settings',
+        data={
+            'custom_css': 'body { background: pink; }',
+            'site_title': 'CSS Test',
+        },
+    )
 
     with app.app_context():
         from app.db import get_db
         from app.models import get_setting
+
         db = get_db()
         assert get_setting(db, 'custom_css') == 'body { background: pink; }'
 
 
 def test_settings_save_font_pairing(auth_client, app):
     """Font pairing should be persisted through the settings form."""
-    auth_client.post('/admin/settings', data={
-        'font_pairing': 'dm-sans',
-        'site_title': 'Font Test',
-    })
+    auth_client.post(
+        '/admin/settings',
+        data={
+            'font_pairing': 'dm-sans',
+            'site_title': 'Font Test',
+        },
+    )
 
     with app.app_context():
         from app.db import get_db
         from app.models import get_setting
+
         db = get_db()
         assert get_setting(db, 'font_pairing') == 'dm-sans'
 
 
 def test_settings_save_nav_visibility(auth_client, app):
     """Nav hide toggles should be persisted through the settings form."""
-    auth_client.post('/admin/settings', data={
-        'nav_hide_projects': 'true',
-        'site_title': 'Nav Test',
-    })
+    auth_client.post(
+        '/admin/settings',
+        data={
+            'nav_hide_projects': 'true',
+            'site_title': 'Nav Test',
+        },
+    )
 
     with app.app_context():
         from app.db import get_db
         from app.models import get_setting
+
         db = get_db()
         assert get_setting(db, 'nav_hide_projects') == 'true'

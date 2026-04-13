@@ -27,36 +27,36 @@ Security:
 - Supports smtp.password_file for Docker/Podman secrets integration.
 """
 
+import contextlib
 import os
 import sys
 
 import yaml
 
-
 # Default configuration values. Users only need to override what they
 # want to change in their config.yaml — everything else falls back here.
 _DEFAULT_CONFIG = {
-    'secret_key': None,                 # Required — no default for security
+    'secret_key': None,  # Required — no default for security
     'database_path': 'data/site.db',
     'photo_storage': 'photos',
     'max_upload_size': 10 * 1024 * 1024,  # 10 MB default
-    'session_timeout_minutes': 60,      # Admin session inactivity timeout
+    'session_timeout_minutes': 60,  # Admin session inactivity timeout
     'smtp': {
         'host': '',
-        'port': 587,                    # STARTTLS default; use 465 for SMTP_SSL
+        'port': 587,  # STARTTLS default; use 465 for SMTP_SSL
         'user': '',
         'password': '',
-        'password_file': '',            # Docker/Podman secrets: path to file containing password
-        'recipient': '',                # Admin's personal email for form submissions
+        'password_file': '',  # Docker/Podman secrets: path to file containing password
+        'recipient': '',  # Admin's personal email for form submissions
     },
     'admin': {
         'username': 'admin',
-        'password_hash': '',            # Generate with: python manage.py hash-password
+        'password_hash': '',  # Generate with: python manage.py hash-password
         'allowed_networks': [
-            '127.0.0.0/8',             # Localhost (local development)
-            '10.0.0.0/8',              # Private network (Class A)
-            '192.168.0.0/16',          # Private network (Class C)
-            '100.64.0.0/10',           # Tailscale / CGNAT range
+            '127.0.0.0/8',  # Localhost (local development)
+            '10.0.0.0/8',  # Private network (Class A)
+            '192.168.0.0/16',  # Private network (Class C)
+            '100.64.0.0/10',  # Tailscale / CGNAT range
         ],
     },
 }
@@ -64,19 +64,19 @@ _DEFAULT_CONFIG = {
 # Environment variable mappings: env var name → config path (dot-separated).
 # Precedence: env vars > config.yaml > defaults.
 _ENV_VAR_MAP = {
-    'RESUME_SITE_SECRET_KEY':         'secret_key',
-    'RESUME_SITE_DATABASE_PATH':      'database_path',
-    'RESUME_SITE_PHOTO_STORAGE':      'photo_storage',
-    'RESUME_SITE_MAX_UPLOAD_SIZE':    'max_upload_size',
-    'RESUME_SITE_SESSION_TIMEOUT':    'session_timeout_minutes',
+    'RESUME_SITE_SECRET_KEY': 'secret_key',
+    'RESUME_SITE_DATABASE_PATH': 'database_path',
+    'RESUME_SITE_PHOTO_STORAGE': 'photo_storage',
+    'RESUME_SITE_MAX_UPLOAD_SIZE': 'max_upload_size',
+    'RESUME_SITE_SESSION_TIMEOUT': 'session_timeout_minutes',
     'RESUME_SITE_SESSION_COOKIE_SECURE': 'session_cookie_secure',
-    'RESUME_SITE_SMTP_HOST':          'smtp.host',
-    'RESUME_SITE_SMTP_PORT':          'smtp.port',
-    'RESUME_SITE_SMTP_USER':          'smtp.user',
-    'RESUME_SITE_SMTP_PASSWORD':      'smtp.password',
+    'RESUME_SITE_SMTP_HOST': 'smtp.host',
+    'RESUME_SITE_SMTP_PORT': 'smtp.port',
+    'RESUME_SITE_SMTP_USER': 'smtp.user',
+    'RESUME_SITE_SMTP_PASSWORD': 'smtp.password',
     'RESUME_SITE_SMTP_PASSWORD_FILE': 'smtp.password_file',
-    'RESUME_SITE_SMTP_RECIPIENT':     'smtp.recipient',
-    'RESUME_SITE_ADMIN_USERNAME':     'admin.username',
+    'RESUME_SITE_SMTP_RECIPIENT': 'smtp.recipient',
+    'RESUME_SITE_ADMIN_USERNAME': 'admin.username',
     'RESUME_SITE_ADMIN_PASSWORD_HASH': 'admin.password_hash',
 }
 
@@ -123,12 +123,11 @@ def _set_nested(config, dotted_key, value):
     target = config
     for key in keys[:-1]:
         target = target.setdefault(key, {})
-    # Coerce numeric strings for known integer fields
+    # Coerce numeric strings for known integer fields; keep the original
+    # value if it's not parseable as an int.
     if keys[-1] in ('port', 'max_upload_size', 'session_timeout_minutes'):
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             value = int(value)
-        except (ValueError, TypeError):
-            pass
     target[keys[-1]] = value
 
 
@@ -159,9 +158,9 @@ def _resolve_password_file(config):
     password_file = config.get('smtp', {}).get('password_file', '')
     if password_file and not config['smtp'].get('password'):
         try:
-            with open(password_file, 'r') as f:
+            with open(password_file) as f:
                 config['smtp']['password'] = f.read().strip()
-        except (OSError, IOError) as e:
+        except OSError as e:
             print(
                 f"WARNING: Could not read smtp.password_file '{password_file}': {e}",
                 file=sys.stderr,
@@ -176,23 +175,26 @@ def _validate_secret_key(secret_key):
     is fatal.
     """
     if not secret_key:
-        print("ERROR: 'secret_key' is required in config.yaml or RESUME_SITE_SECRET_KEY", file=sys.stderr)
+        print(
+            "ERROR: 'secret_key' is required in config.yaml or RESUME_SITE_SECRET_KEY",
+            file=sys.stderr,
+        )
         return False
 
     key_str = str(secret_key)
 
     if key_str.lower() in _WEAK_SECRET_KEYS:
         print(
-            "WARNING: secret_key appears to be an example/placeholder value. "
-            "Generate a secure one with: python manage.py generate-secret",
+            'WARNING: secret_key appears to be an example/placeholder value. '
+            'Generate a secure one with: python manage.py generate-secret',
             file=sys.stderr,
         )
 
     if len(key_str) < 32:
         print(
-            f"WARNING: secret_key is only {len(key_str)} characters. "
-            "A minimum of 32 characters is recommended for production. "
-            "Generate one with: python manage.py generate-secret",
+            f'WARNING: secret_key is only {len(key_str)} characters. '
+            'A minimum of 32 characters is recommended for production. '
+            'Generate one with: python manage.py generate-secret',
             file=sys.stderr,
         )
 
@@ -216,11 +218,11 @@ def load_config(path):
         dict: The validated, merged configuration.
     """
     if not os.path.exists(path):
-        print(f"ERROR: Config file not found: {path}", file=sys.stderr)
-        print("Copy config.example.yaml to config.yaml and edit it.", file=sys.stderr)
+        print(f'ERROR: Config file not found: {path}', file=sys.stderr)
+        print('Copy config.example.yaml to config.yaml and edit it.', file=sys.stderr)
         sys.exit(1)
 
-    with open(path, 'r') as f:
+    with open(path) as f:
         user_config = yaml.safe_load(f) or {}
 
     config = _deep_merge(_DEFAULT_CONFIG, user_config)
@@ -239,15 +241,14 @@ def load_config(path):
     password_hash = config['admin'].get('password_hash', '')
     if not password_hash:
         print(
-            "WARNING: admin.password_hash is empty. "
-            "Set it with: python manage.py hash-password",
+            'WARNING: admin.password_hash is empty. Set it with: python manage.py hash-password',
             file=sys.stderr,
         )
     elif not password_hash.startswith(('pbkdf2:sha256:', 'scrypt:', 'argon2')):
         print(
-            "WARNING: admin.password_hash does not use a recognized strong algorithm. "
-            "Expected pbkdf2:sha256, scrypt, or argon2. "
-            "Regenerate with: python manage.py hash-password",
+            'WARNING: admin.password_hash does not use a recognized strong algorithm. '
+            'Expected pbkdf2:sha256, scrypt, or argon2. '
+            'Regenerate with: python manage.py hash-password',
             file=sys.stderr,
         )
 

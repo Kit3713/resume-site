@@ -9,7 +9,7 @@ The locale is resolved in the app factory's get_locale() function using
 the priority: session > Accept-Language header > default.
 """
 
-from flask import Blueprint, request, redirect, session
+from flask import Blueprint, redirect, request, session
 
 locale_bp = Blueprint('locale', __name__)
 

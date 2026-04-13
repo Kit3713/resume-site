@@ -19,16 +19,17 @@ Usage:
     app = create_app('/path/to/config.yaml')     # Custom config path
 """
 
+import contextlib
 import os
 
-from flask import Flask, request, g
+from flask import Flask, g, request
 from flask_babel import Babel
-from flask_login import LoginManager
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect
 
-from app.db import get_db, close_db
+from app.db import close_db, get_db
 from app.services.config import load_config
 
 # Extension instances (initialized in create_app)
@@ -36,8 +37,8 @@ csrf = CSRFProtect()
 babel = Babel()
 limiter = Limiter(
     key_func=get_remote_address,
-    default_limits=[],             # No global limit — applied per-route
-    storage_uri="memory://",       # In-memory for single-process deployments
+    default_limits=[],  # No global limit — applied per-route
+    storage_uri='memory://',  # In-memory for single-process deployments
 )
 
 
@@ -47,16 +48,13 @@ def _get_available_locales(app):
     Falls back to ['en'] if no locales are configured or the database
     is not yet initialized.
     """
-    try:
-        with app.app_context():
-            db = get_db()
-            row = db.execute(
-                "SELECT value FROM settings WHERE key = 'available_locales'"
-            ).fetchone()
-            if row and row['value']:
-                return [loc.strip() for loc in row['value'].split(',') if loc.strip()]
-    except Exception:
-        pass
+    # Best-effort: the DB may not yet exist (first boot, migrations pending).
+    # Any failure falls through to the ['en'] default.
+    with contextlib.suppress(Exception), app.app_context():
+        db = get_db()
+        row = db.execute("SELECT value FROM settings WHERE key = 'available_locales'").fetchone()
+        if row and row['value']:
+            return [loc.strip() for loc in row['value'].split(',') if loc.strip()]
     return ['en']
 
 
@@ -125,6 +123,7 @@ def create_app(config_path=None):
     def load_user(user_id):
         """Reload the admin user from the session cookie."""
         from app.models import AdminUser
+
         admin_username = site_config.get('admin', {}).get('username', 'admin')
         if user_id == admin_username:
             return AdminUser(user_id)
@@ -158,6 +157,7 @@ def create_app(config_path=None):
             return locale
         # Session-based persistence
         from flask import session
+
         locale = session.get('locale')
         if locale and locale in _get_available_locales(app):
             return locale
@@ -168,13 +168,13 @@ def create_app(config_path=None):
     babel.init_app(app, locale_selector=get_locale)
 
     # --- 6. Blueprints ---
-    from app.routes.public import public_bp
     from app.routes.admin import admin_bp
-    from app.routes.blog_admin import blog_admin_bp
     from app.routes.blog import blog_bp
+    from app.routes.blog_admin import blog_admin_bp
     from app.routes.contact import contact_bp
-    from app.routes.review import review_bp
     from app.routes.locale import locale_bp
+    from app.routes.public import public_bp
+    from app.routes.review import review_bp
 
     app.register_blueprint(public_bp)
     app.register_blueprint(admin_bp, url_prefix='/admin')
@@ -186,6 +186,7 @@ def create_app(config_path=None):
 
     # --- 7. Analytics middleware ---
     from app.services.analytics import track_page_view
+
     app.before_request(track_page_view)
 
     # --- 8. Security response headers ---
@@ -241,23 +242,22 @@ def create_app(config_path=None):
 
         Wrapped in try/except to handle first-run when the DB doesn't exist yet.
         """
-        try:
+        settings = {}
+        with contextlib.suppress(Exception):
             db = get_db()
             rows = db.execute('SELECT key, value FROM settings').fetchall()
             settings = {row['key']: row['value'] for row in rows}
-        except Exception:
-            settings = {}
         # Locale information for language switcher and hreflang tags
         available_locales = [
             loc.strip() for loc in settings.get('available_locales', 'en').split(',') if loc.strip()
         ]
         current_locale = str(get_locale())
-        return dict(
-            site_settings=settings,
-            site_config=site_config,
-            available_locales=available_locales,
-            current_locale=current_locale,
-        )
+        return {
+            'site_settings': settings,
+            'site_config': site_config,
+            'available_locales': available_locales,
+            'current_locale': current_locale,
+        }
 
     # --- 10. Ensure storage directories exist ---
     os.makedirs(os.path.dirname(app.config['DATABASE_PATH']) or '.', exist_ok=True)

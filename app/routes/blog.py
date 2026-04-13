@@ -15,15 +15,18 @@ URL structure:
 """
 
 import math
-from xml.sax.saxutils import escape
+from html import escape
 
-from flask import Blueprint, render_template, abort, request, make_response
+from flask import Blueprint, abort, make_response, render_template, request
 
 from app.db import get_db
 from app.models import get_setting
 from app.services.blog import (
-    get_published_posts, get_post_by_slug, get_posts_by_tag,
-    get_tags_for_post, get_tag_by_slug,
+    get_post_by_slug,
+    get_posts_by_tag,
+    get_published_posts,
+    get_tag_by_slug,
+    get_tags_for_post,
     render_post_content,
 )
 
@@ -58,12 +61,14 @@ def blog_index():
     blog_title = get_setting(db, 'blog_title', 'Blog')
     show_reading_time = get_setting(db, 'show_reading_time', 'true') == 'true'
 
-    return render_template('public/blog_index.html',
-                           posts=_attach_tags(db, posts),
-                           blog_title=blog_title,
-                           show_reading_time=show_reading_time,
-                           page=page,
-                           total_pages=total_pages)
+    return render_template(
+        'public/blog_index.html',
+        posts=_attach_tags(db, posts),
+        blog_title=blog_title,
+        show_reading_time=show_reading_time,
+        page=page,
+        total_pages=total_pages,
+    )
 
 
 @blog_bp.route('/blog/<slug>')
@@ -83,22 +88,24 @@ def blog_post(slug):
     # Get prev/next posts for navigation
     prev_post = db.execute(
         "SELECT slug, title FROM blog_posts WHERE status='published' "
-        "AND published_at < ? ORDER BY published_at DESC LIMIT 1",
+        'AND published_at < ? ORDER BY published_at DESC LIMIT 1',
         (post['published_at'],),
     ).fetchone()
     next_post = db.execute(
         "SELECT slug, title FROM blog_posts WHERE status='published' "
-        "AND published_at > ? ORDER BY published_at ASC LIMIT 1",
+        'AND published_at > ? ORDER BY published_at ASC LIMIT 1',
         (post['published_at'],),
     ).fetchone()
 
-    return render_template('public/blog_post.html',
-                           post=post,
-                           rendered_content=rendered_content,
-                           tags=tags,
-                           show_reading_time=show_reading_time,
-                           prev_post=prev_post,
-                           next_post=next_post)
+    return render_template(
+        'public/blog_post.html',
+        post=post,
+        rendered_content=rendered_content,
+        tags=tags,
+        show_reading_time=show_reading_time,
+        prev_post=prev_post,
+        next_post=next_post,
+    )
 
 
 @blog_bp.route('/blog/tag/<tag_slug>')
@@ -122,13 +129,15 @@ def blog_tag(tag_slug):
     blog_title = get_setting(db, 'blog_title', 'Blog')
     show_reading_time = get_setting(db, 'show_reading_time', 'true') == 'true'
 
-    return render_template('public/blog_index.html',
-                           posts=_attach_tags(db, posts),
-                           blog_title=blog_title,
-                           show_reading_time=show_reading_time,
-                           page=page,
-                           total_pages=total_pages,
-                           active_tag=tag)
+    return render_template(
+        'public/blog_index.html',
+        posts=_attach_tags(db, posts),
+        blog_title=blog_title,
+        show_reading_time=show_reading_time,
+        page=page,
+        total_pages=total_pages,
+        active_tag=tag,
+    )
 
 
 @blog_bp.route('/blog/feed.xml')

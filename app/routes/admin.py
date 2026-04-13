@@ -23,29 +23,48 @@ Admin features:
 - Settings: All site toggles, identity, hero section, contact visibility
 """
 
+import contextlib
 import ipaddress
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app, session
+from flask import (
+    Blueprint,
+    abort,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
 from flask_babel import gettext as _
-from flask_login import login_user, logout_user, login_required, current_user
+from flask_login import current_user, login_required, login_user, logout_user
 from werkzeug.security import check_password_hash
 
 from app import limiter
 from app.db import get_db
 from app.models import AdminUser
-from app.services.content import get_all_blocks, save_block, create_block
+from app.services.activity_log import get_recent_activity, log_action
+from app.services.content import create_block, get_all_blocks, save_block
 from app.services.reviews import (
-    get_reviews_by_status, approve_review, reject_review, update_review_tier,
+    approve_review,
+    get_reviews_by_status,
+    reject_review,
+    update_review_tier,
 )
 from app.services.service_items import (
-    get_all_services, add_service, update_service, delete_service,
+    add_service,
+    delete_service,
+    get_all_services,
+    update_service,
 )
-from app.services.stats import get_all_stats, add_stat, update_stat, delete_stat
-from app.services.settings_svc import get_all as get_all_settings_svc, save_many as save_settings, get_grouped_settings
-from app.services.activity_log import log_action, get_recent_activity
+from app.services.settings_svc import get_all as get_all_settings_svc
+from app.services.settings_svc import get_grouped_settings
+from app.services.settings_svc import save_many as save_settings
+from app.services.stats import add_stat, delete_stat, get_all_stats, update_stat
 
 admin_bp = Blueprint('admin', __name__, template_folder='../templates')
 
@@ -53,6 +72,7 @@ admin_bp = Blueprint('admin', __name__, template_folder='../templates')
 # ============================================================
 # IP RESTRICTION MIDDLEWARE
 # ============================================================
+
 
 @admin_bp.before_request
 def restrict_to_allowed_networks():
@@ -104,7 +124,7 @@ def restrict_to_allowed_networks():
 def update_last_activity(response):
     """Record the timestamp of each admin request for session timeout tracking."""
     if current_user.is_authenticated:
-        session['_last_activity'] = datetime.now(timezone.utc).isoformat()
+        session['_last_activity'] = datetime.now(UTC).isoformat()
     return response
 
 
@@ -125,9 +145,9 @@ def check_session_timeout():
         try:
             last_dt = datetime.fromisoformat(last_activity)
             if last_dt.tzinfo is None:
-                last_dt = last_dt.replace(tzinfo=timezone.utc)
+                last_dt = last_dt.replace(tzinfo=UTC)
             timeout_minutes = current_app.config.get('SESSION_TIMEOUT_MINUTES', 60)
-            elapsed = (datetime.now(timezone.utc) - last_dt).total_seconds() / 60
+            elapsed = (datetime.now(UTC) - last_dt).total_seconds() / 60
             if elapsed > timeout_minutes:
                 logout_user()
                 session.clear()
@@ -141,8 +161,9 @@ def check_session_timeout():
 # AUTHENTICATION
 # ============================================================
 
+
 @admin_bp.route('/login', methods=['GET', 'POST'])
-@limiter.limit("5 per minute", methods=["POST"])
+@limiter.limit('5 per minute', methods=['POST'])
 def login():
     """Handle admin login form display and credential validation.
 
@@ -194,6 +215,7 @@ def logout():
 # DASHBOARD
 # ============================================================
 
+
 @admin_bp.route('/')
 @login_required
 def dashboard():
@@ -210,7 +232,7 @@ def dashboard():
         "SELECT COUNT(*) as cnt FROM page_views WHERE created_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days')"
     ).fetchone()['cnt']
     popular_pages = db.execute(
-        "SELECT path, COUNT(*) as cnt FROM page_views GROUP BY path ORDER BY cnt DESC LIMIT 5"
+        'SELECT path, COUNT(*) as cnt FROM page_views GROUP BY path ORDER BY cnt DESC LIMIT 5'
     ).fetchall()
 
     # Review and contact metrics
@@ -218,10 +240,10 @@ def dashboard():
         "SELECT COUNT(*) as cnt FROM reviews WHERE status = 'pending'"
     ).fetchone()['cnt']
     recent_contacts = db.execute(
-        "SELECT * FROM contact_submissions WHERE is_spam = 0 ORDER BY created_at DESC LIMIT 5"
+        'SELECT * FROM contact_submissions WHERE is_spam = 0 ORDER BY created_at DESC LIMIT 5'
     ).fetchall()
     unread_contacts = db.execute(
-        "SELECT COUNT(*) as cnt FROM contact_submissions WHERE is_spam = 0 AND read = 0"
+        'SELECT COUNT(*) as cnt FROM contact_submissions WHERE is_spam = 0 AND read = 0'
     ).fetchone()['cnt']
 
     # Activity log
@@ -230,19 +252,22 @@ def dashboard():
     except Exception:
         activity = []  # Table may not exist until migration 003 is applied
 
-    return render_template('admin/dashboard.html',
-                           total_views=total_views,
-                           recent_views=recent_views,
-                           popular_pages=popular_pages,
-                           pending_reviews=pending_reviews,
-                           recent_contacts=recent_contacts,
-                           unread_contacts=unread_contacts,
-                           activity=activity)
+    return render_template(
+        'admin/dashboard.html',
+        total_views=total_views,
+        recent_views=recent_views,
+        popular_pages=popular_pages,
+        pending_reviews=pending_reviews,
+        recent_contacts=recent_contacts,
+        unread_contacts=unread_contacts,
+        activity=activity,
+    )
 
 
 # ============================================================
 # CONTENT EDITOR (Quill.js rich text blocks)
 # ============================================================
+
 
 @admin_bp.route('/content')
 @login_required
@@ -263,6 +288,7 @@ def content_edit(slug):
     """
     db = get_db()
     from app.services.content import get_block_by_slug
+
     block = get_block_by_slug(db, slug)
 
     if request.method == 'POST':
@@ -295,6 +321,7 @@ def content_new():
 # PHOTO MANAGER
 # ============================================================
 
+
 @admin_bp.route('/photos')
 @login_required
 def photos():
@@ -322,6 +349,7 @@ def photos_upload():
         return redirect(url_for('admin.photos'))
 
     from app.services.photos import process_upload
+
     result = process_upload(file)
     if result is None:
         flash(_('Invalid file type. Allowed: jpg, png, gif, webp.'), 'error')
@@ -340,15 +368,22 @@ def photos_upload():
         'INSERT INTO photos '
         '(filename, storage_name, mime_type, width, height, file_size, title, description, category, display_tier) '
         'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        (result['filename'], result['storage_name'], result['mime_type'],
-         result['width'], result['height'], result['file_size'],
-         title, description, category, display_tier),
+        (
+            result['filename'],
+            result['storage_name'],
+            result['mime_type'],
+            result['width'],
+            result['height'],
+            result['file_size'],
+            title,
+            description,
+            category,
+            display_tier,
+        ),
     )
     db.commit()
-    try:
+    with contextlib.suppress(Exception):
         log_action(db, 'Uploaded photo', 'photos', title or result['filename'])
-    except Exception:
-        pass
     flash(_('Photo uploaded successfully.'), 'success')
     return redirect(url_for('admin.photos'))
 
@@ -366,7 +401,7 @@ def photos_edit(photo_id):
     sort_order = request.form.get('sort_order', '0')
 
     db.execute(
-        "UPDATE photos SET title=?, description=?, tech_used=?, category=?, display_tier=?, sort_order=?, "
+        'UPDATE photos SET title=?, description=?, tech_used=?, category=?, display_tier=?, sort_order=?, '
         "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id=?",
         (title, description, tech_used, category, display_tier, int(sort_order), photo_id),
     )
@@ -383,6 +418,7 @@ def photos_delete(photo_id):
     photo = db.execute('SELECT storage_name FROM photos WHERE id = ?', (photo_id,)).fetchone()
     if photo:
         from app.services.photos import delete_photo_file
+
         delete_photo_file(photo['storage_name'])
         db.execute('DELETE FROM photos WHERE id = ?', (photo_id,))
         db.commit()
@@ -394,6 +430,7 @@ def photos_delete(photo_id):
 # REVIEW MANAGER
 # ============================================================
 
+
 @admin_bp.route('/reviews')
 @login_required
 def reviews():
@@ -402,7 +439,9 @@ def reviews():
     pending = get_reviews_by_status(db, 'pending')
     approved = get_reviews_by_status(db, 'approved')
     rejected = get_reviews_by_status(db, 'rejected')
-    return render_template('admin/reviews.html', pending=pending, approved=approved, rejected=rejected)
+    return render_template(
+        'admin/reviews.html', pending=pending, approved=approved, rejected=rejected
+    )
 
 
 @admin_bp.route('/reviews/<int:review_id>/update', methods=['POST'])
@@ -420,10 +459,8 @@ def reviews_update(review_id):
     elif action == 'update_tier':
         update_review_tier(db, review_id, display_tier)
 
-    try:
+    with contextlib.suppress(Exception):
         log_action(db, f'{action.capitalize()}d review', 'reviews', f'ID {review_id}')
-    except Exception:
-        pass
     flash(_('Review updated.'), 'success')
     return redirect(url_for('admin.reviews'))
 
@@ -431,6 +468,7 @@ def reviews_update(review_id):
 # ============================================================
 # TOKEN GENERATOR (review invite system)
 # ============================================================
+
 
 @admin_bp.route('/tokens')
 @login_required
@@ -454,7 +492,7 @@ def tokens_generate():
     name = request.form.get('name', '').strip()
     token_type = request.form.get('type', 'recommendation')
     if token_type not in ('recommendation', 'client_review'):
-        token_type = 'recommendation'
+        token_type = 'recommendation'  # noqa: S105 — enum label, not a credential
 
     # Generate a 32-byte URL-safe token (43 characters)
     token_string = secrets.token_urlsafe(32)
@@ -482,6 +520,7 @@ def tokens_delete(token_id):
 # SETTINGS (all site-wide toggles and configuration)
 # ============================================================
 
+
 @admin_bp.route('/settings', methods=['GET', 'POST'])
 @login_required
 def settings():
@@ -490,23 +529,20 @@ def settings():
 
     if request.method == 'POST':
         save_settings(db, request.form)
-        try:
+        with contextlib.suppress(Exception):
             log_action(db, 'Updated settings', 'settings')
-        except Exception:
-            pass
         flash(_('Settings saved.'), 'success')
         return redirect(url_for('admin.settings'))
 
     grouped = get_grouped_settings(db)
     all_settings = get_all_settings_svc(db)
-    return render_template('admin/settings.html',
-                           settings=all_settings,
-                           grouped=grouped)
+    return render_template('admin/settings.html', settings=all_settings, grouped=grouped)
 
 
 # ============================================================
 # SERVICES MANAGER (CRUD)
 # ============================================================
+
 
 @admin_bp.route('/services')
 @login_required
@@ -562,6 +598,7 @@ def services_delete(service_id):
 # ============================================================
 # STATS MANAGER (animated counter CRUD)
 # ============================================================
+
 
 @admin_bp.route('/stats')
 @login_required

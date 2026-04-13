@@ -16,9 +16,9 @@ import pytest
 
 # Import the migration helpers directly from manage.py
 from manage import (
+    _detect_existing_db,
     _ensure_schema_version_table,
     _get_applied_versions,
-    _detect_existing_db,
     _list_migration_files,
 )
 
@@ -45,7 +45,7 @@ def existing_v010_db(tmp_path):
     db_path = str(tmp_path / 'v010.db')
     schema_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'schema.sql')
     conn = sqlite3.connect(db_path)
-    with open(schema_path, 'r') as f:
+    with open(schema_path) as f:
         conn.executescript(f.read())
     conn.row_factory = sqlite3.Row
     yield conn
@@ -56,12 +56,14 @@ def existing_v010_db(tmp_path):
 # SCHEMA VERSION TABLE
 # ============================================================
 
+
 def test_ensure_schema_version_creates_table(fresh_db):
     """schema_version table should be created if it doesn't exist."""
     _ensure_schema_version_table(fresh_db)
-    tables = {row[0] for row in fresh_db.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()}
+    tables = {
+        row[0]
+        for row in fresh_db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
     assert 'schema_version' in tables
 
 
@@ -77,6 +79,7 @@ def test_ensure_schema_version_idempotent(fresh_db):
 # APPLIED VERSIONS TRACKING
 # ============================================================
 
+
 def test_get_applied_versions_empty(fresh_db):
     """Empty schema_version table should return an empty set."""
     _ensure_schema_version_table(fresh_db)
@@ -86,9 +89,7 @@ def test_get_applied_versions_empty(fresh_db):
 def test_get_applied_versions_with_entries(fresh_db):
     """Applied versions should be returned as a set of integers."""
     _ensure_schema_version_table(fresh_db)
-    fresh_db.execute(
-        "INSERT INTO schema_version (version, name) VALUES (1, '001_baseline.sql')"
-    )
+    fresh_db.execute("INSERT INTO schema_version (version, name) VALUES (1, '001_baseline.sql')")
     fresh_db.commit()
     assert _get_applied_versions(fresh_db) == {1}
 
@@ -96,6 +97,7 @@ def test_get_applied_versions_with_entries(fresh_db):
 # ============================================================
 # EXISTING DATABASE DETECTION
 # ============================================================
+
 
 def test_detect_existing_db_positive(existing_v010_db):
     """A database with a settings table should be detected as existing."""
@@ -110,6 +112,7 @@ def test_detect_existing_db_negative(fresh_db):
 # ============================================================
 # MIGRATION FILE LISTING
 # ============================================================
+
 
 def test_list_migration_files_finds_baseline(migrations_dir):
     """Should find the 001_baseline.sql migration."""
@@ -135,6 +138,7 @@ def test_list_migration_files_nonexistent_dir():
 # FRESH DATABASE: ALL MIGRATIONS APPLY CLEANLY
 # ============================================================
 
+
 def test_fresh_db_baseline_applies(fresh_db, migrations_dir):
     """Applying the baseline migration to a fresh DB should create all tables."""
     _ensure_schema_version_table(fresh_db)
@@ -143,23 +147,30 @@ def test_fresh_db_baseline_applies(fresh_db, migrations_dir):
     assert len(baseline) == 1
 
     path = os.path.join(migrations_dir, baseline[0])
-    with open(path, 'r') as f:
+    with open(path) as f:
         sql = f.read()
 
     fresh_db.executescript(sql)
-    fresh_db.execute(
-        "INSERT INTO schema_version (version, name) VALUES (1, ?)", (baseline[0],)
-    )
+    fresh_db.execute('INSERT INTO schema_version (version, name) VALUES (1, ?)', (baseline[0],))
     fresh_db.commit()
 
     # Verify key tables were created
-    tables = {row[0] for row in fresh_db.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()}
+    tables = {
+        row[0]
+        for row in fresh_db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
     expected_tables = {
-        'settings', 'content_blocks', 'photos', 'services',
-        'reviews', 'review_tokens', 'page_views', 'stats',
-        'projects', 'certifications', 'contact_submissions',
+        'settings',
+        'content_blocks',
+        'photos',
+        'services',
+        'reviews',
+        'review_tokens',
+        'page_views',
+        'stats',
+        'projects',
+        'certifications',
+        'contact_submissions',
     }
     assert expected_tables.issubset(tables)
 
@@ -171,6 +182,7 @@ def test_fresh_db_baseline_applies(fresh_db, migrations_dir):
 # ============================================================
 # EXISTING v0.1.0 DB: BASELINE AUTO-DETECTED
 # ============================================================
+
 
 def test_existing_db_baseline_autodetected(existing_v010_db):
     """An existing v0.1.0 database should be auto-marked as having baseline applied."""
@@ -192,6 +204,7 @@ def test_existing_db_baseline_autodetected(existing_v010_db):
 # BAD SQL: MIGRATION FAILURE
 # ============================================================
 
+
 def test_bad_migration_does_not_corrupt_db(fresh_db, tmp_path):
     """A migration with bad SQL should fail without applying partial changes."""
     _ensure_schema_version_table(fresh_db)
@@ -199,8 +212,7 @@ def test_bad_migration_does_not_corrupt_db(fresh_db, tmp_path):
     # Create a bad migration file
     bad_migration = tmp_path / '999_bad.sql'
     bad_migration.write_text(
-        'CREATE TABLE test_good (id INTEGER PRIMARY KEY);\n'
-        'THIS IS NOT VALID SQL;\n'
+        'CREATE TABLE test_good (id INTEGER PRIMARY KEY);\nTHIS IS NOT VALID SQL;\n'
     )
 
     migrations = _list_migration_files(str(tmp_path))
@@ -209,10 +221,12 @@ def test_bad_migration_does_not_corrupt_db(fresh_db, tmp_path):
     # Attempt to apply the bad migration
     version, fname = migrations[0]
     path = str(tmp_path / fname)
-    with open(path, 'r') as f:
+    with open(path) as f:
         sql = f.read()
 
-    with pytest.raises(Exception):
+    # Any sqlite3 error is acceptable here — the point is that executescript
+    # refuses to apply a malformed migration.
+    with pytest.raises(sqlite3.Error):
         fresh_db.executescript(sql)
 
     # The schema_version table should NOT have this version recorded
@@ -224,6 +238,7 @@ def test_bad_migration_does_not_corrupt_db(fresh_db, tmp_path):
 # DRY RUN & STATUS (functional tests via subprocess)
 # ============================================================
 
+
 def test_dry_run_produces_output_no_changes(fresh_db, migrations_dir, capsys):
     """--dry-run should print SQL but not apply any migrations."""
     _ensure_schema_version_table(fresh_db)
@@ -231,14 +246,14 @@ def test_dry_run_produces_output_no_changes(fresh_db, migrations_dir, capsys):
     migration_files = _list_migration_files(migrations_dir)
     applied = _get_applied_versions(fresh_db)
     pending = [(v, f) for v, f in migration_files if v not in applied]
-    assert len(pending) > 0, "Expected at least one pending migration"
+    assert len(pending) > 0, 'Expected at least one pending migration'
 
     # Simulate dry-run (same logic as manage.py migrate with args.dry_run=True)
-    for version, fname in pending:
+    for _version, fname in pending:
         path = os.path.join(migrations_dir, fname)
-        with open(path, 'r') as f:
+        with open(path) as f:
             sql = f.read()
-        print(f"-- DRY RUN: {fname}")
+        print(f'-- DRY RUN: {fname}')
         print(sql)
 
     captured = capsys.readouterr()
@@ -250,9 +265,10 @@ def test_dry_run_produces_output_no_changes(fresh_db, migrations_dir, capsys):
     assert len(applied_after) == 0
 
     # Verify no tables were created (except schema_version)
-    tables = {row[0] for row in fresh_db.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()}
+    tables = {
+        row[0]
+        for row in fresh_db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
     assert 'settings' not in tables
 
 
@@ -266,10 +282,10 @@ def test_migration_status_output(app, capsys, migrations_dir):
     applied = _get_applied_versions(conn)
     migration_files = _list_migration_files(migrations_dir)
 
-    print("Migration status:")
+    print('Migration status:')
     for version, fname in migration_files:
         status = 'applied ' if version in applied else 'pending '
-        print(f"  [{status}] {fname}")
+        print(f'  [{status}] {fname}')
 
     conn.close()
 

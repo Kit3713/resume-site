@@ -1,0 +1,74 @@
+# Pre-commit hooks — run automatically on `git commit`.
+#
+# Install:
+#   pip install pre-commit      # (already in requirements-dev.txt)
+#   pre-commit install          # wires the git hook into .git/hooks/pre-commit
+#
+# Run against all files manually:
+#   pre-commit run --all-files
+#
+# Skip hooks for a single commit (use sparingly):
+#   git commit --no-verify
+#
+# Update pinned versions:
+#   pre-commit autoupdate
+
+repos:
+  # ----------------------------------------------------------------
+  # ruff — lint + format (replaces flake8, isort, black, pyupgrade)
+  # ----------------------------------------------------------------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.10
+    hooks:
+      - id: ruff              # lint
+        args: [--fix]          # auto-fix what it can
+      - id: ruff-format        # opinionated formatter
+
+  # ----------------------------------------------------------------
+  # bandit — security static analysis
+  # ----------------------------------------------------------------
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.9.4
+    hooks:
+      - id: bandit
+        args: ['-c', 'pyproject.toml', '-r', 'app/', '-ll']
+        # -ll: low severity or higher (so future MEDIUM+ findings fail the hook)
+        # App-only scan: tests/ has fixture credentials that would trip B105/B106.
+        pass_filenames: false
+
+  # ----------------------------------------------------------------
+  # detect-secrets — catch credentials before they hit git history
+  # ----------------------------------------------------------------
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        # The baseline file records known/accepted secret-like strings
+        # (e.g., test password hashes, example URLs). Regenerate with:
+        #   detect-secrets scan --baseline .secrets.baseline
+        exclude: |
+          (?x)^(
+            .*\.po|          # translation catalogs contain example strings
+            requirements.*\.txt|  # pip hashes look like secrets
+            tests/.*          # test fixtures contain deliberate test credentials
+          )$
+
+  # ----------------------------------------------------------------
+  # Standard hygiene
+  # ----------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.po$'       # .po files use trailing whitespace intentionally
+      - id: end-of-file-fixer
+        exclude: '\.po$|.*\.svg$'
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: ['--maxkb=500']   # Reject accidental large binaries
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+      - id: check-case-conflict

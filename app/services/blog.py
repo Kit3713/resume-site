@@ -10,8 +10,8 @@ Markdown posts store raw markdown and are rendered to HTML on display
 via the mistune library.
 """
 
-import re
 import math
+import re
 
 import mistune
 
@@ -64,7 +64,7 @@ def _ensure_unique_slug(db, slug, exclude_id=None):
         if row is None or (exclude_id and row['id'] == exclude_id):
             return slug
         counter += 1
-        slug = f"{base_slug}-{counter}"
+        slug = f'{base_slug}-{counter}'
 
 
 def render_post_content(post):
@@ -85,6 +85,7 @@ def render_post_content(post):
 # READ OPERATIONS (public and admin)
 # ============================================================
 
+
 def get_published_posts(db, page=1, per_page=10):
     """Return published posts, newest first, with pagination.
 
@@ -98,7 +99,7 @@ def get_published_posts(db, page=1, per_page=10):
     offset = (page - 1) * per_page
     posts = db.execute(
         "SELECT * FROM blog_posts WHERE status = 'published' "
-        "ORDER BY published_at DESC LIMIT ? OFFSET ?",
+        'ORDER BY published_at DESC LIMIT ? OFFSET ?',
         (per_page, offset),
     ).fetchall()
 
@@ -115,9 +116,7 @@ def get_post_by_slug(db, slug):
 
 def get_post_by_id(db, post_id):
     """Return a post by ID (any status — for admin use)."""
-    return db.execute(
-        'SELECT * FROM blog_posts WHERE id = ?', (post_id,)
-    ).fetchone()
+    return db.execute('SELECT * FROM blog_posts WHERE id = ?', (post_id,)).fetchone()
 
 
 def get_all_posts(db, status_filter=None):
@@ -132,28 +131,26 @@ def get_all_posts(db, status_filter=None):
             'SELECT * FROM blog_posts WHERE status = ? ORDER BY created_at DESC',
             (status_filter,),
         ).fetchall()
-    return db.execute(
-        'SELECT * FROM blog_posts ORDER BY created_at DESC'
-    ).fetchall()
+    return db.execute('SELECT * FROM blog_posts ORDER BY created_at DESC').fetchall()
 
 
 def get_posts_by_tag(db, tag_slug, page=1, per_page=10):
     """Return published posts matching a tag slug, with pagination."""
     total = db.execute(
-        "SELECT COUNT(*) as cnt FROM blog_posts bp "
-        "JOIN blog_post_tags bpt ON bp.id = bpt.post_id "
-        "JOIN blog_tags bt ON bt.id = bpt.tag_id "
+        'SELECT COUNT(*) as cnt FROM blog_posts bp '
+        'JOIN blog_post_tags bpt ON bp.id = bpt.post_id '
+        'JOIN blog_tags bt ON bt.id = bpt.tag_id '
         "WHERE bp.status = 'published' AND bt.slug = ?",
         (tag_slug,),
     ).fetchone()['cnt']
 
     offset = (page - 1) * per_page
     posts = db.execute(
-        "SELECT bp.* FROM blog_posts bp "
-        "JOIN blog_post_tags bpt ON bp.id = bpt.post_id "
-        "JOIN blog_tags bt ON bt.id = bpt.tag_id "
+        'SELECT bp.* FROM blog_posts bp '
+        'JOIN blog_post_tags bpt ON bp.id = bpt.post_id '
+        'JOIN blog_tags bt ON bt.id = bpt.tag_id '
         "WHERE bp.status = 'published' AND bt.slug = ? "
-        "ORDER BY bp.published_at DESC LIMIT ? OFFSET ?",
+        'ORDER BY bp.published_at DESC LIMIT ? OFFSET ?',
         (tag_slug, per_page, offset),
     ).fetchall()
 
@@ -163,8 +160,7 @@ def get_posts_by_tag(db, tag_slug, page=1, per_page=10):
 def get_recent_posts(db, n=5):
     """Return the N most recent published posts."""
     return db.execute(
-        "SELECT * FROM blog_posts WHERE status = 'published' "
-        "ORDER BY published_at DESC LIMIT ?",
+        "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY published_at DESC LIMIT ?",
         (n,),
     ).fetchall()
 
@@ -173,7 +169,7 @@ def get_featured_posts(db, n=3):
     """Return featured published posts for the landing page."""
     return db.execute(
         "SELECT * FROM blog_posts WHERE status = 'published' AND featured = 1 "
-        "ORDER BY published_at DESC LIMIT ?",
+        'ORDER BY published_at DESC LIMIT ?',
         (n,),
     ).fetchall()
 
@@ -181,6 +177,7 @@ def get_featured_posts(db, n=3):
 # ============================================================
 # TAG OPERATIONS
 # ============================================================
+
 
 def get_all_tags(db):
     """Return all tags ordered by name."""
@@ -190,18 +187,16 @@ def get_all_tags(db):
 def get_tags_for_post(db, post_id):
     """Return all tags attached to a specific post."""
     return db.execute(
-        "SELECT bt.* FROM blog_tags bt "
-        "JOIN blog_post_tags bpt ON bt.id = bpt.tag_id "
-        "WHERE bpt.post_id = ? ORDER BY bt.name",
+        'SELECT bt.* FROM blog_tags bt '
+        'JOIN blog_post_tags bpt ON bt.id = bpt.tag_id '
+        'WHERE bpt.post_id = ? ORDER BY bt.name',
         (post_id,),
     ).fetchall()
 
 
 def get_tag_by_slug(db, slug):
     """Return a tag by its slug, or None."""
-    return db.execute(
-        'SELECT * FROM blog_tags WHERE slug = ?', (slug,)
-    ).fetchone()
+    return db.execute('SELECT * FROM blog_tags WHERE slug = ?', (slug,)).fetchone()
 
 
 def _sync_tags(db, post_id, tag_string):
@@ -218,9 +213,7 @@ def _sync_tags(db, post_id, tag_string):
         slug = _slugify(name)
         if not slug:
             continue
-        row = db.execute(
-            'SELECT id FROM blog_tags WHERE slug = ?', (slug,)
-        ).fetchone()
+        row = db.execute('SELECT id FROM blog_tags WHERE slug = ?', (slug,)).fetchone()
         if row:
             tag_ids.append(row['id'])
         else:
@@ -243,9 +236,19 @@ def _sync_tags(db, post_id, tag_string):
 # WRITE OPERATIONS (admin)
 # ============================================================
 
-def create_post(db, title, summary='', content='', content_format='html',
-                cover_image='', author='', tags='', meta_description='',
-                featured=False):
+
+def create_post(
+    db,
+    title,
+    summary='',
+    content='',
+    content_format='html',
+    cover_image='',
+    author='',
+    tags='',
+    meta_description='',
+    featured=False,
+):
     """Create a new blog post as a draft.
 
     Auto-generates a slug from the title and calculates reading time.
@@ -260,13 +263,22 @@ def create_post(db, title, summary='', content='', content_format='html',
     reading_time = _calculate_reading_time(content, content_format)
 
     cursor = db.execute(
-        "INSERT INTO blog_posts "
-        "(slug, title, summary, content, content_format, cover_image, author, "
-        "featured, reading_time, meta_description) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (slug, title.strip(), summary, content, content_format,
-         cover_image, author, 1 if featured else 0,
-         reading_time, meta_description),
+        'INSERT INTO blog_posts '
+        '(slug, title, summary, content, content_format, cover_image, author, '
+        'featured, reading_time, meta_description) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        (
+            slug,
+            title.strip(),
+            summary,
+            content,
+            content_format,
+            cover_image,
+            author,
+            1 if featured else 0,
+            reading_time,
+            meta_description,
+        ),
     )
     post_id = cursor.lastrowid
 
@@ -277,9 +289,20 @@ def create_post(db, title, summary='', content='', content_format='html',
     return post_id
 
 
-def update_post(db, post_id, title, summary='', content='',
-                content_format='html', cover_image='', author='',
-                tags='', meta_description='', featured=False, slug=None):
+def update_post(
+    db,
+    post_id,
+    title,
+    summary='',
+    content='',
+    content_format='html',
+    cover_image='',
+    author='',
+    tags='',
+    meta_description='',
+    featured=False,
+    slug=None,
+):
     """Update an existing blog post.
 
     If slug is provided and different from auto-generated, uses the
@@ -295,13 +318,23 @@ def update_post(db, post_id, title, summary='', content='',
     reading_time = _calculate_reading_time(content, content_format)
 
     db.execute(
-        "UPDATE blog_posts SET slug=?, title=?, summary=?, content=?, "
-        "content_format=?, cover_image=?, author=?, featured=?, "
-        "reading_time=?, meta_description=?, "
+        'UPDATE blog_posts SET slug=?, title=?, summary=?, content=?, '
+        'content_format=?, cover_image=?, author=?, featured=?, '
+        'reading_time=?, meta_description=?, '
         "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id=?",
-        (slug, title.strip(), summary, content, content_format,
-         cover_image, author, 1 if featured else 0,
-         reading_time, meta_description, post_id),
+        (
+            slug,
+            title.strip(),
+            summary,
+            content,
+            content_format,
+            cover_image,
+            author,
+            1 if featured else 0,
+            reading_time,
+            meta_description,
+            post_id,
+        ),
     )
 
     _sync_tags(db, post_id, tags)

@@ -19,10 +19,10 @@ import pytest
 
 from app import create_app
 
-
 # ---------------------------------------------------------------------------
 # Config helper
 # ---------------------------------------------------------------------------
+
 
 def _write_test_config(tmp_path):
     """Write a minimal test config.yaml to tmp_path and return its path."""
@@ -52,7 +52,7 @@ def _write_test_config(tmp_path):
 def _init_test_db(db_path):
     """Initialize a test database from schema.sql + all migrations."""
     schema_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'schema.sql')
-    with open(schema_path, 'r') as f:
+    with open(schema_path) as f:
         schema = f.read()
     conn = sqlite3.connect(db_path)
     conn.executescript(schema)
@@ -66,7 +66,7 @@ def _init_test_db(db_path):
                 if version <= 1:
                     continue  # baseline is covered by schema.sql
                 migration_path = os.path.join(migrations_dir, fname)
-                with open(migration_path, 'r') as f:
+                with open(migration_path) as f:
                     conn.executescript(f.read())
 
     conn.close()
@@ -75,6 +75,7 @@ def _init_test_db(db_path):
 # ---------------------------------------------------------------------------
 # Core fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def app(tmp_path):
@@ -116,11 +117,10 @@ def auth_client(app):
     require @login_required without testing the login flow itself.
     """
     client = app.test_client()
-    with app.test_request_context():
-        with client.session_transaction() as sess:
-            # Manually set the Flask-Login session cookie
-            sess['_user_id'] = 'admin'
-            sess['_fresh'] = True
+    with app.test_request_context(), client.session_transaction() as sess:
+        # Manually set the Flask-Login session cookie
+        sess['_user_id'] = 'admin'
+        sess['_fresh'] = True
 
     return client
 
@@ -160,29 +160,29 @@ def populated_db(app):
 
     # Sample service
     conn.execute(
-        "INSERT INTO services (title, description, icon, sort_order) VALUES (?, ?, ?, ?)",
+        'INSERT INTO services (title, description, icon, sort_order) VALUES (?, ?, ?, ?)',
         ('Web Development', 'Full-stack web applications', '🌐', 1),
     )
 
     # Sample stat
     conn.execute(
-        "INSERT INTO stats (label, value, suffix, sort_order) VALUES (?, ?, ?, ?)",
+        'INSERT INTO stats (label, value, suffix, sort_order) VALUES (?, ?, ?, ?)',
         ('Projects', 42, '+', 1),
     )
 
     # Sample review token and approved review
     conn.execute(
-        "INSERT INTO review_tokens (token, name, type) VALUES (?, ?, ?)",
+        'INSERT INTO review_tokens (token, name, type) VALUES (?, ?, ?)',
         ('test-token-abc123', 'Alice Smith', 'recommendation'),
     )
     conn.execute(
-        "INSERT INTO reviews (token_id, reviewer_name, reviewer_title, message, type, status, display_tier) "
+        'INSERT INTO reviews (token_id, reviewer_name, reviewer_title, message, type, status, display_tier) '
         "VALUES (1, 'Alice Smith', 'Engineer', 'Great work!', 'recommendation', 'approved', 'featured')",
     )
 
     # Sample content block
     conn.execute(
-        "INSERT INTO content_blocks (slug, title, content) VALUES (?, ?, ?)",
+        'INSERT INTO content_blocks (slug, title, content) VALUES (?, ?, ?)',
         ('about', 'About Me', '<p>Test about content.</p>'),
     )
 
