@@ -46,15 +46,19 @@ def _get_available_locales(app):
     """Return the list of available locale codes from site settings.
 
     Falls back to ['en'] if no locales are configured or the database
-    is not yet initialized.
+    is not yet initialized. Reads through the settings cache so the
+    locale selector (called on every request) doesn't re-query SQLite.
     """
+    from app.services.settings_svc import get_all_cached
+
     # Best-effort: the DB may not yet exist (first boot, migrations pending).
     # Any failure falls through to the ['en'] default.
     with contextlib.suppress(Exception), app.app_context():
         db = get_db()
-        row = db.execute("SELECT value FROM settings WHERE key = 'available_locales'").fetchone()
-        if row and row['value']:
-            return [loc.strip() for loc in row['value'].split(',') if loc.strip()]
+        settings = get_all_cached(db, app.config['DATABASE_PATH'])
+        raw = settings.get('available_locales', '')
+        if raw:
+            return [loc.strip() for loc in raw.split(',') if loc.strip()]
     return ['en']
 
 
@@ -240,13 +244,16 @@ def create_app(config_path=None):
         - {{ site_settings.site_title }}  — from the SQLite settings table
         - {{ site_config.smtp.host }}     — from config.yaml (infrastructure)
 
-        Wrapped in try/except to handle first-run when the DB doesn't exist yet.
+        Reads via the settings cache (Phase 12.1) so each request hits
+        SQLite at most once per cache TTL window. Wrapped in suppress() to
+        handle first-run when the DB doesn't exist yet.
         """
+        from app.services.settings_svc import get_all_cached
+
         settings = {}
         with contextlib.suppress(Exception):
             db = get_db()
-            rows = db.execute('SELECT key, value FROM settings').fetchall()
-            settings = {row['key']: row['value'] for row in rows}
+            settings = get_all_cached(db, app.config['DATABASE_PATH'])
         # Locale information for language switcher and hreflang tags
         available_locales = [
             loc.strip() for loc in settings.get('available_locales', 'en').split(',') if loc.strip()

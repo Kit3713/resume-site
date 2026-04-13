@@ -13,7 +13,19 @@ The registry drives the admin settings page: each entry defines the key,
 type, default value, human-readable label, category for grouping, and
 options for select/preset widgets. Adding a new setting to any feature
 requires only a registry entry and a migration for the default value.
+
+Caching (Phase 12.1):
+    Every HTTP request runs `inject_settings()` which used to issue a
+    `SELECT key, value FROM settings` against SQLite. That's the highest-
+    frequency query in the app. `get_all_cached()` serves it from a
+    process-local TTL cache keyed by database path. Writes (`save_many`,
+    `set_one`) call `invalidate_cache()` so admin edits are visible
+    immediately. The cache is bounded in size to one entry per app
+    instance, so memory pressure is negligible.
 """
+
+import threading
+import time
 
 # Registry of known setting keys with metadata for the admin UI.
 #
@@ -340,10 +352,59 @@ FONT_PAIRINGS = {
 SETTINGS_FORM_KEYS = list(SETTINGS_REGISTRY.keys())
 
 
+# --- Settings cache (Phase 12.1) -------------------------------------------
+# Keyed by database path so multiple app instances in the same process (e.g.,
+# parallel test apps) don't collide. Value is (expires_at_monotonic, mapping).
+# 30s default TTL is short enough that admin reads after a save look fresh
+# even if invalidation is somehow skipped, but long enough to absorb the
+# burst-traffic case where a single page load triggers many template renders.
+_settings_cache: dict[str, tuple[float, dict[str, str]]] = {}
+_settings_cache_lock = threading.Lock()
+DEFAULT_SETTINGS_TTL = 30.0  # seconds
+
+
 def get_all(db):
     """Return all settings as a {key: value} dict."""
     rows = db.execute('SELECT key, value FROM settings').fetchall()
     return {row['key']: row['value'] for row in rows}
+
+
+def get_all_cached(db, db_path, ttl=DEFAULT_SETTINGS_TTL):
+    """Return all settings, served from a process-local TTL cache.
+
+    Use this from hot paths (the request-time context processor) instead of
+    `get_all`. The cache is keyed by `db_path` so each app instance has an
+    isolated entry. Mutating callers MUST call `invalidate_cache()` after
+    committing — `save_many` and `set_one` already do.
+
+    The returned dict is a fresh copy; callers may mutate it without
+    affecting cached state.
+    """
+    now = time.monotonic()
+    with _settings_cache_lock:
+        cached = _settings_cache.get(db_path)
+        if cached and cached[0] > now:
+            return dict(cached[1])
+    # Miss: query outside the lock so a slow SQLite read doesn't block readers
+    settings = get_all(db)
+    with _settings_cache_lock:
+        _settings_cache[db_path] = (now + ttl, settings)
+    return dict(settings)
+
+
+def invalidate_cache(db_path=None):
+    """Drop cached settings.
+
+    Pass a `db_path` to clear one app's cache; pass `None` to clear every
+    cache entry (handy in tests). Called automatically from `save_many` and
+    `set_one`, which clear all entries since they don't know which app's
+    DB they're writing to.
+    """
+    with _settings_cache_lock:
+        if db_path is None:
+            _settings_cache.clear()
+        else:
+            _settings_cache.pop(db_path, None)
 
 
 def get(db, key, default=''):
@@ -374,6 +435,7 @@ def save_many(db, form_data):
         elif key in form_data:
             _upsert(db, key, str(form_data[key]))
     db.commit()
+    invalidate_cache()
 
 
 def set_one(db, key, value):
@@ -386,6 +448,7 @@ def set_one(db, key, value):
         raise KeyError(f'Unknown setting key: {key!r}')
     _upsert(db, key, str(value))
     db.commit()
+    invalidate_cache()
 
 
 def get_grouped_settings(db):

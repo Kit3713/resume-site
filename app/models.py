@@ -97,20 +97,35 @@ def get_skill_domains_with_skills(db):
     """Return visible skill domains, each with a nested list of skills.
 
     Returns a list of dicts: [{'domain': Row, 'skills': [Row, ...]}, ...]
-    This two-query approach (domains, then skills per domain) avoids
-    complex joins and keeps the data structure template-friendly.
+
+    Uses two queries total (domains + a single batched skills query) to
+    avoid the per-domain N+1 the prior implementation produced. Skills are
+    fetched with `domain_id IN (?, ?, ...)` and bucketed in Python so the
+    template-facing shape is unchanged.
     """
     domains = db.execute(
         'SELECT * FROM skill_domains WHERE visible = 1 ORDER BY sort_order'
     ).fetchall()
-    result = []
-    for domain in domains:
-        skills = db.execute(
-            'SELECT * FROM skills WHERE domain_id = ? AND visible = 1 ORDER BY sort_order',
-            (domain['id'],),
-        ).fetchall()
-        result.append({'domain': domain, 'skills': skills})
-    return result
+    if not domains:
+        return []
+
+    domain_ids = [d['id'] for d in domains]
+    # `placeholders` is a string of `?` chars — no caller-supplied values are
+    # interpolated into the SQL. Values still bind through db.execute params.
+    # ruff S608 / bandit B608 both flag this as a false positive.
+    placeholders = ','.join(['?'] * len(domain_ids))
+    skills_sql = (
+        'SELECT * FROM skills '  # noqa: S608  # nosec B608
+        f'WHERE domain_id IN ({placeholders}) AND visible = 1 '
+        'ORDER BY sort_order'
+    )
+    skills = db.execute(skills_sql, domain_ids).fetchall()
+
+    by_domain: dict[int, list] = {d['id']: [] for d in domains}
+    for skill in skills:
+        by_domain[skill['domain_id']].append(skill)
+
+    return [{'domain': d, 'skills': by_domain[d['id']]} for d in domains]
 
 
 # ============================================================

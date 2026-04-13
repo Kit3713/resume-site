@@ -95,6 +95,14 @@ def app(tmp_path):
 
     _init_test_db(str(tmp_path / 'test.db'))
 
+    # Drop any settings-cache entries left over from previous tests. Cache keys
+    # are db paths (unique per tmp_path) so cross-test bleed is unlikely, but
+    # tests that write to the settings table directly (bypassing save_many)
+    # would otherwise see stale reads within the 30s TTL window.
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
     yield flask_app
 
 

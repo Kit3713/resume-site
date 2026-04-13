@@ -194,6 +194,33 @@ def get_tags_for_post(db, post_id):
     ).fetchall()
 
 
+def get_tags_for_posts(db, post_ids):
+    """Return {post_id: [tag rows]} for a batch of posts in one query.
+
+    Replaces the per-post call to `get_tags_for_post` on listing pages
+    (Phase 12.1 N+1 elimination). Posts with no tags are present in the
+    returned dict mapped to an empty list.
+
+    Empty input returns an empty dict (avoids a no-rows query).
+    """
+    if not post_ids:
+        return {}
+    # `placeholders` is a string of `?` chars — no caller-supplied values are
+    # interpolated into the SQL. Values still bind through db.execute params.
+    # ruff S608 / bandit B608 both flag this as a false positive.
+    placeholders = ','.join(['?'] * len(post_ids))
+    sql = (
+        'SELECT bpt.post_id AS _post_id, bt.* FROM blog_tags bt '  # noqa: S608  # nosec B608
+        'JOIN blog_post_tags bpt ON bt.id = bpt.tag_id '
+        f'WHERE bpt.post_id IN ({placeholders}) ORDER BY bt.name'
+    )
+    rows = db.execute(sql, list(post_ids)).fetchall()
+    result: dict[int, list] = {pid: [] for pid in post_ids}
+    for row in rows:
+        result[row['_post_id']].append(row)
+    return result
+
+
 def get_tag_by_slug(db, slug):
     """Return a tag by its slug, or None."""
     return db.execute('SELECT * FROM blog_tags WHERE slug = ?', (slug,)).fetchone()

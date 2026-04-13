@@ -27,6 +27,7 @@ from app.services.blog import (
     get_published_posts,
     get_tag_by_slug,
     get_tags_for_post,
+    get_tags_for_posts,
     render_post_content,
 )
 
@@ -40,8 +41,15 @@ def _check_blog_enabled(db):
 
 
 def _attach_tags(db, posts):
-    """Attach tag lists to each post for template rendering."""
-    return [{'post': p, 'tags': get_tags_for_post(db, p['id'])} for p in posts]
+    """Attach tag lists to each post for template rendering.
+
+    Uses the batched `get_tags_for_posts` to fetch every post's tags in
+    one query, replacing the prior O(N) call to `get_tags_for_post`.
+    """
+    if not posts:
+        return []
+    tags_by_post = get_tags_for_posts(db, [p['id'] for p in posts])
+    return [{'post': p, 'tags': tags_by_post.get(p['id'], [])} for p in posts]
 
 
 @blog_bp.route('/blog')

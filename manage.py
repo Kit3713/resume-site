@@ -13,6 +13,7 @@ Commands:
     generate-token       Create a review invitation token for a trusted contact.
     list-reviews         Display reviews filtered by status (pending/approved/rejected).
     purge-analytics      Delete page view records older than N days.
+    query-audit          Run EXPLAIN QUERY PLAN on documented hot queries.
     translations         Manage translation files (extract, init, compile, update).
 
 Usage:
@@ -25,6 +26,7 @@ Usage:
     python manage.py generate-token --name "John Doe" --type recommendation
     python manage.py list-reviews --status pending
     python manage.py purge-analytics --days 90
+    python manage.py query-audit
     python manage.py translations extract
     python manage.py translations init es
     python manage.py translations compile
@@ -465,6 +467,144 @@ def purge_analytics(args):
     print(f'Purged {count} page view records older than {args.days} days.')
 
 
+# =============================================================
+# QUERY AUDIT (Phase 12.1)
+# =============================================================
+#
+# Each entry is `(label, sql, params, expected_scan)` — set expected_scan
+# to True for queries where a full scan is the right plan (e.g. SELECT *
+# with no WHERE on a tiny table). Those entries still print but don't fail
+# the audit. Everything else flagged as a SCAN counts as a regression and
+# the command exits non-zero.
+#
+# `manage.py query-audit` runs EXPLAIN QUERY PLAN against the real DB and
+# prints each plan, marking it INDEX / SCAN / OK-SCAN.
+#
+# Adding a new hot path? Append a tuple here and re-run the audit.
+
+_AUDIT_QUERIES = [
+    (
+        'inject_settings (every request)',
+        'SELECT key, value FROM settings',
+        (),
+        # Settings is ~30 rows and we always want all of them. A full scan
+        # is the optimal plan; the perf concern is mitigated by the TTL
+        # cache in app/services/settings_svc.py.
+        True,
+    ),
+    (
+        'public blog index',
+        "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY published_at DESC LIMIT 10",
+        (),
+        False,
+    ),
+    (
+        'blog post by slug',
+        "SELECT * FROM blog_posts WHERE slug = ? AND status = 'published'",
+        ('example-slug',),
+        False,
+    ),
+    (
+        'blog tags by slug → posts (JOIN)',
+        'SELECT bp.* FROM blog_posts bp '
+        'JOIN blog_post_tags bpt ON bp.id = bpt.post_id '
+        'JOIN blog_tags bt ON bt.id = bpt.tag_id '
+        "WHERE bp.status = 'published' AND bt.slug = ? "
+        'ORDER BY bp.published_at DESC LIMIT 10',
+        ('example-tag',),
+        False,
+    ),
+    (
+        'tags-for-posts batch loader',
+        'SELECT bpt.post_id, bt.* FROM blog_tags bt '
+        'JOIN blog_post_tags bpt ON bt.id = bpt.tag_id '
+        'WHERE bpt.post_id IN (?, ?, ?) ORDER BY bt.name',
+        (1, 2, 3),
+        False,
+    ),
+    (
+        'public testimonials by tier',
+        "SELECT * FROM reviews WHERE status = 'approved' AND display_tier = ? "
+        'ORDER BY created_at DESC',
+        ('featured',),
+        False,
+    ),
+    (
+        'portfolio photos by tier',
+        'SELECT * FROM photos WHERE display_tier = ? ORDER BY sort_order',
+        ('featured',),
+        False,
+    ),
+    (
+        'contact rate-limit check',
+        'SELECT COUNT(*) FROM contact_submissions WHERE ip_address = ? AND created_at > ?',
+        ('127.0.0.1', '2026-01-01T00:00:00Z'),
+        False,
+    ),
+    (
+        'analytics IP lookup',
+        'SELECT COUNT(*) FROM page_views WHERE ip_address = ?',
+        ('127.0.0.1',),
+        False,
+    ),
+    (
+        'skills by domain (batch IN)',
+        'SELECT * FROM skills WHERE domain_id IN (?, ?, ?) AND visible = 1 ORDER BY sort_order',
+        (1, 2, 3),
+        False,
+    ),
+]
+
+
+def query_audit(args):  # noqa: ARG001 — argparse passes args even when unused
+    """Run EXPLAIN QUERY PLAN on each documented hot query.
+
+    Each query is tagged GOOD / SCAN based on whether SQLite picked an
+    index or fell back to a full table scan. The exit code is 0 if every
+    query is index-backed, 1 if any falls back to a scan — useful for
+    catching regressions in CI later if we choose to wire this up.
+    """
+    db_path = _get_db_path()
+    if not os.path.exists(db_path):
+        print(f'ERROR: database not found at {db_path}', file=sys.stderr)
+        print('Run `python manage.py init-db` first.', file=sys.stderr)
+        sys.exit(2)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    print(f'Query audit against {db_path}\n')
+    print('-' * 72)
+
+    unexpected_scan = False
+    for label, sql, params, expected_scan in _AUDIT_QUERIES:
+        plan_rows = conn.execute(f'EXPLAIN QUERY PLAN {sql}', params).fetchall()
+        plan_text = '\n  '.join(row['detail'] for row in plan_rows)
+        # SQLite labels full table scans with "SCAN <table>" and indexed
+        # access with "SEARCH ... USING [COVERING] INDEX".
+        is_scan = any('SCAN' in row['detail'] for row in plan_rows)
+        if not is_scan:
+            marker = '✓ INDEX'
+        elif expected_scan:
+            marker = '~ OK-SCAN'
+        else:
+            marker = '✗ SCAN'
+            unexpected_scan = True
+        print(f'\n[{marker}] {label}')
+        print(f'  SQL: {sql}')
+        print(f'  PLAN:\n  {plan_text}')
+
+    print('\n' + '-' * 72)
+    if unexpected_scan:
+        print('Unexpected full table scans found. Either add an index or')
+        print('mark the entry expected_scan=True with a justification comment.')
+    else:
+        print('All audited queries use an expected plan. Schema is healthy.')
+
+    conn.close()
+    sys.exit(1 if unexpected_scan else 0)
+
+
 def translations(args):
     """Manage translation message catalogs.
 
@@ -624,6 +764,9 @@ def main():
     purge_parser = subparsers.add_parser('purge-analytics', help='Purge old analytics data')
     purge_parser.add_argument('--days', type=int, default=90, help='Days to retain')
 
+    # Query audit (Phase 12.1) — runs EXPLAIN QUERY PLAN on hot queries
+    subparsers.add_parser('query-audit', help='EXPLAIN QUERY PLAN on documented hot queries')
+
     # Translation management
     trans_parser = subparsers.add_parser('translations', help='Manage translation files')
     trans_parser.add_argument(
@@ -644,6 +787,7 @@ def main():
         'generate-token': generate_token,
         'list-reviews': list_reviews,
         'purge-analytics': purge_analytics,
+        'query-audit': query_audit,
         'translations': translations,
     }
 
