@@ -64,6 +64,7 @@ These items were explicitly marked "deferred to v0.3.0" in the v0.2.0 roadmap:
 | Mutation testing for test suite quality validation | 18 |
 | Alerting rules, Grafana dashboards, synthetic monitoring | 18 |
 | Container hardening and deployment maturity | 21 |
+| **Ship every release as a published GHCR container image** | 21 |
 
 ### Deferred to v0.4.0+
 
@@ -904,6 +905,40 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
   - Upgrade procedure (pull new image → backup → migrate → restart → verify)
 - [ ] **Kubernetes / Nomad deployment examples:** Commented-out example manifests (not officially supported, but the image is designed to work in orchestrated environments)
 
+### 21.5 — Release Publication (Container is the Shipping Artifact)
+
+*The container image — not source-tree installs — is the canonical v0.3.0 release. Every
+release of this GitHub project ships at minimum as a published OCI image. Source installs
+remain supported for development, but the container is the artifact the docs, the
+deployment guide, and the support matrix point at.*
+
+- [ ] **GHCR is the release surface:** Every tagged release publishes to
+      `ghcr.io/<owner>/resume-site` via the existing CI workflow (`.github/workflows/ci.yml`,
+      `publish` job). No tag is considered released until the image is pushed and pullable.
+- [ ] **Multi-arch image:** Each release ships `linux/amd64` and `linux/arm64` manifests
+      under the same tag (already wired via `docker/build-push-action` + QEMU). Verify both
+      architectures pull and start cleanly before promoting any `vN.N.N` tag to `latest`.
+- [ ] **Tag matrix per release:** Push three immutable tags plus one moving tag for every
+      stable release: `vMAJOR.MINOR.PATCH`, `vMAJOR.MINOR`, `vMAJOR`, and `latest`. The
+      moving `:main` tag (already produced by `publish-main`) is for tracking trunk only —
+      never recommended in production docs.
+- [ ] **Release notes link to the image:** Every GitHub Release entry must include the
+      exact pull command (`podman pull ghcr.io/<owner>/resume-site:vX.Y.Z`), the image
+      digest (`sha256:...`), and the `cosign verify` command for the signed image (Phase
+      21.3). Don't ship a release without these three lines.
+- [ ] **Smoke-test the published image, not the source:** The release checklist runs
+      `podman run` against the freshly-published GHCR tag (with a minimal `config.yaml`)
+      and verifies `/healthz` and `/readyz` before announcing the release. This catches
+      registry-side regressions (auth, manifest, multi-arch missing variants) that source
+      tests miss.
+- [ ] **Document the container as the recommended install path:** Update `README.md` and
+      `docs/PRODUCTION.md` so the first install instruction is `podman pull` /
+      `docker pull` from GHCR. Source-tree install drops to a "Development" sub-section.
+      Quadlet / compose examples reference the GHCR image by digest-pinned tag.
+- [ ] **Stop-ship gate:** A failed publish (CI red on `publish` job, image not pullable,
+      cosign verification failure, or smoke test failure on the published image) is a
+      release blocker. Re-tag and re-run rather than back-fill a broken release.
+
 ---
 
 ## Phase Sequencing
@@ -1136,3 +1171,10 @@ v0.3.0 is ready to ship when:
 32. `PERFORMANCE.md`, `THREAT_MODEL.md`, `PLUGINS.md`, `docs/PRODUCTION.md`, `docs/OBSERVABILITY_RUNBOOK.md`, `tests/TESTING_STANDARDS.md`, `docs/alerting-rules.yaml`, and `docs/grafana-dashboard.json` are complete
 33. `docs/PENTEST_CHECKLIST.md` exists and has been used at least once
 34. Synthetic monitoring scripts (`tests/synthetic/`) are functional and documented
+
+**Release / Distribution:**
+35. The `v0.3.0` tag has published a multi-arch (`linux/amd64` + `linux/arm64`) container image to `ghcr.io/<owner>/resume-site` and the image is publicly pullable
+36. The published image carries the `vMAJOR.MINOR.PATCH`, `vMAJOR.MINOR`, `vMAJOR`, and `latest` tags, all pointing at the same digest
+37. The image is signed with `cosign` (keyless / OIDC) and `cosign verify` succeeds against a clean machine
+38. The GitHub Release notes for `v0.3.0` include the exact `podman pull` command, the image digest, and the `cosign verify` command
+39. A clean-machine smoke test (`podman run` against the published GHCR tag with a minimal `config.yaml`) reaches `/healthz` and `/readyz` successfully before the release is announced
