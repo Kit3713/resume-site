@@ -24,6 +24,12 @@ PublishPort=8080:8080
 Volume=%h/resume-site/config.yaml:/app/config.yaml:ro,Z
 Volume=resume-site-data:/app/data:Z
 Volume=resume-site-photos:/app/photos:Z
+Volume=resume-site-backups:/app/backups:Z
+
+# Direct `manage.py backup` archives at the mounted volume so they
+# persist across container rebuilds. The Phase 17.2 systemd timer
+# (resume-site-backup.timer) reads from the same path on the host.
+Environment=RESUME_SITE_BACKUP_DIR=/app/backups
 
 HealthCmd=curl -f http://localhost:8080/healthz || exit 1
 HealthInterval=30s

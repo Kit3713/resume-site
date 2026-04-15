@@ -415,6 +415,45 @@ def create_app(config_path=None):
             )
         return exc
 
+    # --- 8e. security.rate_limited event emission (Phase 19.1) ---
+    # Catches every 429 response (Flask-Limiter and any other source)
+    # and emits the canonical event so subscribers (alerts, abuse
+    # dashboards, future webhook delivery) see a uniform shape. We
+    # deliberately re-raise the original exception so Flask still uses
+    # its normal 429 response — this handler is observability only,
+    # not control flow.
+    @app.errorhandler(429)
+    def _handle_429(exc):
+        from app.events import Events as _Events
+        from app.events import emit as _emit
+
+        # Best-effort payload: the URL rule (template, not the rendered
+        # path with values) keeps cardinality bounded for any subscriber
+        # that aggregates by endpoint. Fallback to '<unmatched>' for
+        # paths that didn't match any route (rate-limited at a global
+        # limit before dispatch).
+        try:
+            endpoint = request.url_rule.rule if request.url_rule else '<unmatched>'
+        except RuntimeError:
+            # No request context — exotic, but defend against it so the
+            # observability hook can never blow up the response.
+            endpoint = '<no-request-context>'
+
+        with contextlib.suppress(Exception):
+            _emit(
+                _Events.SECURITY_RATE_LIMITED,
+                request_id=g.get('request_id', '-') if g else '-',
+                ip_hash=g.get('client_ip_hash', '-') if g else '-',
+                method=request.method if request else '-',
+                endpoint=endpoint,
+                # Flask-Limiter sets exc.description to the limit string
+                # (e.g. '5 per 1 minute'); other sources may not.
+                limit=getattr(exc, 'description', None) or '',
+            )
+        # Hand the exception back to Flask so the original 429 response
+        # (and any Retry-After header set by Flask-Limiter) is still served.
+        return exc
+
     # --- 9. Security response headers ---
     @app.after_request
     def set_security_headers(response):
@@ -492,7 +531,32 @@ def create_app(config_path=None):
             'current_locale': current_locale,
         }
 
-    # --- 11. Ensure storage directories exist ---
+    # --- 11. Template filters (Phase 17.2) ---
+    # ``time_ago`` renders ISO-8601 timestamps as "5 minutes ago" /
+    # "yesterday" / etc. First consumer is the admin dashboard backup
+    # health card; deliberately generic so future widgets can reuse it.
+    from app.services.time_helpers import time_ago
+
+    app.jinja_env.filters['time_ago'] = time_ago
+
+    # --- 12. Webhook bus subscribers (Phase 19.2) ---
+    # Subscribes one handler per Events.* constant so every emission
+    # fans out to enabled webhooks. The handler closure captures the
+    # database path so it works even when there's no Flask request
+    # context (e.g. CLI invocations of `manage.py backup` that fire
+    # backup.completed). The master `webhooks_enabled` toggle is read
+    # at dispatch time, so admin edits propagate within the settings
+    # cache TTL — no restart required.
+    #
+    # ``register_bus_handlers`` is idempotent: re-registering against
+    # the same db_path drops the previous closures first. This keeps
+    # the test suite from accumulating duplicates across the autouse
+    # ``clear()`` fixture in tests/test_events.py and tests/test_webhooks.py.
+    from app.services.webhooks import register_bus_handlers
+
+    register_bus_handlers(app.config['DATABASE_PATH'])
+
+    # --- 13. Ensure storage directories exist ---
     os.makedirs(os.path.dirname(app.config['DATABASE_PATH']) or '.', exist_ok=True)
     os.makedirs(app.config['PHOTO_STORAGE'], exist_ok=True)
 

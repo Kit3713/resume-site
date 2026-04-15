@@ -315,11 +315,133 @@ Multi-arch support: `linux/amd64` and `linux/arm64`.
 
 ### Backup
 
-Back up these paths to preserve your site:
+resume-site ships a built-in backup CLI that produces a single
+timestamped `.tar.gz` containing the SQLite DB (online-backup API,
+safe to take while the site is serving traffic), the photo storage
+directory, and `config.yaml`. The Phase 17.2 systemd timer drives
+this on a daily schedule.
 
-1. `config.yaml` — your configuration
-2. The data volume — `podman volume export resume-site-data > backup-data.tar`
-3. The photos volume — `podman volume export resume-site-photos > backup-photos.tar`
+#### Manual / on-demand
+
+```bash
+# Inside the container:
+podman exec resume-site python manage.py backup
+podman exec resume-site python manage.py backup --list
+podman exec resume-site python manage.py backup --prune --keep 7
+podman exec resume-site python manage.py backup --db-only      # smaller, faster
+
+# Via the REST API (Phase 16.4) — token must carry `admin` scope:
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"db_only": false}' \
+     https://your-site/api/v1/admin/backup
+```
+
+Archives land in `RESUME_SITE_BACKUP_DIR` (defaults to `/app/backups`,
+mapped to the `resume-site-backups` named volume in both
+`compose.yaml` and the Quadlet unit). Inspect the host-side path with
+`podman volume inspect resume-site-backups`.
+
+#### Scheduled (systemd timer)
+
+For Quadlet / systemd deployments, the repository ships
+`resume-site-backup.service` and `resume-site-backup.timer`. They
+shell out to `podman exec resume-site python manage.py backup
+--prune --keep 7` once per day with a 30-minute jitter:
+
+```bash
+# Per-user (rootless):
+cp resume-site-backup.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now resume-site-backup.timer
+systemctl --user list-timers resume-site-backup.timer
+
+# System-wide:
+sudo cp resume-site-backup.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now resume-site-backup.timer
+```
+
+Override the schedule or retention without forking the unit files:
+
+```bash
+systemctl --user edit resume-site-backup.timer    # change OnCalendar
+systemctl --user edit resume-site-backup.service  # change RESUME_SITE_KEEP
+```
+
+The admin dashboard's "Last Backup" card shows the most recent
+successful run (read from the `backup_last_success` settings row that
+`create_backup` writes on every success), the archive count, and the
+total on-disk size.
+
+#### Compose-based scheduling (no systemd)
+
+If you're not using Quadlets, schedule the same command from the host
+crontab:
+
+```cron
+0 2 * * * podman compose -f /path/to/compose.yaml exec -T resume-site \
+          python manage.py backup --prune --keep 7
+```
+
+#### Restore
+
+```bash
+# List candidate archives:
+podman exec resume-site python manage.py backup --list
+
+# Restore (will refuse without --force on a non-TTY):
+podman exec -it resume-site python manage.py restore \
+    --from /app/backups/resume-site-backup-20260415-020000.tar.gz
+```
+
+`restore` always writes a `pre-restore-*` sidecar before extraction so
+a botched restore can be reversed. The extractor rejects path
+traversal, absolute paths, and symlinks (see `_safe_extract` in
+`app/services/backups.py`).
+
+#### Offsite copies
+
+The `resume-site-backups` volume is local to the host. For disaster
+recovery, mirror it offsite. Example with rclone to an S3-compatible
+bucket:
+
+```bash
+rclone sync /var/lib/containers/storage/volumes/resume-site-backups/_data \
+            s3:my-bucket/resume-site/ --exclude '*.tmp'
+```
+
+Run from the same systemd timer (add a second `ExecStart=` line to
+`resume-site-backup.service`, or chain a separate timer that runs 30
+minutes after the local backup completes).
+
+#### Encryption
+
+For sensitive deployments, wrap each archive with `gpg` after it's
+written. Example post-backup hook (drop-in override at
+`~/.config/systemd/user/resume-site-backup.service.d/encrypt.conf`):
+
+```ini
+[Service]
+ExecStartPost=/bin/sh -c 'for f in /var/lib/containers/storage/volumes/resume-site-backups/_data/*.tar.gz; do \
+    [ -f "$f.gpg" ] || gpg --yes --batch --recipient backups@example.com --encrypt "$f"; \
+done'
+```
+
+#### Volume export (legacy / belt-and-suspenders)
+
+The original volume-export approach still works as a secondary
+safety net:
+
+```bash
+podman volume export resume-site-data    > backup-data.tar
+podman volume export resume-site-photos  > backup-photos.tar
+podman volume export resume-site-backups > backup-archives.tar
+```
+
+This is coarser than `manage.py backup` (raw volume contents, no
+online-backup safety on the SQLite file) but useful when you want a
+single-shot capture of the entire deployment state.
 
 ## Upgrading
 

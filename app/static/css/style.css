@@ -806,6 +806,20 @@ ul, ol {
     color: var(--color-text-secondary);
 }
 
+/* Phase 17.2 — sub-line under a dashboard card value (e.g. backup count + size). */
+.admin-card__meta {
+    font-size: var(--fs-sm);
+    color: var(--color-text-tertiary);
+    margin-top: 2px;
+}
+
+/* Phase 17.2 — caption under an admin-section heading (used by the Recent Backups widget). */
+.admin-section__caption {
+    font-size: var(--fs-sm);
+    color: var(--color-text-tertiary);
+    margin: -4px 0 12px;
+}
+
 .admin-dashboard__note {
     font-size: var(--fs-sm);
     color: var(--color-text-tertiary);

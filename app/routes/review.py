@@ -20,6 +20,7 @@ from flask_babel import gettext as _
 
 from app import limiter
 from app.db import get_db
+from app.events import Events, emit
 from app.models import create_review, mark_token_used
 from app.services.tokens import validate_token
 
@@ -70,7 +71,7 @@ def review_form(token):
             return render_template('public/review.html', error=None, token_data=token_row)
 
         # Create the review with 'pending' status (awaiting admin approval)
-        create_review(
+        review_id = create_review(
             db,
             token_id=token_row['id'],
             reviewer_name=reviewer_name,
@@ -85,6 +86,19 @@ def review_form(token):
 
         # Mark the token as used so it cannot be resubmitted
         mark_token_used(db, token_row['id'])
+
+        # Phase 19.1 event bus — fire `review.submitted` so subscribers
+        # (admin email notifier, future webhook delivery) can react. The
+        # status is implicitly 'pending' — admin still has to approve via
+        # the review manager before the review goes public.
+        emit(
+            Events.REVIEW_SUBMITTED,
+            review_id=review_id,
+            token_id=token_row['id'],
+            review_type=token_row['type'],
+            has_rating=rating is not None,
+            source='public_token',
+        )
 
         flash(_('Thank you! Your review has been submitted for approval.'), 'success')
         return redirect(url_for('public.index'))

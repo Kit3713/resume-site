@@ -461,10 +461,10 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 ### 16.5 — API Documentation
 
-- [ ] Generate OpenAPI 3.0 specification (`openapi.yaml`) — hand-written, not auto-generated (keeps it clean and intentional)
-- [ ] Serve interactive docs at `/api/v1/docs` using Swagger UI (loaded from CDN, behind a `api_docs_enabled` feature flag, default off)
-- [ ] Include authentication examples, error code catalog, and pagination guide
-- [ ] API changelog section in `CHANGELOG.md` for tracking breaking changes
+- [x] **OpenAPI 3.0 spec:** `docs/openapi.yaml` — hand-authored, 34 operations across 27 paths. Bearer security scheme, reusable schemas (`Error`, `Pagination`, every resource shape), reusable responses (`NotFound`, `Unauthorized`, `Forbidden`, `RateLimited`, `ValidationError`, `UnsupportedMediaType`), tags `Public` / `Write` / `Admin`. Drift-guarded by `tests/test_openapi_spec.py` (18 tests) which asserts the spec ↔ Flask URL-map sets are byte-identical.
+- [x] **Swagger UI:** `GET /api/v1/docs` renders a standalone template wired to `swagger-ui-dist@5.17.14` (pinned, CDN). Init lives in `app/static/js/swagger-init.js` so the page never relies on CSP `'unsafe-inline'` for scripts. `GET /api/v1/openapi.yaml` and `/openapi.json` serve the spec with ETag + 304 round-tripping. All three routes sit behind the `api_docs_enabled` setting (default `false`, Security category) and 404 when disabled — matches the `/metrics` and disabled-blog "don't leak existence" pattern.
+- [x] **Documentation completeness:** auth examples (Bearer header + scope semantics), error-code catalog (enum on the `Error` schema, cross-checked against `app/routes/api.py` literals by `test_error_code_catalog_covers_source_codes`), and a pagination guide (envelope + `page`/`per_page` clamping rules) all live in `info.description` so Swagger UI renders them at the top.
+- [x] **CHANGELOG:** "Added — Phase 16.5: OpenAPI 3.0 Documentation" entry under Unreleased records the spec file, three routes, the new setting, and the test additions.
 
 ### 16.6 — API Tests
 
@@ -491,12 +491,12 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 ### 17.2 — Scheduled Backups (Container-Native)
 
-- [ ] **Systemd timer unit:** `resume-site-backup.timer` and `resume-site-backup.service` — runs `podman exec resume-site python manage.py backup --prune --keep 7` on a configurable schedule (daily at 2 AM by default)
-- [ ] **Quadlet integration:** Update `resume-site.container` Quadlet file to reference the backup volume mount
-- [ ] **Backup volume:** Add a `resume-site-backups` volume to `compose.yaml`. Document mount point and recommended host path
-- [ ] **Compose-based schedule:** Document using `podman compose exec` in a cron job or systemd timer for users not using Quadlets
-- [ ] **Backup health:** ~~Add a `backup_last_success` setting that `manage.py backup` updates on completion.~~ *(setting write shipped with 17.1 — the settings-table row is maintained by `create_backup` on every successful run, including `--db-only`. The admin-dashboard "Last backup: X ago" widget is still pending.)*
-- [ ] **Documentation:** Dedicated "Backups" section in README covering: automatic setup (Quadlet/timer), manual invocation, restore procedure, offsite backup strategies (rsync, rclone, S3-compatible), and backup encryption (gpg wrapper example)
+- [x] **Systemd timer unit:** `resume-site-backup.timer` + `resume-site-backup.service` ship at the repo root. The service runs `podman exec resume-site python manage.py backup --prune --keep ${RESUME_SITE_KEEP}` (default 7) and depends on `resume-site.service` so the timer can't fire while the container is starting. The timer fires daily at 02:00 local time with `RandomizedDelaySec=30min` to avoid storage stampedes across a fleet, and `Persistent=true` so a host that was off at 02:00 catches up on next boot. Both retention count and schedule are overridable via `systemctl --user edit` without forking the unit files.
+- [x] **Quadlet integration:** `resume-site.container` now mounts `resume-site-backups:/app/backups:Z` and sets `Environment=RESUME_SITE_BACKUP_DIR=/app/backups` so the CLI writes archives to the persistent volume by default.
+- [x] **Backup volume:** `resume-site-backups` declared in `compose.yaml`'s `volumes:` block and mounted at `/app/backups` on the service. README documents the host-side path discovery via `podman volume inspect`.
+- [x] **Compose-based schedule:** README ships an `OnCalendar`-equivalent cron snippet (`0 2 * * * podman compose ... exec -T ... manage.py backup --prune --keep 7`) for operators who don't use systemd / Quadlets.
+- [x] **Backup health:** Admin dashboard now carries a "Last Backup" card (rendered via the new `time_ago` Jinja filter at `app/services/time_helpers.py`) showing the most recent `backup_last_success` timestamp, the total archive count, and the total on-disk size. A "Recent Backups" table lists the five newest archives with size + relative mtime. Tested in `tests/test_admin.py::test_dashboard_backup_card_*` (no-backups → "never" / populated → counts and listing).
+- [x] **Documentation:** README "Backup" section rewritten: manual invocation (CLI + REST API), systemd timer install (rootless + system-wide) with `systemctl edit` recipes, compose-cron alternative, restore procedure, offsite mirroring example (rclone), per-archive gpg encryption via `ExecStartPost=` drop-in, and the original `podman volume export` left as a belt-and-suspenders option.
 
 ---
 
@@ -764,22 +764,26 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 - [x] **Initial emissions wired:**
   - `security.internal_error` fires from the `errorhandler(Exception)` in `app/__init__.py`. Payload: `request_id`, `method`, `path`, `exception_type`, `category`. Payloads carry no traceback / exception message so third-party subscribers can't leak internals. Never fires for `HTTPException` subclasses (404/403 are not bugs).
   - `backup.completed` fires from `app/services/backups.create_backup` after a successful archive. Payload: `archive_path`, `db_only`, `size_bytes`. Event failures are swallowed so a misbehaving subscriber never breaks a backup.
-- [ ] **Remaining emissions** (`contact.submitted`, `review.submitted`, `review.approved`, `blog.published`, `blog.updated`, `settings.changed`, `photo.uploaded`, `api.token_created`, `security.login_failed`, `security.rate_limited`) — wiring up deferred to per-domain commits; the bus is the only foundational bit.
+- [x] **Remaining emissions wired:** all ten remaining canonical events now fire from their natural call sites:
+  - `contact.submitted` — `app/routes/contact.py` (HTML form) + `app/routes/api.py` (REST). Mirrors API shape with `source='public_form'`. Honeypot path still fires with `is_spam=true`.
+  - `review.submitted` — `app/routes/review.py` (token URL). Carries `review_type` (inherited from token) and `has_rating`.
+  - `review.approved` — `app/routes/admin.py:reviews_update` (admin UI) + `app/routes/api.py` (REST). Approve only; reject / update_tier remain admin housekeeping.
+  - `blog.published` / `blog.updated` — `app/routes/blog_admin.py` for every new/edit/delete path via the centralised `_blog_event_payload` helper. Delete fires `blog.updated` with `status='deleted'` (matches `api.blog_delete`).
+  - `photo.uploaded` — `app/routes/admin.py:photos_upload` (admin UI) + `app/routes/api.py` (REST).
+  - `settings.changed` — `app/routes/admin.py:settings` (admin UI, csrf_token excluded from keys list) + `app/routes/api.py` (REST).
+  - `api.token_created` — `app/routes/admin.py:api_tokens_generate` (admin UI) + `manage.py generate-api-token` / `rotate-api-token` (CLI).
+  - `security.login_failed` — `app/routes/admin.py:login` for both invalid-credentials and IP-locked branches.
+  - `security.rate_limited` — new `errorhandler(429)` in `app/__init__.py`. Observability-only: re-raises so Flask's default 429 response (and Flask-Limiter's `Retry-After`) reaches the client unchanged. Endpoint label uses the URL rule template, not the rendered path, to bound cardinality.
 - [ ] **Register analytics / activity log / metrics as event handlers** — deferred. Current code calls those subsystems directly from route handlers, which still works. The bus is now available whenever a specific migration becomes valuable (e.g. moving photo upload to emit + subscriber in one commit).
 
 ### 19.2 — Webhook Delivery
 
-- [ ] **Webhook table:** `webhooks` table: `id`, `name`, `url`, `secret` (for HMAC signing), `events` (JSON array of event names, or `["*"]` for all), `enabled`, `created_at`, `last_triggered_at`, `failure_count`
-- [ ] Migration: `009_webhooks.sql`
-- [ ] **Delivery mechanism:** On event emit, for each matching webhook:
-  - Build JSON payload: `{"event": "blog.published", "timestamp": "...", "data": {...}}`
-  - Sign with HMAC-SHA256 using the webhook's secret → `X-Webhook-Signature` header
-  - POST to the webhook URL with a 5-second timeout
-  - Log success/failure in `webhook_deliveries` table (event, url, status_code, response_time_ms, error_message)
-  - On failure: increment `failure_count`. After 10 consecutive failures, auto-disable the webhook and log a warning
-- [ ] **Delivery is asynchronous:** Use a background thread (not blocking the request). For single-process deployments, use `threading.Thread(daemon=True)`. Document that high-volume webhook delivery should use an external queue (RabbitMQ, Redis) — not in scope for v0.3.0
-- [ ] **Admin UI:** Webhook management page — list webhooks, create, edit, delete, test (fires a `webhook.test` event), view delivery log (last 50 deliveries per webhook with status codes and timing)
-- [ ] **API endpoints:** CRUD for webhooks via the REST API (`/api/v1/admin/webhooks`)
+- [x] **Webhook table:** `webhooks` (id, name, url, secret, events JSON, enabled, failure_count, created_at, last_triggered_at) shipped in `migrations/009_webhooks.sql`. `["*"]` in the events column means "every event"; otherwise an exact-match list of `Events.*` strings.
+- [x] **Migration:** `migrations/009_webhooks.sql` ships both `webhooks` and `webhook_deliveries` (per-attempt log; cascades on webhook delete) with hot-path indexes on `webhooks(enabled)` and `webhook_deliveries(webhook_id, created_at DESC)`.
+- [x] **Delivery mechanism:** `app/services/webhooks.py:deliver_now` builds the canonical `{event, timestamp, data}` envelope (sorted JSON for stable signatures), HMAC-SHA256-signs it with the row's secret into `X-Webhook-Signature`, sets `X-Webhook-Event` + `Content-Type: application/json` + `User-Agent: resume-site-webhooks/1.0`, and POSTs with the configured timeout (default 5s, clamped to [1, 60]). HTTP errors / network errors / timeouts are captured in the returned `DeliveryResult` (status_code 0 for non-HTTP failures) rather than raised. `record_delivery` writes the result to `webhook_deliveries` and bumps `webhooks.last_triggered_at` in the same connection. `increment_failures` flips `enabled=0` once consecutive failures cross the configured threshold (default 10; 0 disables auto-disable); `reset_failures` zeros the counter on the next 2xx. WARNING-level log on auto-disable.
+- [x] **Asynchronous delivery:** `dispatch_event_async` spawns one daemon `threading.Thread` per matching enabled subscriber. Each worker opens a fresh `sqlite3.connect(db_path)` because Flask's request-scoped connection lives on the wrong thread. `register_bus_handlers(db_path)` is wired into `app/__init__.create_app` so every Phase 19.1 emission automatically fans out once the `webhooks_enabled` master toggle (Security/Webhooks category) is on. Idempotent — re-registering against the same db_path drops previous closures first. README for high-volume / external-queue deployments still pending (Phase 19.2 admin-UI commit will cover docs).
+- [ ] **Admin UI:** Webhook management page — list / create / edit / delete / test, view delivery log. Deferred to a follow-up commit.
+- [ ] **API endpoints:** CRUD via REST API (`/api/v1/admin/webhooks`) + OpenAPI spec entries. Deferred to a follow-up commit.
 
 ---
 

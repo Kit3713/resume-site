@@ -404,3 +404,314 @@ def test_module_has_no_hidden_flask_import():
     # module namespace.
     assert 'Flask' not in dir(events_mod)
     assert 'request' not in dir(events_mod)
+
+
+# ===========================================================================
+# Phase 19.1 completion — HTML/admin route emissions
+# ===========================================================================
+#
+# These tests cover the eight remaining event types (contact.submitted,
+# review.submitted, review.approved, blog.published, blog.updated,
+# photo.uploaded, settings.changed, security.rate_limited) emitted from
+# the browser-facing routes. The API-side emissions for the same event
+# types are covered by tests/test_api.py — these confirm subscribers
+# see the same shape regardless of source.
+
+
+# ---------------------------------------------------------------------------
+# contact.submitted (HTML form)
+# ---------------------------------------------------------------------------
+
+
+def test_html_contact_form_emits_contact_submitted(client, smtp_mock):
+    captured = []
+    register(Events.CONTACT_SUBMITTED, lambda **p: captured.append(p))
+
+    response = client.post(
+        '/contact',
+        data={
+            'name': 'Alice',
+            'email': 'alice@example.com',
+            'message': 'Hello there.',
+        },
+    )
+    assert response.status_code in (200, 302)
+    assert len(captured) == 1
+    payload = captured[0]
+    assert payload['source'] == 'public_form'
+    assert payload['is_spam'] is False
+    assert isinstance(payload['submission_id'], int)
+    # Real submissions should have triggered the SMTP relay.
+    assert smtp_mock and smtp_mock[0][1] == 'alice@example.com'
+
+
+def test_html_contact_form_honeypot_emits_with_is_spam_true(client, smtp_mock):
+    captured = []
+    register(Events.CONTACT_SUBMITTED, lambda **p: captured.append(p))
+
+    response = client.post(
+        '/contact',
+        data={
+            'name': 'Bot',
+            'email': 'bot@example.com',
+            'message': 'spam content',
+            'website': 'https://spam.example.com',  # honeypot triggered
+        },
+    )
+    assert response.status_code in (200, 302)
+    assert len(captured) == 1
+    assert captured[0]['is_spam'] is True
+    # Honeypot path must NOT relay via SMTP.
+    assert smtp_mock == []
+
+
+# ---------------------------------------------------------------------------
+# review.submitted (HTML token URL)
+# ---------------------------------------------------------------------------
+
+
+def test_html_review_form_emits_review_submitted(client, populated_db):
+    captured = []
+    register(Events.REVIEW_SUBMITTED, lambda **p: captured.append(p))
+
+    # populated_db seeds review_tokens row with token='test-token-abc123' (type='recommendation').
+    response = client.post(
+        '/review/test-token-abc123',
+        data={
+            'reviewer_name': 'Bob',
+            'reviewer_title': 'Engineer',
+            'relationship': 'Coworker',
+            'message': 'Great to work with.',
+            'rating': '5',
+        },
+    )
+    assert response.status_code in (200, 302)
+    assert len(captured) == 1
+    payload = captured[0]
+    assert payload['source'] == 'public_token'
+    assert payload['review_type'] == 'recommendation'
+    assert payload['has_rating'] is True
+    assert isinstance(payload['review_id'], int)
+    assert isinstance(payload['token_id'], int)
+
+
+# ---------------------------------------------------------------------------
+# review.approved (admin UI)
+# ---------------------------------------------------------------------------
+
+
+def test_admin_review_approve_emits_review_approved(auth_client, populated_db):
+    captured = []
+    register(Events.REVIEW_APPROVED, lambda **p: captured.append(p))
+
+    # populated_db seeds an already-approved review at id=1; the approve
+    # action is idempotent, so re-approving is fine for this test.
+    response = auth_client.post(
+        '/admin/reviews/1/update',
+        data={'action': 'approve', 'display_tier': 'featured'},
+    )
+    assert response.status_code in (200, 302)
+    assert len(captured) == 1
+    payload = captured[0]
+    assert payload['review_id'] == 1
+    assert payload['display_tier'] == 'featured'
+    assert payload['source'] == 'admin_ui'
+
+
+def test_admin_review_reject_does_not_emit_review_approved(auth_client, populated_db):
+    """reject / update_tier are admin housekeeping — webhook subscribers
+    don't typically care, so only approve fires the event."""
+    captured = []
+    register(Events.REVIEW_APPROVED, lambda **p: captured.append(p))
+
+    auth_client.post('/admin/reviews/1/update', data={'action': 'reject'})
+    assert captured == []
+
+
+# ---------------------------------------------------------------------------
+# blog.published / blog.updated (admin UI)
+# ---------------------------------------------------------------------------
+
+
+def _enable_blog_html(app, enabled=True):
+    """Helper — flip blog_enabled and bust the settings cache."""
+    import sqlite3 as _sqlite3
+
+    conn = _sqlite3.connect(app.config['DATABASE_PATH'])
+    conn.execute(
+        "INSERT OR REPLACE INTO settings(key, value) VALUES ('blog_enabled', ?)",
+        ('true' if enabled else 'false',),
+    )
+    conn.commit()
+    conn.close()
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
+
+def test_admin_blog_new_publish_emits_blog_published(auth_client, app):
+    _enable_blog_html(app)
+    captured_pub = []
+    captured_upd = []
+    register(Events.BLOG_PUBLISHED, lambda **p: captured_pub.append(p))
+    register(Events.BLOG_UPDATED, lambda **p: captured_upd.append(p))
+
+    response = auth_client.post(
+        '/admin/blog/new',
+        data={
+            'title': 'Hello World',
+            'content': '<p>Body.</p>',
+            'action': 'publish',
+        },
+    )
+    assert response.status_code in (200, 302)
+    assert len(captured_pub) == 1
+    assert captured_upd == []
+    payload = captured_pub[0]
+    assert payload['title'] == 'Hello World'
+    assert payload['slug']  # server-generated
+    assert payload['source'] == 'admin_ui'
+    assert payload['status'] == 'published'
+
+
+def test_admin_blog_new_save_emits_blog_updated(auth_client, app):
+    _enable_blog_html(app)
+    captured_pub = []
+    captured_upd = []
+    register(Events.BLOG_PUBLISHED, lambda **p: captured_pub.append(p))
+    register(Events.BLOG_UPDATED, lambda **p: captured_upd.append(p))
+
+    auth_client.post(
+        '/admin/blog/new',
+        data={'title': 'Draft Post', 'content': '<p>WIP.</p>', 'action': 'save'},
+    )
+    assert captured_pub == []
+    assert len(captured_upd) == 1
+    assert captured_upd[0]['status'] == 'draft'
+
+
+def test_admin_blog_delete_emits_blog_updated_with_deleted_status(auth_client, app):
+    _enable_blog_html(app)
+    # Create a post first to delete.
+    auth_client.post(
+        '/admin/blog/new',
+        data={'title': 'Goner', 'content': '<p>x</p>', 'action': 'save'},
+    )
+    import sqlite3 as _sqlite3
+
+    conn = _sqlite3.connect(app.config['DATABASE_PATH'])
+    post_id = conn.execute('SELECT id FROM blog_posts WHERE title = ?', ('Goner',)).fetchone()[0]
+    conn.close()
+
+    captured = []
+    register(Events.BLOG_UPDATED, lambda **p: captured.append(p))
+
+    auth_client.post(f'/admin/blog/{post_id}/delete')
+    assert len(captured) == 1
+    assert captured[0]['status'] == 'deleted'
+    assert captured[0]['title'] == 'Goner'
+    assert captured[0]['source'] == 'admin_ui'
+
+
+# ---------------------------------------------------------------------------
+# photo.uploaded (admin UI)
+# ---------------------------------------------------------------------------
+
+
+def test_admin_photo_upload_emits_photo_uploaded(auth_client):
+    from io import BytesIO
+
+    from PIL import Image
+
+    captured = []
+    register(Events.PHOTO_UPLOADED, lambda **p: captured.append(p))
+
+    buf = BytesIO()
+    Image.new('RGB', (50, 50), color=(0, 200, 0)).save(buf, 'PNG')
+    buf.seek(0)
+
+    response = auth_client.post(
+        '/admin/photos/upload',
+        data={
+            'photo': (buf, 'green.png'),
+            'title': 'Green Square',
+            'category': 'test',
+            'display_tier': 'grid',
+        },
+        content_type='multipart/form-data',
+    )
+    assert response.status_code in (200, 302)
+    assert len(captured) == 1
+    payload = captured[0]
+    assert payload['title'] == 'Green Square'
+    assert payload['category'] == 'test'
+    assert payload['display_tier'] == 'grid'
+    assert payload['source'] == 'admin_ui'
+    assert isinstance(payload['photo_id'], int)
+    assert payload['file_size'] > 0
+
+
+# ---------------------------------------------------------------------------
+# settings.changed (admin UI)
+# ---------------------------------------------------------------------------
+
+
+def test_admin_settings_save_emits_settings_changed(auth_client):
+    captured = []
+    register(Events.SETTINGS_CHANGED, lambda **p: captured.append(p))
+
+    response = auth_client.post(
+        '/admin/settings',
+        data={
+            'site_title': 'My Updated Site',
+            'site_tagline': 'A new tagline',
+        },
+    )
+    assert response.status_code in (200, 302)
+    assert len(captured) == 1
+    payload = captured[0]
+    assert payload['source'] == 'admin_ui'
+    assert 'site_title' in payload['keys']
+    assert 'site_tagline' in payload['keys']
+    # csrf_token must be excluded so subscribers don't see noise.
+    assert 'csrf_token' not in payload['keys']
+
+
+# ---------------------------------------------------------------------------
+# security.rate_limited (errorhandler 429)
+# ---------------------------------------------------------------------------
+
+
+def test_429_response_emits_security_rate_limited(app):
+    from flask import abort
+
+    captured = []
+    register(Events.SECURITY_RATE_LIMITED, lambda **p: captured.append(p))
+
+    @app.route('/__events_429')
+    def _force_429():
+        abort(429, description='3 per 1 minute')
+
+    response = app.test_client().get('/__events_429')
+    assert response.status_code == 429
+    assert len(captured) == 1
+    payload = captured[0]
+    assert payload['method'] == 'GET'
+    assert payload['endpoint'] == '/__events_429'
+    assert payload['limit'] == '3 per 1 minute'
+
+
+def test_429_handler_is_observability_only_response_unchanged(app):
+    """The handler must NOT change the body / status — Flask's default
+    response (and any Retry-After header set by Flask-Limiter) has to
+    still reach the client."""
+    from flask import abort
+
+    @app.route('/__events_429_body')
+    def _force_429():
+        abort(429)
+
+    response = app.test_client().get('/__events_429_body')
+    assert response.status_code == 429
+    # Default werkzeug 429 body mentions "Too Many Requests".
+    assert b'Too Many Requests' in response.data

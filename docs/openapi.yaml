@@ -1,0 +1,1577 @@
+openapi: 3.0.3
+
+info:
+  title: resume-site REST API
+  version: v1
+  summary: Public + authenticated REST interface for the resume-site engine.
+  description: |
+    The resume-site API exposes read access to the same content the public
+    website renders, plus authenticated write access to blog posts, portfolio
+    photos, contact submissions, and every admin workflow (settings,
+    analytics, activity log, reviews, review tokens, backups).
+
+    ## Authentication
+
+    Write and admin endpoints require a Bearer token in the
+    `Authorization` header:
+
+        Authorization: Bearer <token>
+
+    Tokens are managed from the admin UI (`/admin/api-tokens`) or the
+    `manage.py generate-api-token` CLI. Each token carries one or more
+    **scopes**: `read`, `write`, or `admin`. Scopes are **explicit** —
+    an `admin` token does not imply `write` and a `write` token does not
+    imply `read`. Public read endpoints do not require a token.
+
+    Authentication errors follow a reduced envelope:
+
+    * `401 {"error": "missing"}` — no `Authorization` header.
+    * `401 {"error": "malformed"}` — header is not `Bearer <token>`.
+    * `401 {"error": "invalid"}` — no token row matches the hash.
+    * `401 {"error": "revoked"}` — token was explicitly revoked.
+    * `401 {"error": "expired"}` — the token's `expires_at` has passed.
+    * `403 {"error": "insufficient_scope"}` — token is valid but lacks
+      the required scope.
+
+    All `401` responses carry `WWW-Authenticate: Bearer`.
+
+    ## Error envelope
+
+    Non-auth errors use the uniform shape:
+
+        {
+          "error": "<human-readable message>",
+          "code":  "<STABLE_CODE>",
+          "details": { ... optional structured context ... }
+        }
+
+    Stable `code` values (machine-readable):
+
+    | code | HTTP | when it fires |
+    | --- | --- | --- |
+    | `NOT_FOUND` | 404 | Row not found, or a feature toggle (blog, case studies, contact form, API docs) is off. |
+    | `METHOD_NOT_ALLOWED` | 405 | The path exists but not for this method. |
+    | `UNSUPPORTED_MEDIA_TYPE` | 415 | POST/PUT/PATCH without `Content-Type: application/json` (except the portfolio upload route, which takes `multipart/form-data`). |
+    | `VALIDATION_ERROR` | 400 | Missing required field, wrong type, or rejected value. `details` carries a `field` key and sometimes `allowed`. |
+    | `RATE_LIMITED` | 429 | Per-IP or Flask-Limiter cap exceeded. `details.retry_after_minutes` present when known. |
+    | `BACKUP_FAILED` | 500 | The on-demand backup service raised. |
+
+    ## Pagination
+
+    Paginated endpoints (`/portfolio`, `/testimonials`, `/blog`,
+    `/admin/contacts`) return the envelope:
+
+        {
+          "data": [ ... ],
+          "pagination": {
+            "page": 1,
+            "per_page": 20,
+            "total": 142,
+            "pages": 8
+          }
+        }
+
+    Query parameters:
+
+    * `page` (int, default 1) — 1-indexed.
+    * `per_page` (int, default 20 for most endpoints, 10 for `/blog`) —
+      clamped to `[1, 100]`. Out-of-range values fall back to the
+      endpoint default.
+
+    ## ETag / If-None-Match
+
+    Every read response carries a strong `ETag` (a SHA-256 prefix of the
+    canonical JSON body). Send the previous `ETag` back as
+    `If-None-Match` on the next request and the server responds with
+    `304 Not Modified` and no body when nothing has changed.
+
+    ## Rate limits
+
+    Rate limits are **per client IP per minute**, configurable from the
+    admin settings UI (Security category):
+
+    * Read endpoints: `api_rate_limit_read` (default 60).
+    * Write endpoints: `api_rate_limit_write` (default 30).
+    * Admin endpoints: `api_rate_limit_admin` (default 10).
+
+    The public `/contact` endpoint additionally enforces a per-IP cap of
+    5 non-spam submissions per hour on top of Flask-Limiter's 10/min
+    burst cap.
+  license:
+    name: GPL-3.0-or-later
+    identifier: GPL-3.0-or-later
+  contact:
+    name: resume-site maintainers
+    url: https://github.com/kit3713/resume-site
+
+servers:
+  - url: /api/v1
+    description: This deployment — relative to the site origin.
+
+tags:
+  - name: Public
+    description: No authentication required. Mirrors the public site.
+  - name: Write
+    description: Requires a Bearer token with `write` scope.
+  - name: Admin
+    description: Requires a Bearer token with `admin` scope.
+
+security: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: |
+        Opaque token issued by the admin UI or `manage.py generate-api-token`.
+        Carry the required scope (`read`, `write`, or `admin`).
+
+  # ---- Shared envelopes --------------------------------------------------
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable message for logs and developer UIs.
+        code:
+          type: string
+          description: |
+            Stable, machine-readable error tag. Omitted on auth failures
+            from the token middleware (see Authentication in the top-level
+            description).
+          enum:
+            - NOT_FOUND
+            - METHOD_NOT_ALLOWED
+            - UNSUPPORTED_MEDIA_TYPE
+            - VALIDATION_ERROR
+            - RATE_LIMITED
+            - BACKUP_FAILED
+        details:
+          type: object
+          additionalProperties: true
+          description: Optional structured context; shape varies by code.
+      example:
+        error: Title is required
+        code: VALIDATION_ERROR
+        details:
+          field: title
+
+    Pagination:
+      type: object
+      required: [page, per_page, total, pages]
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        per_page:
+          type: integer
+          minimum: 1
+          maximum: 100
+        total:
+          type: integer
+          minimum: 0
+        pages:
+          type: integer
+          minimum: 0
+
+    # ---- Site / content / services / stats ------------------------------
+    Site:
+      type: object
+      required: [title, api_version, available_locales]
+      properties:
+        title: { type: string }
+        tagline: { type: string }
+        footer_text: { type: string }
+        availability_status:
+          type: string
+          enum: [available, open, unavailable, off]
+        hero_heading: { type: string }
+        hero_subheading: { type: string }
+        hero_tagline: { type: string }
+        blog_enabled: { type: boolean }
+        case_studies_enabled: { type: boolean }
+        contact_form_enabled: { type: boolean }
+        available_locales:
+          type: array
+          items: { type: string }
+          example: [en]
+        api_version:
+          type: string
+          example: v1
+
+    ContentBlock:
+      type: object
+      properties:
+        id: { type: integer }
+        slug: { type: string }
+        title: { type: string }
+        content: { type: string, description: Sanitized HTML. }
+        plain_text: { type: string }
+        updated_at: { type: string, format: date-time }
+
+    Service:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        description: { type: string }
+        icon: { type: string }
+        sort_order: { type: integer }
+
+    Stat:
+      type: object
+      properties:
+        id: { type: integer }
+        label: { type: string }
+        value: { type: integer }
+        suffix: { type: string }
+        sort_order: { type: integer }
+
+    Photo:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        category: { type: string, nullable: true }
+        tech_used: { type: string, nullable: true }
+        display_tier:
+          type: string
+          enum: [featured, grid, hidden]
+        sort_order: { type: integer }
+        filename: { type: string }
+        alt_text: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    Testimonial:
+      type: object
+      properties:
+        id: { type: integer }
+        reviewer_name: { type: string }
+        reviewer_title: { type: string, nullable: true }
+        relationship: { type: string, nullable: true }
+        message: { type: string }
+        rating: { type: integer, nullable: true, minimum: 1, maximum: 5 }
+        type:
+          type: string
+          enum: [recommendation, client_review]
+        display_tier:
+          type: string
+          enum: [featured, standard, hidden]
+        created_at: { type: string, format: date-time }
+
+    Certification:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        issuer: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        badge_image: { type: string, nullable: true }
+        credential_url: { type: string, nullable: true }
+        date_earned: { type: string, nullable: true }
+        date_expires: { type: string, nullable: true }
+        sort_order: { type: integer }
+
+    CaseStudy:
+      type: object
+      properties:
+        id: { type: integer }
+        slug: { type: string }
+        title: { type: string }
+        summary: { type: string, nullable: true }
+        problem: { type: string, nullable: true }
+        solution: { type: string, nullable: true }
+        result: { type: string, nullable: true }
+        photo_id: { type: integer, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Project:
+      type: object
+      properties:
+        id: { type: integer }
+        slug: { type: string }
+        title: { type: string }
+        summary: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        github_url: { type: string, nullable: true }
+        has_detail_page: { type: boolean }
+        screenshot: { type: string, nullable: true }
+        tech_stack: { type: string, nullable: true }
+        sort_order: { type: integer }
+
+    Tag:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        slug: { type: string }
+        post_count:
+          type: integer
+          description: Count of `published` posts using this tag (drafts excluded).
+
+    BlogPostSummary:
+      type: object
+      properties:
+        id: { type: integer }
+        slug: { type: string }
+        title: { type: string }
+        summary: { type: string, nullable: true }
+        author: { type: string, nullable: true }
+        cover_image: { type: string, nullable: true }
+        featured: { type: boolean }
+        reading_time: { type: integer }
+        meta_description: { type: string, nullable: true }
+        content_format:
+          type: string
+          enum: [html, markdown]
+        status:
+          type: string
+          enum: [draft, published, archived]
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        tags:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              slug: { type: string }
+
+    BlogPost:
+      allOf:
+        - $ref: '#/components/schemas/BlogPostSummary'
+        - type: object
+          properties:
+            content:
+              type: string
+              description: Raw content as stored (Markdown or HTML).
+            rendered_html:
+              type: string
+              description: Fully-rendered, sanitized HTML (served as-is by the site).
+
+    # ---- Admin schemas --------------------------------------------------
+    Setting:
+      type: object
+      properties:
+        key: { type: string }
+        value: { type: string }
+        type:
+          type: string
+          enum: [str, bool, int, color, select, textarea, text]
+        default: { type: string }
+        label: { type: string }
+        category: { type: string }
+        description: { type: string }
+        options:
+          type: array
+          description: Present only for `select`-type settings.
+          items:
+            type: array
+            items: { type: string }
+
+    SettingsPayload:
+      type: object
+      properties:
+        categories:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              settings:
+                type: array
+                items: { $ref: '#/components/schemas/Setting' }
+        flat:
+          type: object
+          additionalProperties: { type: string }
+
+    AnalyticsSummary:
+      type: object
+      properties:
+        total_views: { type: integer }
+        recent_views: { type: integer }
+        window_days: { type: integer }
+        popular_pages:
+          type: array
+          items:
+            type: object
+            properties:
+              path: { type: string }
+              count: { type: integer }
+        time_series:
+          type: array
+          items:
+            type: object
+            properties:
+              date: { type: string, format: date }
+              count: { type: integer }
+
+    ActivityLogEntry:
+      type: object
+      properties:
+        id: { type: integer }
+        action: { type: string }
+        category: { type: string }
+        detail: { type: string, nullable: true }
+        admin_user: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    Review:
+      type: object
+      properties:
+        id: { type: integer }
+        reviewer_name: { type: string }
+        reviewer_title: { type: string, nullable: true }
+        relationship: { type: string, nullable: true }
+        message: { type: string }
+        rating: { type: integer, nullable: true, minimum: 1, maximum: 5 }
+        type:
+          type: string
+          enum: [recommendation, client_review]
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+        display_tier:
+          type: string
+          enum: [featured, standard, hidden]
+        token_id: { type: integer, nullable: true }
+        created_at: { type: string, format: date-time }
+        reviewed_at: { type: string, format: date-time, nullable: true }
+
+    ReviewToken:
+      type: object
+      properties:
+        id: { type: integer }
+        token: { type: string, description: Share verbatim with the invited reviewer. }
+        name: { type: string, nullable: true }
+        type:
+          type: string
+          enum: [recommendation, client_review]
+        used: { type: boolean }
+        used_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time, nullable: true }
+
+    ContactSubmission:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string, format: email }
+        message: { type: string }
+        ip_address: { type: string, nullable: true }
+        user_agent: { type: string, nullable: true }
+        is_spam: { type: boolean }
+        read: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    ContactResult:
+      type: object
+      properties:
+        id: { type: integer }
+        ok: { type: boolean }
+        is_spam: { type: boolean }
+
+    BackupResult:
+      type: object
+      properties:
+        archive_path: { type: string }
+        archive_name: { type: string }
+        size_bytes: { type: integer }
+        db_only: { type: boolean }
+
+    # ---- Request bodies -------------------------------------------------
+    BlogCreate:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        summary: { type: string }
+        content: { type: string }
+        content_format:
+          type: string
+          enum: [html, markdown]
+          default: html
+        cover_image: { type: string }
+        author: { type: string }
+        tags:
+          type: string
+          description: Comma-separated tag names. New tags are created on the fly.
+        meta_description: { type: string }
+        featured:
+          type: boolean
+          default: false
+        publish:
+          type: boolean
+          default: false
+          description: When true, immediately publishes instead of saving as a draft.
+
+    BlogUpdate:
+      type: object
+      description: All fields optional; omitted fields retain their current values.
+      properties:
+        title: { type: string }
+        summary: { type: string }
+        content: { type: string }
+        content_format:
+          type: string
+          enum: [html, markdown]
+        cover_image: { type: string }
+        author: { type: string }
+        tags: { type: string }
+        meta_description: { type: string }
+        featured: { type: boolean }
+        slug:
+          type: string
+          description: Rename the post. Uniqueness enforced server-side.
+
+    PortfolioUpdate:
+      type: object
+      description: All fields optional; omitted fields retain their current values.
+      properties:
+        title: { type: string }
+        description: { type: string }
+        category: { type: string }
+        tech_used: { type: string }
+        display_tier:
+          type: string
+          enum: [featured, grid, hidden]
+        sort_order: { type: integer }
+
+    ContactRequest:
+      type: object
+      required: [name, email, message]
+      properties:
+        name: { type: string, minLength: 1 }
+        email: { type: string, format: email }
+        message: { type: string, minLength: 1 }
+        website:
+          type: string
+          description: Honeypot. Real clients MUST leave this empty; bots fill it and get silently flagged as spam.
+
+    SettingsUpdate:
+      type: object
+      additionalProperties: true
+      description: >-
+        Flat key→value map. Unknown keys are ignored. Boolean values accept
+        `true`, `"true"`, `1`, or `"1"`.
+
+    ReviewAction:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [approve, reject, set_tier]
+        display_tier:
+          type: string
+          enum: [featured, standard, hidden]
+          default: standard
+
+    ReviewTokenCreate:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Recipient label shown in the admin view.
+        type:
+          type: string
+          enum: [recommendation, client_review]
+          default: recommendation
+
+    BackupRequest:
+      type: object
+      properties:
+        db_only:
+          type: boolean
+          default: false
+
+  # ---- Shared responses -----------------------------------------------
+  responses:
+    NotFound:
+      description: The resource does not exist, or a feature toggle hides it.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error: Not found
+            code: NOT_FOUND
+    Unauthorized:
+      description: Missing, malformed, invalid, revoked, or expired token.
+      headers:
+        WWW-Authenticate:
+          schema: { type: string, example: Bearer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error: missing
+    Forbidden:
+      description: Token is valid but lacks the required scope.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error: insufficient_scope
+    ValidationError:
+      description: Missing required field, wrong type, or rejected value.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error: Title is required
+            code: VALIDATION_ERROR
+            details:
+              field: title
+    UnsupportedMediaType:
+      description: |
+        Request body missing `Content-Type: application/json` (for JSON routes)
+        or `multipart/form-data` (for `POST /portfolio`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error: Content-Type must be application/json
+            code: UNSUPPORTED_MEDIA_TYPE
+            details:
+              received: application/x-www-form-urlencoded
+    RateLimited:
+      description: Per-IP rate limit exceeded.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error: Too many requests
+            code: RATE_LIMITED
+
+  # ---- Shared parameters ----------------------------------------------
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PerPage:
+      name: per_page
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100 }
+
+paths:
+  # =====================================================================
+  # Public read endpoints (no authentication)
+  # =====================================================================
+
+  /site:
+    get:
+      tags: [Public]
+      operationId: getSiteMetadata
+      summary: Bootstrap site metadata and feature toggles.
+      description: |
+        Return everything a consumer needs to know about this deployment
+        before calling any other endpoint: title, tagline, availability,
+        which features are enabled, and which locales are configured.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Site' }
+        '304': { description: Not modified (If-None-Match matched). }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /content/{slug}:
+    get:
+      tags: [Public]
+      operationId: getContentBlock
+      summary: Fetch a single content block by slug.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ContentBlock' }
+        '304': { description: Not modified. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /services:
+    get:
+      tags: [Public]
+      operationId: listServices
+      summary: List visible services in sort order.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Service' }
+        '304': { description: Not modified. }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /stats:
+    get:
+      tags: [Public]
+      operationId: listStats
+      summary: List animated landing-page counters in sort order.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Stat' }
+        '304': { description: Not modified. }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /portfolio:
+    get:
+      tags: [Public]
+      operationId: listPortfolio
+      summary: List visible photos (paginated).
+      description: |
+        Returns photos in the `featured` and `grid` tiers. Hidden photos
+        are excluded entirely.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - name: per_page
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: category
+          in: query
+          schema: { type: string }
+          description: Exact-match filter against `category`.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Photo' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        '304': { description: Not modified. }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    post:
+      tags: [Write]
+      operationId: uploadPortfolioPhoto
+      summary: Upload a photo with metadata (multipart/form-data).
+      description: |
+        The only API write route that does NOT accept JSON. The Pillow
+        pipeline validates magic bytes, enforces the configured size
+        cap, strips EXIF, and downscales images wider than 2000 px.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [photo]
+              properties:
+                photo:
+                  type: string
+                  format: binary
+                  description: Image file (jpg / jpeg / png / gif / webp).
+                title: { type: string }
+                description: { type: string }
+                category: { type: string }
+                tech_used: { type: string }
+                display_tier:
+                  type: string
+                  enum: [featured, grid, hidden]
+                  default: grid
+      responses:
+        '201':
+          description: Created — returns the stored photo row.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Photo' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /portfolio/{photo_id}:
+    get:
+      tags: [Public]
+      operationId: getPortfolioPhoto
+      summary: Fetch a single visible photo.
+      description: Hidden photos return 404 (never 403) to avoid leaking existence.
+      parameters:
+        - name: photo_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Photo' }
+        '304': { description: Not modified. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    put:
+      tags: [Write]
+      operationId: updatePortfolioPhoto
+      summary: Update photo metadata (not the file itself).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: photo_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PortfolioUpdate' }
+      responses:
+        '200':
+          description: OK — returns the updated photo.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Photo' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    delete:
+      tags: [Write]
+      operationId: deletePortfolioPhoto
+      summary: Delete a photo row and clean up the file on disk.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: photo_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /portfolio/categories:
+    get:
+      tags: [Public]
+      operationId: listPortfolioCategories
+      summary: List distinct category names across visible photos.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { type: string }
+        '304': { description: Not modified. }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /testimonials:
+    get:
+      tags: [Public]
+      operationId: listTestimonials
+      summary: List approved reviews (paginated).
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - name: per_page
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: tier
+          in: query
+          schema:
+            type: string
+            enum: [featured, standard]
+          description: When omitted, returns all approved reviews (featured first).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Testimonial' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        '304': { description: Not modified. }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /certifications:
+    get:
+      tags: [Public]
+      operationId: listCertifications
+      summary: List visible certifications in sort order.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Certification' }
+        '304': { description: Not modified. }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /case-studies/{slug}:
+    get:
+      tags: [Public]
+      operationId: getCaseStudy
+      summary: Fetch a single published case study by slug.
+      description: |
+        Returns 404 when the site-wide `case_studies_enabled` toggle is
+        off OR the case study is unpublished — existence is never leaked.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/CaseStudy' }
+        '304': { description: Not modified. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /projects:
+    get:
+      tags: [Public]
+      operationId: listProjects
+      summary: List visible projects in sort order.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Project' }
+        '304': { description: Not modified. }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /projects/{slug}:
+    get:
+      tags: [Public]
+      operationId: getProject
+      summary: Fetch a single project with `has_detail_page = 1` by slug.
+      description: |
+        Link-only (GitHub-URL-only) projects return 404 on this route
+        even though they appear on `/projects`. Clients decide how to
+        surface external links.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Project' }
+        '304': { description: Not modified. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /blog:
+    get:
+      tags: [Public]
+      operationId: listBlogPosts
+      summary: List published blog posts (paginated).
+      description: |
+        Returns 404 when `blog_enabled` is off. Default `per_page` is 10
+        (lower than `/portfolio`'s 20) because blog rows carry more text.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - name: per_page
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+        - name: tag
+          in: query
+          schema: { type: string }
+          description: Filter by tag slug.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/BlogPostSummary' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        '304': { description: Not modified. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    post:
+      tags: [Write]
+      operationId: createBlogPost
+      summary: Create a blog post (draft or published).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BlogCreate' }
+      responses:
+        '201':
+          description: Created — returns the full post detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/BlogPost' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /blog/tags:
+    get:
+      tags: [Public]
+      operationId: listBlogTags
+      summary: List every tag with a published-post count.
+      description: |
+        Tags with zero published posts are still returned (`post_count: 0`).
+        Registered before `/blog/{slug}` so the dispatcher prefers it.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Tag' }
+        '304': { description: Not modified. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /blog/{slug}:
+    get:
+      tags: [Public]
+      operationId: getBlogPost
+      summary: Fetch a single published blog post.
+      description: Drafts and archived posts return 404.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/BlogPost' }
+        '304': { description: Not modified. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    put:
+      tags: [Write]
+      operationId: updateBlogPost
+      summary: Update a blog post (partial — omitted fields retain values).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BlogUpdate' }
+      responses:
+        '200':
+          description: OK — returns the updated post detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/BlogPost' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    delete:
+      tags: [Write]
+      operationId: deleteBlogPost
+      summary: Delete a blog post and its tag associations.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /blog/{slug}/publish:
+    post:
+      tags: [Write]
+      operationId: publishBlogPost
+      summary: Publish a draft post.
+      description: Preserves the original `published_at` when re-publishing.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK — returns the updated post detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/BlogPost' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /blog/{slug}/unpublish:
+    post:
+      tags: [Write]
+      operationId: unpublishBlogPost
+      summary: Revert a post back to draft status.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK — returns the updated post detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/BlogPost' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  # =====================================================================
+  # Public contact form
+  # =====================================================================
+
+  /contact:
+    post:
+      tags: [Public]
+      operationId: submitContactForm
+      summary: Submit a contact form entry (public — no token required).
+      description: |
+        Mirrors the HTML form's validation: required fields, honeypot
+        spam detection via the `website` field, and per-IP hourly cap of
+        5 non-spam submissions (bots filling the honeypot bypass the cap
+        so they can't probe for 429 responses). SMTP relay failure is
+        not surfaced — the submission is still saved.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ContactRequest' }
+      responses:
+        '201':
+          description: Submission accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ContactResult' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  # =====================================================================
+  # Admin endpoints (Bearer token, `admin` scope)
+  # =====================================================================
+
+  /admin/settings:
+    get:
+      tags: [Admin]
+      operationId: listAdminSettings
+      summary: Return every setting grouped by category plus a flat map.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SettingsPayload' }
+        '304': { description: Not modified. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    put:
+      tags: [Admin]
+      operationId: updateAdminSettings
+      summary: Bulk-update settings from a flat key→value object.
+      description: |
+        Unknown keys (not in the settings registry) are silently dropped.
+        Partial updates are supported — omitted booleans are NOT flipped
+        to false.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SettingsUpdate' }
+      responses:
+        '200':
+          description: OK — returns the updated keys and a refreshed flat map.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      updated_keys:
+                        type: array
+                        items: { type: string }
+                      flat:
+                        type: object
+                        additionalProperties: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/analytics:
+    get:
+      tags: [Admin]
+      operationId: getAdminAnalytics
+      summary: Page-view summary — totals, popular paths, daily series.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 90, default: 7 }
+        - name: popular_limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AnalyticsSummary' }
+        '304': { description: Not modified. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/activity:
+    get:
+      tags: [Admin]
+      operationId: getAdminActivityLog
+      summary: Recent admin activity log entries.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 20 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ActivityLogEntry' }
+        '304': { description: Not modified. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/reviews:
+    get:
+      tags: [Admin]
+      operationId: listAdminReviews
+      summary: List reviews, optionally filtered by status.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, approved, rejected]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Review' }
+        '304': { description: Not modified. }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/reviews/{review_id}:
+    put:
+      tags: [Admin]
+      operationId: updateAdminReview
+      summary: Approve, reject, or re-tier a review.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: review_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewAction' }
+      responses:
+        '200':
+          description: OK — returns the updated review.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Review' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/tokens:
+    post:
+      tags: [Admin]
+      operationId: createReviewToken
+      summary: Generate a single-use review invitation token.
+      description: |
+        The returned `token` is the raw value shared verbatim with the
+        invited reviewer — unlike API tokens, which are stored hashed.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewTokenCreate' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ReviewToken' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/tokens/{token_id}:
+    delete:
+      tags: [Admin]
+      operationId: deleteReviewToken
+      summary: Hard-delete a review invitation token.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: token_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/contacts:
+    get:
+      tags: [Admin]
+      operationId: listAdminContacts
+      summary: Paginated contact submissions.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - name: per_page
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: include_spam
+          in: query
+          schema: { type: boolean, default: false }
+          description: When true, spam-flagged rows are interleaved by timestamp.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ContactSubmission' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        '304': { description: Not modified. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/backup:
+    post:
+      tags: [Admin]
+      operationId: createAdminBackup
+      summary: Trigger an on-demand backup.
+      description: |
+        Creates a timestamped archive in `RESUME_SITE_BACKUP_DIR` (or
+        `<repo>/backups`). `create_backup` emits `backup.completed`
+        itself so this route does not double-emit.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BackupRequest' }
+      responses:
+        '201':
+          description: Backup archive written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/BackupResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500':
+          description: Backup failed (I/O error or BackupError).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error: 'I/O failure during backup: No space left on device'
+                code: BACKUP_FAILED

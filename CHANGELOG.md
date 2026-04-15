@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — v0.3.0
+
+### Added — Phase 19.2 (foundation): Webhook Dispatch Subsystem
+- `migrations/009_webhooks.sql` — `webhooks` (id, name, url, secret, events JSON, enabled, failure_count, created_at, last_triggered_at) and `webhook_deliveries` (per-attempt log; cascades on webhook delete) tables, with indexes on `webhooks(enabled)` and `webhook_deliveries(webhook_id, created_at DESC)`.
+- `app/services/webhooks.py` — full dispatch subsystem (~600 lines). Stdlib only (`urllib.request` + `hmac` + `hashlib` + `threading` + `sqlite3`); zero new runtime deps.
+  - `Webhook` / `DeliveryResult` namedtuples.
+  - CRUD: `create_webhook`, `get_webhook`, `list_webhooks`, `list_enabled_subscribers`, `update_webhook`, `delete_webhook`.
+  - Delivery log: `record_delivery`, `list_recent_deliveries`, `purge_old_deliveries(keep_days=30)`.
+  - Auto-disable: `increment_failures` flips `enabled=0` once consecutive failures cross the configured threshold; `reset_failures` zeros the counter on the next 2xx. `threshold=0` opts out entirely.
+  - Signing: `sign_payload(secret, body)` — HMAC-SHA256 hex digest, accepts str or bytes.
+  - Sync delivery: `deliver_now(webhook, event_name, payload, *, timeout=5)` — POSTs a `{event, timestamp, data}` envelope (sorted JSON for stable signatures), captures HTTP errors / network errors / timeouts in the returned `DeliveryResult` rather than raising.
+  - Async fan-out: `dispatch_event_async(db_path, event_name, payload, ...)` spawns one daemon `threading.Thread` per matching enabled subscriber. Each worker opens a fresh sqlite3 connection (Flask's request-scoped one lives on the wrong thread).
+  - Bus integration: `register_bus_handlers(db_path)` registers one closure per `Events.*` constant. Idempotent — re-registering the same db_path drops previous closures first so the test suite stays clean across the autouse `clear()` fixture.
+- `webhooks_enabled` (default `false`), `webhook_timeout_seconds` (default `5`, clamped to [1, 60]), and `webhook_failure_threshold` (default `10`, `0` disables auto-disable) added to `SETTINGS_REGISTRY` in a new "Webhooks" category. Master toggle is read at dispatch time so admin edits propagate within the 30 s settings cache TTL.
+- App factory wires `register_bus_handlers(app.config['DATABASE_PATH'])` at startup so every existing emission (Phase 19.1) automatically fans out to enabled webhooks once the master toggle is on.
+- 36 new tests in `tests/test_webhooks.py` (743 → 779 total): HMAC signing (4), CRUD + normalisation (10), delivery log truncation + purge (3), auto-disable thresholds (3), `deliver_now` happy + HTTPError + URLError + Timeout + sorted-envelope (5), async fan-out + worker daemon contract + cross-thread DB writes (6), bus integration short-circuit + dispatch + every-event coverage + bad-settings fallback (4), and the lookup-failure fail-open contract (1).
+
+### Added — Phase 19.1 (completion): Event Bus Emissions From HTML / Admin Routes
+- `contact.submitted` now fires from the public HTML form (`app/routes/contact.py`) with `source='public_form'`. Mirrors the API-side emission so a webhook subscriber sees the same shape regardless of submission origin. Honeypot-flagged submissions still fire (with `is_spam: true`) so abuse dashboards stay accurate.
+- `review.submitted` now fires from the token URL (`app/routes/review.py`) with `source='public_token'` and the inherited review type / rating-presence flag.
+- `review.approved` now fires from the admin UI (`app/routes/admin.py:reviews_update`) on the approve action only — reject / update_tier remain admin housekeeping.
+- `blog.published` / `blog.updated` now fire from `app/routes/blog_admin.py` on every new/edit/delete path (publish → published, save / unpublish / archive / delete → updated). Payloads built via a new `_blog_event_payload` helper so all five paths emit the same shape. `blog.updated` carries `status='deleted'` when the row is removed (mirrors `api.blog_delete`).
+- `photo.uploaded` now fires from `app/routes/admin.py:photos_upload` after the row commits, mirroring `api.portfolio_create`.
+- `settings.changed` now fires from `app/routes/admin.py:settings` with `keys` = the sorted submitted form keys (csrf_token excluded so subscribers see no noise).
+- `security.rate_limited` now fires from a new `errorhandler(429)` in `app/__init__.py`. Observability-only — re-raises so Flask's default 429 response (and Flask-Limiter's `Retry-After` header) is unchanged. Payload carries `request_id`, `ip_hash`, `method`, `endpoint` (the URL rule template, not the rendered path, so cardinality stays bounded), and the `limit` description from the exception.
+- 12 new integration tests in `tests/test_events.py` (21 → 33) covering every new emission path: legitimate + honeypot contact submissions, review submission with token inheritance, admin approve-vs-reject distinction, blog publish-vs-save-vs-delete, photo upload (real PNG via Pillow), settings save with csrf_token exclusion, and 429 emission with body / status untouched.
+
+### Added — Phase 17.2: Scheduled Backups (Container-Native)
+- `resume-site-backup.service` + `resume-site-backup.timer` — systemd units that wrap `podman exec resume-site python manage.py backup --prune --keep 7` on a daily schedule (02:00 with 30-min jitter, `Persistent=true` so missed windows still run on next boot). `RESUME_SITE_KEEP` overridable via `systemctl edit` without forking the unit files.
+- `resume-site-backups` named volume in `compose.yaml` and the Quadlet (`resume-site.container`), mounted at `/app/backups`. The container env carries `RESUME_SITE_BACKUP_DIR=/app/backups` so the CLI writes archives onto the volume by default.
+- Admin dashboard "Last Backup" card showing the most recent `backup_last_success` timestamp (rendered via the new `time_ago` Jinja filter), archive count, and total size. A "Recent Backups" table lists the five newest archives with size + relative mtime.
+- `app/services/time_helpers.py` — stdlib-only `time_ago(value, *, now=None)` accepts ISO-8601 strings, `datetime` objects, and Unix epoch numbers; renders "5 minutes ago" / "yesterday" / "in 2 hours" / "never". Registered as the `time_ago` Jinja filter at app startup.
+- README "Backup" section rewritten: covers the CLI, the systemd timer install (rootless + system-wide), an `OnCalendar`/retention override recipe, compose-only cron alternative, restore procedure, offsite mirroring example (rclone), and per-archive gpg encryption via an `ExecStartPost=` drop-in.
+- 27 new tests: `tests/test_time_helpers.py` (25 — bucket boundaries, future intervals, every input shape, Jinja registration) and 2 dashboard widget tests in `tests/test_admin.py` (404-state "never" rendering and populated-state archive listing).
+
+### Added — Phase 16.5: OpenAPI 3.0 Documentation
+- `docs/openapi.yaml` — hand-authored OpenAPI 3.0 specification covering every `/api/v1/*` endpoint (34 operations across 27 paths). Includes a Bearer-auth security scheme, reusable schemas/responses/parameters, an in-spec error code catalog, and a pagination guide.
+- `GET /api/v1/openapi.yaml` and `GET /api/v1/openapi.json` — serve the spec with strong ETag + `If-None-Match` 304 handling. Bytes and parsed dict are cached in module scope.
+- `GET /api/v1/docs` — interactive Swagger UI (CDN-pinned `swagger-ui-dist@5.17.14`). Standalone template + external init script (`app/static/js/swagger-init.js`) so the page stays CSP-clean for the future enforce-mode promotion.
+- `api_docs_enabled` setting (default `false`, Security category). When off, all three routes return `404 NOT_FOUND` to avoid revealing the feature exists — matches the `/metrics` and disabled-blog patterns.
+- `tests/test_openapi_spec.py` — 18 tests including a **drift guard** that asserts the set of `(method, path)` pairs in the spec matches the live Flask URL map exactly, plus operationId hygiene, response coverage rules (401/403/404/415/429), `$ref` resolution, and an error-code catalog cross-check against the literals raised in `app/routes/api.py`.
+- `tests/test_api.py` — 8 endpoint tests covering 404-when-disabled for all three routes, YAML/JSON serving, ETag round-trip, Swagger UI render contract, and a CSP forward-compat check that verifies the docs page has no inline script bodies.
+
 ## [Unreleased] — v0.2.0
 
 ### Added — Phase 5: Architecture Hardening

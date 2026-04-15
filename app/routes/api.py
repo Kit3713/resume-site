@@ -54,8 +54,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 
-from flask import Blueprint, Response, current_app, g, jsonify, request
+from flask import Blueprint, Response, current_app, g, jsonify, render_template, request
 
 from app import limiter
 from app.db import get_db
@@ -1853,6 +1854,113 @@ def admin_backup_create():
         },
         status=201,
     )
+
+
+# ===========================================================================
+# API DOCUMENTATION (Phase 16.5 — OpenAPI 3.0 + Swagger UI)
+# ===========================================================================
+#
+# Three routes serve the hand-written OpenAPI specification at
+# ``docs/openapi.yaml`` and an interactive Swagger UI. All three sit
+# behind the ``api_docs_enabled`` feature flag (default off) and return
+# 404 NOT_FOUND when disabled — 403 would leak the endpoints' existence,
+# which defeats the "off by default" intent.
+#
+# The YAML bytes and parsed dict are cached in module scope on first
+# access so repeat requests never re-read or re-parse the file.
+
+_OPENAPI_SPEC_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    'docs',
+    'openapi.yaml',
+)
+_OPENAPI_YAML_BYTES: bytes | None = None
+_OPENAPI_SPEC_DICT: dict | None = None
+
+
+def _load_openapi_spec():
+    """Return ``(yaml_bytes, parsed_dict)``, caching both after first read.
+
+    Raises :class:`FileNotFoundError` if the spec file is missing — that
+    indicates a broken deployment (the spec ships with the codebase),
+    not a runtime condition the user can recover from.
+    """
+    global _OPENAPI_YAML_BYTES, _OPENAPI_SPEC_DICT
+    if _OPENAPI_YAML_BYTES is None or _OPENAPI_SPEC_DICT is None:
+        import yaml  # PyYAML is already a runtime dep (see requirements.txt)
+
+        with open(_OPENAPI_SPEC_PATH, 'rb') as fh:
+            raw = fh.read()
+        _OPENAPI_YAML_BYTES = raw
+        _OPENAPI_SPEC_DICT = yaml.safe_load(raw)
+    return _OPENAPI_YAML_BYTES, _OPENAPI_SPEC_DICT
+
+
+def _require_docs_enabled():
+    """Return ``None`` when api_docs_enabled is truthy, else a 404 response.
+
+    Mirrors the ``/metrics`` and blog-disabled patterns elsewhere in this
+    blueprint — disabled endpoints return 404, not 403, so a probe
+    can't tell the endpoint exists.
+    """
+    db = get_db()
+    if get_setting(db, 'api_docs_enabled', 'false').strip().lower() != 'true':
+        return _error('Not found', 'NOT_FOUND', 404)
+    return None
+
+
+def _bytes_conditional_response(body_bytes, content_type, *, status=200):
+    """Serve raw bytes with ETag + If-None-Match handling.
+
+    The JSON-native ``_conditional_response`` builds the body from a
+    Python object. The docs routes serve pre-built YAML/HTML/JSON bytes,
+    so they need a variant that takes bytes directly. Same ETag
+    algorithm (SHA-256 prefix) to stay consistent with every other read
+    endpoint.
+    """
+    etag = '"' + hashlib.sha256(body_bytes).hexdigest()[:32] + '"'
+    client_etag = request.headers.get('If-None-Match', '').strip()
+    headers = {'ETag': etag, 'Cache-Control': 'no-cache'}
+    if client_etag and client_etag == etag:
+        return Response(status=304, headers=headers)
+    headers['Content-Type'] = content_type
+    return Response(body_bytes, status=status, headers=headers)
+
+
+@api_bp.route('/openapi.yaml')
+def openapi_yaml():
+    """Serve the hand-written OpenAPI 3.0 spec as YAML."""
+    gate = _require_docs_enabled()
+    if gate is not None:
+        return gate
+    yaml_bytes, _ = _load_openapi_spec()
+    return _bytes_conditional_response(yaml_bytes, 'application/yaml')
+
+
+@api_bp.route('/openapi.json')
+def openapi_json():
+    """Serve the same spec serialised as JSON for tools that prefer it."""
+    gate = _require_docs_enabled()
+    if gate is not None:
+        return gate
+    _, spec = _load_openapi_spec()
+    body = json.dumps(spec, separators=(',', ':'), sort_keys=True).encode('utf-8')
+    return _bytes_conditional_response(body, 'application/json')
+
+
+@api_bp.route('/docs')
+def openapi_docs():
+    """Render Swagger UI pointed at the YAML endpoint above.
+
+    The template is standalone (does not extend the site's ``base.html``)
+    so Swagger UI's CSS reset doesn't fight the site styles. All assets
+    load from ``cdn.jsdelivr.net`` which is already allow-listed by the
+    app CSP.
+    """
+    gate = _require_docs_enabled()
+    if gate is not None:
+        return gate
+    return render_template('api/docs.html')
 
 
 # ---------------------------------------------------------------------------

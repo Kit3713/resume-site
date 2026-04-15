@@ -357,6 +357,22 @@ SETTINGS_REGISTRY = {
         'category': 'Security',
         'description': ('Maximum admin-scope API requests per minute per client IP.'),
     },
+    # --- API documentation (Phase 16.5) ---
+    # When off, /api/v1/docs, /api/v1/openapi.yaml, and /api/v1/openapi.json
+    # all return 404 NOT_FOUND (not 403) so the endpoints don't reveal
+    # themselves. Off by default — operators that want public API
+    # discovery opt in.
+    'api_docs_enabled': {
+        'type': 'bool',
+        'default': 'false',
+        'label': 'API Documentation (Swagger UI)',
+        'category': 'Security',
+        'description': (
+            'Expose the OpenAPI 3.0 specification and an interactive '
+            'Swagger UI at /api/v1/docs. Off by default; enable only on '
+            'instances where public API discovery is intended.'
+        ),
+    },
     # --- Observability (Phase 18.2) ---
     'metrics_enabled': {
         'type': 'bool',
@@ -381,6 +397,45 @@ SETTINGS_REGISTRY = {
             'allowed_networks list.'
         ),
     },
+    # --- Webhooks (Phase 19.2) ---
+    # Master enable for the outbound dispatch subsystem. When off, the
+    # bus handlers registered at app startup short-circuit before
+    # spawning delivery threads — so a misconfigured webhook can't fire
+    # accidentally even if the table has rows. The toggle reads through
+    # the 30 s settings cache, so changes take effect within ~30 s.
+    'webhooks_enabled': {
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Enable Outbound Webhook Delivery',
+        'category': 'Webhooks',
+        'description': (
+            'Master switch. When off, no webhooks fire even if rows exist '
+            'in the webhooks table. Off by default; turn on after creating '
+            'and validating at least one destination.'
+        ),
+    },
+    'webhook_timeout_seconds': {
+        'type': 'int',
+        'default': '5',
+        'label': 'Webhook Delivery Timeout (seconds)',
+        'category': 'Webhooks',
+        'description': (
+            'Per-request urlopen timeout for HMAC-signed POSTs. Caps how '
+            'long a slow downstream can stall a delivery thread. Clamped '
+            'to [1, 60] at dispatch time.'
+        ),
+    },
+    'webhook_failure_threshold': {
+        'type': 'int',
+        'default': '10',
+        'label': 'Webhook Auto-Disable Threshold',
+        'category': 'Webhooks',
+        'description': (
+            'Consecutive non-2xx responses before a webhook is auto-disabled. '
+            'Counter resets on the next successful 2xx delivery. Set to 0 to '
+            'disable the auto-disable behaviour entirely.'
+        ),
+    },
 }
 
 # Ordered list of categories for the admin settings page.
@@ -396,6 +451,7 @@ SETTINGS_CATEGORIES = [
     'Security',
     'Analytics',
     'Observability',
+    'Webhooks',
 ]
 
 # Color preset definitions: preset name → accent color hex value.

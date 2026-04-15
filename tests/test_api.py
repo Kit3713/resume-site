@@ -24,6 +24,7 @@ Infrastructure tested:
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 
 import pytest
@@ -1982,3 +1983,123 @@ def csrf_client(tmp_path):
     flask_app.config['WTF_CSRF_SECRET_KEY'] = 'csrf-test-secret'
     _init_test_db(str(tmp_path / 'test.db'))
     return flask_app.test_client()
+
+
+# ===========================================================================
+# Phase 16.5 — OpenAPI 3.0 Specification + Swagger UI
+# ===========================================================================
+#
+# Three new routes (`/api/v1/openapi.yaml`, `/api/v1/openapi.json`,
+# `/api/v1/docs`) sit behind the ``api_docs_enabled`` setting (default
+# ``false``). When the flag is off, every route 404s with the standard
+# error envelope so a probe can't tell the endpoints exist.
+
+
+def _enable_api_docs(app, enabled=True):
+    """Flip api_docs_enabled and bust the settings cache.
+
+    Mirrors ``_enable_blog`` above. The settings cache TTL is 30 s, so
+    the explicit ``invalidate_cache()`` is necessary for tests to see
+    the change immediately.
+    """
+    _seed(
+        app,
+        "INSERT OR REPLACE INTO settings(key, value) VALUES ('api_docs_enabled', ?)",
+        ('true' if enabled else 'false',),
+    )
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
+
+def test_openapi_yaml_404_when_flag_off_by_default(client):
+    response = client.get('/api/v1/openapi.yaml')
+    assert response.status_code == 404
+    assert _json(response)['code'] == 'NOT_FOUND'
+
+
+def test_openapi_json_404_when_flag_off_by_default(client):
+    response = client.get('/api/v1/openapi.json')
+    assert response.status_code == 404
+    assert _json(response)['code'] == 'NOT_FOUND'
+
+
+def test_swagger_ui_404_when_flag_off_by_default(client):
+    response = client.get('/api/v1/docs')
+    assert response.status_code == 404
+    assert _json(response)['code'] == 'NOT_FOUND'
+
+
+def test_openapi_yaml_returns_yaml_when_enabled(client, app):
+    _enable_api_docs(app)
+    response = client.get('/api/v1/openapi.yaml')
+    assert response.status_code == 200
+    assert response.headers['Content-Type'].startswith('application/yaml')
+    body = response.data.decode('utf-8')
+    # Sanity-check the spec content rather than over-asserting.
+    assert body.startswith('openapi:')
+    assert '/site' in body
+    # ETag must be present so clients can cache.
+    assert response.headers['ETag'].startswith('"')
+
+
+def test_openapi_yaml_etag_roundtrip(client, app):
+    _enable_api_docs(app)
+    first = client.get('/api/v1/openapi.yaml')
+    assert first.status_code == 200
+    etag = first.headers['ETag']
+
+    second = client.get('/api/v1/openapi.yaml', headers={'If-None-Match': etag})
+    assert second.status_code == 304
+    assert second.headers['ETag'] == etag
+    # 304 must not carry a body.
+    assert second.data == b''
+
+
+def test_openapi_json_parses_and_matches_yaml(client, app):
+    _enable_api_docs(app)
+    response = client.get('/api/v1/openapi.json')
+    assert response.status_code == 200
+    assert response.headers['Content-Type'].startswith('application/json')
+    parsed = json.loads(response.data)
+    assert parsed['openapi'].startswith('3.0')
+    assert 'paths' in parsed
+    # Should match the YAML version's path set 1:1 (no transformation
+    # other than YAML→JSON serialisation).
+    yaml_resp = client.get('/api/v1/openapi.yaml')
+    yaml = pytest.importorskip('yaml')
+    yaml_parsed = yaml.safe_load(yaml_resp.data)
+    assert sorted(parsed['paths'].keys()) == sorted(yaml_parsed['paths'].keys())
+
+
+def test_swagger_ui_renders_when_enabled(client, app):
+    _enable_api_docs(app)
+    response = client.get('/api/v1/docs')
+    assert response.status_code == 200
+    assert response.headers['Content-Type'].startswith('text/html')
+    body = response.data.decode('utf-8')
+    # Standalone template structure.
+    assert '<div id="swagger-ui"></div>' in body
+    # Pinned CDN version (catches accidental upgrades).
+    assert 'swagger-ui-dist@5.17.14' in body
+    # Init script loaded as an external file — no inline script body.
+    assert '/static/js/swagger-init.js' in body
+
+
+def test_swagger_ui_template_has_no_inline_script_bodies(client, app):
+    """CSP forward-compat: no `<script>...</script>` with an inline body.
+
+    Once Phase 13.2 promotes CSP from report-only to enforced, any
+    inline script body would break the docs page. Catching it now keeps
+    the upgrade path clear.
+    """
+    _enable_api_docs(app)
+    response = client.get('/api/v1/docs')
+    body = response.data.decode('utf-8')
+    # Find every `<script ...>...</script>` and assert the content
+    # between `>` and `</script>` is whitespace-only.
+    pattern = re.compile(r'<script\b[^>]*>(.*?)</script>', re.DOTALL | re.IGNORECASE)
+    for inline in pattern.findall(body):
+        assert not inline.strip(), (
+            f'docs.html has an inline script body — move it to /static/js/: {inline[:120]!r}'
+        )

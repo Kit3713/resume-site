@@ -22,6 +22,7 @@ from flask_babel import gettext as _
 
 from app import limiter
 from app.db import get_db
+from app.events import Events, emit
 from app.models import count_recent_submissions, get_setting, save_contact_submission
 
 contact_bp = Blueprint('contact', __name__, template_folder='../templates')
@@ -74,7 +75,7 @@ def contact_page():
             return render_template('public/contact.html')
 
         # Persist to database (always, even for spam — for admin visibility)
-        save_contact_submission(
+        submission_id = save_contact_submission(
             db,
             name,
             email,
@@ -82,6 +83,18 @@ def contact_page():
             ip_address=client_ip,
             user_agent=request.user_agent.string,
             is_spam=is_spam,
+        )
+
+        # Phase 19.1 event bus — fire `contact.submitted` regardless of
+        # spam flag so subscribers can choose to surface attack patterns.
+        # Mirrors the API-side emission in app/routes/api.py:contact_submit
+        # so a webhook subscriber sees the same shape regardless of
+        # whether the submission came from the form or the JSON endpoint.
+        emit(
+            Events.CONTACT_SUBMITTED,
+            submission_id=submission_id,
+            is_spam=is_spam,
+            source='public_form',
         )
 
         # Relay via email (only for legitimate, non-spam submissions)

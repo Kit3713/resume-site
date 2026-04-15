@@ -25,6 +25,12 @@ services:
       - ./config.yaml:/app/config.yaml:ro,Z
       - resume-site-data:/app/data:Z
       - resume-site-photos:/app/photos:Z
+      - resume-site-backups:/app/backups:Z
+    environment:
+      # Tell `manage.py backup` to write archives into the mounted
+      # volume so they survive container rebuilds and can be picked up
+      # by host-side offsite-sync jobs (rsync, rclone, etc.).
+      RESUME_SITE_BACKUP_DIR: /app/backups
     # Uncomment to use Podman secrets for SMTP password:
     # secrets:
     #   - smtp_password
@@ -60,6 +66,7 @@ services:
 volumes:
   resume-site-data:
   resume-site-photos:
+  resume-site-backups:
   # caddy-data:
   # caddy-config:
 

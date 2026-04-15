@@ -1,0 +1,63 @@
+# =============================================================
+# resume-site-backup.service — Phase 17.2
+#
+# One-shot systemd unit that wraps `manage.py backup --prune --keep N`
+# against a running resume-site container. Triggered by the matching
+# resume-site-backup.timer (daily at 02:00 by default).
+#
+# Install (rootless / per-user):
+#   cp resume-site-backup.service ~/.config/systemd/user/
+#   cp resume-site-backup.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now resume-site-backup.timer
+#
+# Install (system-wide):
+#   sudo cp resume-site-backup.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now resume-site-backup.timer
+#
+# Override the retention count without editing the file:
+#   systemctl --user edit resume-site-backup.service
+#   # then in the editor:
+#   #   [Service]
+#   #   Environment=RESUME_SITE_KEEP=14
+#
+# Inspect the most recent run:
+#   systemctl --user status resume-site-backup.service
+#   journalctl --user -u resume-site-backup.service -n 50
+# =============================================================
+
+[Unit]
+Description=resume-site nightly backup
+# Wait for the resume-site container to be running so `podman exec`
+# doesn't race on a still-starting service.
+After=resume-site.service
+Wants=resume-site.service
+
+[Service]
+Type=oneshot
+
+# Default retention: keep the 7 newest archives. Override per host via
+# `systemctl edit` (see header) without touching this file.
+Environment=RESUME_SITE_KEEP=7
+
+# `podman exec` runs against the long-running resume-site container
+# (Quadlet creates it as `resume-site`; compose.yaml uses the same
+# container_name). The CLI inside the container resolves the output
+# directory via RESUME_SITE_BACKUP_DIR (set on the container itself in
+# the Quadlet / compose env block, default /app/backups), so the
+# archive lands on the resume-site-backups volume.
+ExecStart=/usr/bin/podman exec resume-site \
+    python manage.py backup --prune --keep ${RESUME_SITE_KEEP}
+
+# Cap a runaway backup at 30 minutes so the timer keeps to schedule.
+TimeoutStartSec=30min
+
+# Don't restart on failure — the timer's Persistent=true catches the
+# next missed window. Restart loops would mask real underlying issues
+# (disk full, container down).
+Restart=no
+
+[Install]
+# Pulled in as a dependency by the timer; no separate WantedBy needed.
+WantedBy=default.target
