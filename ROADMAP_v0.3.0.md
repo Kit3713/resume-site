@@ -850,27 +850,27 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 ### 21.1 — Container Image Optimization
 
-- [ ] **Layer audit:** Review every `COPY` and `RUN` instruction. Combine layers where possible. Ensure the `.containerignore` excludes all non-essential files (tests, docs, example plugins, translations source files, `.git`)
-- [ ] **Image size profiling:** Measure layer sizes with `podman image tree`. Target: < 150MB total image size. Current baseline TBD — measure and document
-- [ ] **Distroless evaluation:** Evaluate switching the runtime stage from `python:3.12-slim` to a distroless Python image (Google's `distroless/python3` or Chainguard's Python image). Trade-off: smaller attack surface and image size vs. no shell for debugging. If adopted, add a separate `debug` stage with a shell for troubleshooting
-- [ ] **Build caching:** Optimize the Containerfile for Docker/Podman layer caching — `requirements.txt` copied and installed before application code so dependency layer is cached across code changes
-- [ ] **Multi-platform build verification:** CI builds and tests on both `linux/amd64` and `linux/arm64`. Verify Pillow, nh3, and argon2-cffi compile correctly on both architectures
-- [ ] **Startup optimization:** Measure cold start time (container start → first successful `/healthz` response). Target: < 5 seconds. Profile and optimize if slower
+- [x] **Layer audit:** `Containerfile` reviewed; multi-stage layout already minimal (builder stage discarded; runtime stage has 4 `COPY` and 3 `RUN` invocations, each justified inline). `.containerignore` rewritten to exclude `tests/`, `docs/`, every `*.md` (with explicit entries for ROADMAP/CHANGELOG/README/CONTRIBUTING/SECURITY), `pyproject.toml`, `requirements-dev*`, `babel.cfg`, `.pre-commit-config.yaml`, `.secrets.baseline`, dev-tool dirs (`.venv`, `.pytest_cache`, `.coverage`), and operator-side files (`compose.yaml`, `resume-site.container`, `resume-site-backup.{service,timer}`). Dropped the no-op `!requirements.txt` exception (the file is COPY'd inside the builder stage before `.containerignore` filtering applies).
+- [x] **Build caching:** Already optimised — `requirements.txt` is COPY'd and `pip install`'d in the builder stage before the application code COPY, so a code-only change reuses the dependency layer cache. Verified by inspection. Documented as the build-cache contract in PRODUCTION.md (Phase 21.4).
+- [x] **Multi-platform build verification:** CI builds amd64+arm64 in the `publish` job (`docker/build-push-action@v6` with QEMU + Buildx). The `container-build` smoke test runs on amd64 only — arm64 is exercised at publish time. The image size baseline measurement at v0.3.0 release will record both architectures.
+- [ ] **Image size profiling:** Documented baseline pending — captured in PRODUCTION.md (Phase 21.4) once the v0.3.0-rc1 image is built. No automated regression gate this release; revisit in v0.4.0 if size becomes a bottleneck.
+- [ ] **Distroless evaluation:** Evaluated and **kept `python:3.12-slim`**. Rationale captured in PRODUCTION.md (Phase 21.4): retains shell access for production debugging, `curl` for the HEALTHCHECK, and team familiarity. Distroless trade-off (smaller attack surface, no debug shell) doesn't pencil out at this scale; revisit in v0.4.0.
+- [ ] **Startup optimization:** Cold-start measurement deferred to PRODUCTION.md baseline. The `HEALTHCHECK --start-period=10s` already accommodates the slowest observed cold start under the test-image config; tighten if v0.3.0-rc1 measurements show consistent sub-5s startup.
+
+Build-arg `IMAGE_VERSION` (default `dev`) added to the runtime stage so CI labels each image with the git tag (`v0.3.0`) rather than the previously-hardcoded `0.2.0`. The `container-build` CI job exercises the new build-arg flow plus calls into `/healthz` and `/readyz` as a smoke test of both probes.
 
 ### 21.2 — Health and Readiness
 
-- [ ] **Separate health endpoints:**
-  - `/healthz` — liveness probe (existing). Returns 200 if the process is alive. No DB check (avoids false negatives from transient DB locks)
-  - `/readyz` — readiness probe (new). Returns 200 if the app can serve requests: DB connectable, migrations current, photo directory writable. Returns 503 with diagnostic JSON if not ready
-- [ ] **Startup probe:** `/readyz` with relaxed timing for initial DB migration and FTS index build
-- [ ] **Health in compose.yaml:** Update the health check to use `/healthz` for liveness and add a commented-out Kubernetes-style readiness probe section
+- [x] **Separate health endpoints:** `/healthz` (existing) stays as the lightweight liveness probe — no I/O, no DB. `/readyz` (NEW, `app/routes/public.py`) runs four short-circuiting checks: `db_connect` (fresh sqlite3 connection + `SELECT 1` with 1s busy timeout), `migrations_current` (every `migrations/*.sql` recorded in `schema_version`; reuses the new `app/services/migrations.py` helpers), `photos_writable` (configured `PHOTO_STORAGE` exists and is writable), and `disk_space` (database's host filesystem has at least `RESUME_SITE_READYZ_MIN_FREE_MB` free; default 100MB). Returns 200 with `{"ready": true, "checks": {…}}` on success; 503 with `{"ready": false, "failed": "<name>", "detail": "…", "checks": {…}}` on first failure. The route catches every exception so it can never 500. Excluded from analytics in `app/services/analytics.py` so probe traffic doesn't pollute `page_views`. 14 tests in `tests/test_readyz.py`.
+- [x] **Startup probe:** Same `/readyz` endpoint serves this role — k8s readiness probes already accept `initialDelaySeconds` for relaxed startup timing. Documented in the commented k8s probe block in `compose.yaml` (`initialDelaySeconds: 5`, `failureThreshold: 3`).
+- [x] **Health in compose.yaml:** `/healthz` remains the active healthcheck (Podman/Docker only support one healthcheck per container). Added a commented-out Kubernetes-style probe block to both `compose.yaml` and `resume-site.container` showing the readiness/liveness pair operators should mirror in their k8s manifests.
 
 ### 21.3 — Container Security Scanning
 
-- [ ] Add Trivy container scan to CI pipeline (scan the built image for OS and Python package CVEs)
-- [ ] Fail the pipeline on CRITICAL and HIGH vulnerabilities
-- [ ] Document the remediation process for base image CVEs (rebuild with `--pull` and `--no-cache`)
-- [ ] Add `cosign` image signing to the publish workflow (signs the GHCR image with a keyless signature for supply chain verification)
+- [x] **Trivy CVE scan in CI:** New `container-scan` job in `.github/workflows/ci.yml` between `container-build` and `publish`. Uses `aquasecurity/trivy-action@0.28.0` against a freshly-built image with `--severity CRITICAL,HIGH --exit-code 1 --ignore-unfixed --scanners vuln,secret`. SARIF results uploaded as a build artifact (`trivy-results`) so triagers can review. Vuln database cached between runs to keep scan time bounded.
+- [x] **Pipeline gate:** Both `publish` and `publish-main` jobs gain `needs: [test, container-build, container-scan]` — no image is pushed to GHCR if Trivy finds an actionable HIGH or CRITICAL CVE.
+- [x] **Cosign keyless signing:** `publish` and `publish-main` install `sigstore/cosign-installer@v3` and sign the published image with the GitHub Actions OIDC identity (`COSIGN_EXPERIMENTAL=1` for the keyless flow). Signature + certificate land in the public Sigstore transparency log; no key material to manage. Both jobs gain `permissions: { id-token: write, contents: read, packages: write }` so the OIDC token is available.
+- [x] **Remediation docs:** Operators verify a pulled image with `cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp 'https://github.com/Kit3713/resume-site/.+' ...`. The exact invocation lives in `CONTRIBUTING.md` (developer-facing) and will land in `docs/PRODUCTION.md` (operator-facing) in Phase 21.4. Base-image CVE remediation: `docker build --pull --no-cache` then re-tag and re-push — same flow as before, just gated by Trivy now.
 
 ### 21.4 — Deployment Documentation
 

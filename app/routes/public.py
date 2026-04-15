@@ -350,3 +350,169 @@ def healthz():
     load balancers.
     """
     return jsonify(status='ok'), 200
+
+
+# ---------------------------------------------------------------------------
+# /readyz — Kubernetes-style readiness probe (Phase 21.2)
+# ---------------------------------------------------------------------------
+#
+# Liveness vs readiness:
+#
+# * ``/healthz`` (above) is the **liveness** probe — "is the process
+#   alive?". It deliberately does no I/O so a transient DB lock can't
+#   cause an orchestrator to kill the container. Used by Podman /
+#   Docker HEALTHCHECK in this project.
+#
+# * ``/readyz`` (below) is the **readiness** probe — "can the process
+#   serve requests right now?". It actively checks the database is
+#   reachable, the schema is up to date, the photos directory is
+#   writable, and there's headroom on disk. A 503 from /readyz tells
+#   an orchestrator (Kubernetes / Nomad) to remove the pod from the
+#   load-balancer rotation but NOT to kill the process — recovery is
+#   expected (e.g. the DB lock clears, disk is freed up).
+#
+# The four checks short-circuit on the first failure so the response
+# names the specific failed check, which is exactly what an operator
+# needs to investigate. Each check is wrapped in ``try`` so the route
+# itself can never 500 — it always returns 200 or 503 with structured
+# JSON.
+
+# Default minimum free space for the readiness probe to report ready.
+# 100 MB headroom catches a near-full disk before SQLite + photos
+# uploads start failing. Override per environment via
+# ``RESUME_SITE_READYZ_MIN_FREE_MB``.
+_READYZ_DEFAULT_MIN_FREE_MB = 100
+
+
+def _readyz_min_free_bytes():
+    """Resolve the disk-headroom threshold (env override → default)."""
+    raw = os.environ.get('RESUME_SITE_READYZ_MIN_FREE_MB')
+    if raw is not None:
+        try:
+            value = int(raw)
+            if value >= 0:
+                return value * 1024 * 1024
+        except ValueError:
+            pass  # fall through to default
+    return _READYZ_DEFAULT_MIN_FREE_MB * 1024 * 1024
+
+
+def _readyz_check_db(db_path):
+    """Open a short-timeout connection and verify it answers ``SELECT 1``.
+
+    Uses a fresh connection (not Flask's request-scoped one) with a
+    1-second busy timeout so a stuck writer can't block the probe.
+    Returns ``(True, '')`` on success, ``(False, detail)`` on failure.
+    """
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(db_path, timeout=1)
+        try:
+            conn.execute('SELECT 1').fetchone()
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — any failure means "not ready"
+        return False, f'{type(exc).__name__}: {exc}'
+    return True, ''
+
+
+def _readyz_check_migrations(db_path):
+    """Compare the schema_version rows against the migrations/ directory.
+
+    Reports as 'pending: N file(s)' when the database is behind the
+    code, naming the first pending file so the operator knows what's
+    missing. A fresh DB with no schema_version table is treated as
+    "every migration is pending" — which is correct: an unmigrated DB
+    is not ready to serve requests.
+    """
+    import sqlite3
+
+    from app.services.migrations import (
+        get_pending_migrations,
+    )
+
+    try:
+        conn = sqlite3.connect(db_path, timeout=1)
+        try:
+            pending = get_pending_migrations(conn)
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — DB unreadable counts as not ready
+        return False, f'{type(exc).__name__}: {exc}'
+    if pending:
+        first = pending[0][1]
+        return False, f'{len(pending)} pending; first: {first}'
+    return True, ''
+
+
+def _readyz_check_photos_writable(photos_dir):
+    """Verify the photos directory exists and is writable."""
+    if not photos_dir:
+        return False, 'PHOTO_STORAGE not configured'
+    try:
+        if not os.path.isdir(photos_dir):
+            return False, f'directory missing: {photos_dir}'
+        if not os.access(photos_dir, os.W_OK):
+            return False, f'not writable: {photos_dir}'
+    except OSError as exc:
+        return False, f'OSError: {exc}'
+    return True, ''
+
+
+def _readyz_check_disk_space(db_path):
+    """Verify the database's host filesystem has the configured headroom."""
+    import shutil
+
+    target = os.path.dirname(db_path) or '.'
+    try:
+        free = shutil.disk_usage(target).free
+    except OSError as exc:
+        return False, f'OSError: {exc}'
+    minimum = _readyz_min_free_bytes()
+    if free < minimum:
+        return False, f'free={free} bytes (minimum={minimum})'
+    return True, ''
+
+
+@public_bp.route('/readyz')
+def readyz():
+    """Kubernetes-style readiness probe.
+
+    Runs four checks in order and short-circuits on the first failure:
+
+    1. ``db_connect`` — fresh ``sqlite3`` connection + ``SELECT 1``.
+    2. ``migrations_current`` — every file in ``migrations/`` is
+       recorded in ``schema_version``.
+    3. ``photos_writable`` — the configured ``PHOTO_STORAGE`` exists
+       and is writable.
+    4. ``disk_space`` — the database's host filesystem has at least
+       ``RESUME_SITE_READYZ_MIN_FREE_MB`` (default 100MB) free.
+
+    Returns 200 with ``{"ready": true, "checks": {...}}`` on success;
+    503 with ``{"ready": false, "failed": "<name>", "detail": "..."}``
+    on the first failure.
+    """
+    from flask import current_app
+
+    db_path = current_app.config.get('DATABASE_PATH', '')
+    photos_dir = current_app.config.get('PHOTO_STORAGE', '')
+
+    checks = (
+        ('db_connect', lambda: _readyz_check_db(db_path)),
+        ('migrations_current', lambda: _readyz_check_migrations(db_path)),
+        ('photos_writable', lambda: _readyz_check_photos_writable(photos_dir)),
+        ('disk_space', lambda: _readyz_check_disk_space(db_path)),
+    )
+
+    results = {}
+    for name, fn in checks:
+        ok, detail = fn()
+        results[name] = 'ok' if ok else detail
+        if not ok:
+            return (
+                jsonify(ready=False, failed=name, detail=detail, checks=results),
+                503,
+            )
+
+    return jsonify(ready=True, checks=results), 200

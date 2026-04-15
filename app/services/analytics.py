@@ -34,7 +34,9 @@ def track_page_view():
         return
 
     path = request.path
-    if path.startswith(('/static/', '/admin', '/photos/', '/favicon', '/healthz', '/set-locale')):
+    if path.startswith(
+        ('/static/', '/admin', '/photos/', '/favicon', '/healthz', '/readyz', '/set-locale')
+    ):
         return
 
     # Never let analytics tracking break the actual page response —

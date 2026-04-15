@@ -27,6 +27,19 @@ Thanks for your interest in contributing to resume-site.
 - Follow existing code style (PEP 8, 120 char line length).
 - Don't commit `config.yaml`, database files, or personal photos — these are gitignored for a reason.
 
+## Container Image Changes (v0.3.0+)
+
+If your PR touches `Containerfile`, `requirements.txt`, or anything that ends up baked into the runtime image:
+
+1. Build locally: `docker build --build-arg IMAGE_VERSION=dev -t resume-site:dev .` (the `IMAGE_VERSION` arg labels the OCI metadata; CI sets it from the git tag).
+2. Run a Trivy CVE scan locally before opening the PR: `trivy image resume-site:dev`. CI runs the same scan with `--severity HIGH,CRITICAL --ignore-unfixed` and fails the build on any actionable finding (Phase 21.3). Catching it locally saves a CI cycle.
+3. The published image is signed with cosign keyless OIDC. Verify any image you pull from GHCR with:
+   ```bash
+   cosign verify ghcr.io/Kit3713/resume-site:vX.Y.Z \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+     --certificate-identity-regexp 'https://github.com/Kit3713/resume-site/.+'
+   ```
+
 ## Database Migrations (v0.2.0+)
 
 If your feature adds or modifies database tables:
