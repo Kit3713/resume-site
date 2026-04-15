@@ -86,40 +86,28 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 **Problem:** Queries work but have never been profiled under load. No indexes beyond primary keys and unique constraints. The `page_views` table will grow unbounded on active sites. The `settings` table is read on every single request via the context processor.
 
-- [ ] **Query audit:** Enumerate every `db.execute()` call across all models and services. Catalog query patterns, identify N+1 queries (e.g., `get_skill_domains_with_skills` runs N+1 queries), and tag hot paths (executed on every request vs. admin-only)
-- [ ] **Index pass:** Add indexes based on actual query WHERE/ORDER BY patterns:
-  - `page_views(path)`, `page_views(created_at)`, `page_views(ip_address)` — analytics is the heaviest table
-  - `blog_posts(status, published_at)` — public listing query
-  - `blog_post_tags(post_id)`, `blog_post_tags(tag_id)` — junction table joins
-  - `reviews(status, display_tier)` — public testimonials query
-  - `photos(display_tier, sort_order)` — portfolio gallery
-  - `admin_activity_log(created_at)` — dashboard feed
-  - `contact_submissions(ip_address, created_at)` — rate limit check
-- [ ] **Settings cache:** The `inject_settings()` context processor runs `SELECT * FROM settings` on every request. Implement an in-process cache with a configurable TTL (default 30s) and cache-bust on admin settings save. Use a module-level dict with a timestamp — no external cache dependency
-- [ ] **Batch N+1 elimination:** Rewrite `get_skill_domains_with_skills()` to use a single JOIN query instead of N+1. Audit for similar patterns in blog tag loading
-- [ ] **Connection pooling evaluation:** Current per-request `sqlite3.connect()` is fine for SQLite's threading model, but document why and add a `PRAGMA` audit (verify WAL, busy_timeout, foreign_keys are set consistently)
-- [ ] **EXPLAIN QUERY PLAN:** Add a `manage.py query-audit` command that runs EXPLAIN QUERY PLAN on every cataloged query and reports any full table scans on tables expected to be large (page_views, blog_posts, contact_submissions)
-- [ ] **Write a migration** (`005_indexes.sql`) for all new indexes
+- [x] **Query audit:** Catalogued in the `_AUDIT_QUERIES` table in `manage.py` (see the `query_audit` command below) — ten hot-path queries covering every model + service `db.execute()` that fires on public routes, with `expected_scan` flags for queries where a full scan is correct (e.g. the 30-row `settings` table).
+- [x] **Index pass:** `migrations/005_indexes.sql` — every index from the roadmap bullet, each with an inline rationale comment. `page_views`, `blog_posts(status, published_at)`, `blog_post_tags` junction indexes, `reviews(status, display_tier)`, `photos(display_tier, sort_order)`, `admin_activity_log(created_at)`, `contact_submissions(ip_address, created_at)` all present. All use `IF NOT EXISTS` for safe re-runs.
+- [x] **Settings cache:** `app/services/settings_svc.py:_settings_cache` — module-level dict + `threading.Lock`, `DEFAULT_SETTINGS_TTL = 30.0` seconds, `invalidate_cache()` called from every admin settings-save path. Tests: `tests/test_settings_cache.py` (8 tests including the cache-bust contract).
+- [x] **Batch N+1 elimination:** `get_skill_domains_with_skills()` in `app/models.py:96-128` — two queries total (domains, then a single `WHERE domain_id IN (...)` for all skills). `get_tags_for_posts()` in `app/services/blog.py` gets the same batch treatment. Regression test suite `tests/test_n_plus_1.py` (7 tests) instruments `sqlite3.set_trace_callback` to assert the exact query counts — locks the contract against future regressions.
+- [x] **Connection pooling evaluation:** Per-request `sqlite3.connect()` is retained; the PRAGMA audit lives in `app/db.py:_PER_CONNECTION_PRAGMAS` (foreign_keys, busy_timeout, synchronous, temp_store, cache_size, mmap_size). `tests/test_db_pragmas.py` (5 tests) locks in every pragma value so a silent removal would fail CI.
+- [x] **EXPLAIN QUERY PLAN:** `manage.py query-audit` — runs `EXPLAIN QUERY PLAN` on every cataloged query, marks each `✓ INDEX` / `~ OK-SCAN` / `✗ SCAN`, exits non-zero on unexpected full scans so CI can pick it up.
+- [x] **Write a migration** — shipped as `migrations/005_indexes.sql` (see the Index pass bullet above).
 
 ### 12.2 — Python Code Optimization
 
 **Problem:** The codebase is functional and well-documented but has never had a performance-focused review. Some patterns are repeated across services. Error handling is inconsistent.
 
-- [ ] **Import audit:** Map all imports across the project. Eliminate redundant imports, consolidate common stdlib imports, ensure no circular import risk from the expanding module graph
-- [ ] **Hot path profiling:** Identify the 5 most-hit routes (landing page, portfolio, blog listing, blog post, contact). For each, measure: DB query count, DB query time, template render time, total response time. Establish baseline numbers in a `PERFORMANCE.md` document
+- [x] **Import audit:** Done as part of the Phase 12.2 sweep (commit c785890). Multiple services now carry `from __future__ import annotations`; no circular-import issues surfaced by ruff `F401` / `I001` in CI.
+- [x] **Hot path profiling:** `PERFORMANCE.md` (118 lines) — baseline p50/p95/query-count/response-size per top-5 route, plus a "regression threshold" section marked as CI-blocking. Measurement harness is `scripts/benchmark_routes.py` (216 lines) — spins up a fresh app against a seeded SQLite, runs the test client, reports the numbers.
 - [ ] **Template rendering:** Audit Jinja2 templates for redundant database calls (any `{{ }}` expression that triggers a query), unnecessary loops, and missing `{% cache %}` opportunities
-- [ ] **String handling:** Replace any f-string SQL construction (should be none after v0.2.0 audit, but verify exhaustively). Ensure all string concatenation in hot paths uses join() or format() efficiently
-- [ ] **Pillow pipeline:** Profile photo upload processing. Evaluate lazy loading, progressive JPEG output, and EXIF stripping. Ensure Pillow operations release memory promptly (explicit `image.close()` or context managers)
-- [ ] **Service layer DRY pass:** Extract common patterns across services into shared utilities:
-  - CRUD boilerplate (get_all, get_by_id, create, update, delete) → `app/services/base.py` mixin or helper functions
-  - Slug generation (duplicated in blog.py and potentially needed by projects, case studies) → `app/utils/slugify.py`
-  - Pagination logic → `app/utils/pagination.py` (reusable for blog, API, admin lists)
-  - Sort-order management → shared utility for any table with `sort_order` column
-- [ ] **Error handling standardization:** Define a consistent error handling pattern:
-  - Services raise domain-specific exceptions (e.g., `NotFoundError`, `ValidationError`, `DuplicateSlugError`)
-  - Routes catch and translate to HTTP responses (404, 400, 409)
-  - Create `app/exceptions.py` with the hierarchy
-  - Ensure no bare `except Exception: pass` outside of analytics tracking
+- [x] **String handling:** No f-string SQL construction anywhere in `app/`. Enforced at CI time by the "Check for unsafe SQL patterns" step in `.github/workflows/ci.yml` (greps for `execute(f"`, `.format` near execute/select/insert/update/delete — fails the build on any hit).
+- [x] **Pillow pipeline:** `app/services/photos.py` uses context managers on every `Image.open()`, saves JPEG with `progressive=True`, strips EXIF on save, closes intermediates explicitly. `tests/test_photo_processing.py` (5 tests) covers the upload path. WebP secondary format is generated at `photos.py:188-189`.
+- [x] **Service layer DRY pass:**
+  - Slug generation → `app/services/text.py` (`slugify()`, 43 lines, reused across blog and tags — `tests/test_text_utils.py` has 79 lines covering it).
+  - Pagination → `app/services/pagination.py` (93 lines, reused by blog + admin lists; `tests/test_pagination.py` has 105 lines covering the boundaries).
+  - (Deferred: CRUD base mixin and sort-order utility — the current services are small enough that a premature base class would obscure the SQL; revisit when REST-API write handlers are added in Phase 16.)
+- [x] **Error handling standardization:** `app/exceptions.py` (63 lines) defines `DomainError` plus `ValidationError` / `NotFoundError` / `DuplicateError`, all multi-inheriting from the matching stdlib types (`ValueError` / `LookupError`) so pre-existing catches keep working during transition. `tests/test_exceptions.py` (107 lines) covers the contract. Orthogonal operational categorisation lives in `app/errors.py` (Phase 18.9). Bare `except Exception: pass` patterns replaced with `contextlib.suppress(OSError)` across `app/services/*` and the 500 handler; analytics `except` is the one documented exemption.
 - [ ] **Type hints:** Add type hints to all public function signatures across services and models. Not enforced by mypy in CI yet (that's a v0.4.0 concern), but documented for IDE support and contributor clarity
 - [ ] **Docstring audit:** Verify every public function has a docstring. Standardize format (already Google-style, ensure consistency). Remove any stale docs that don't match post-v0.2.0 implementations
 
@@ -134,8 +122,8 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 - [ ] **Asset fingerprinting:** Append a content hash to static asset URLs (`style.abc123.css`) so `Cache-Control: immutable` works correctly across deployments. Implement via Flask's `url_for('static', ...)` override or a manifest file
 - [ ] **GSAP optimization:** Audit every ScrollTrigger registration. Ensure `kill()` is called on elements that leave the DOM (SPA-style navigation isn't used, but verify no memory leaks on long sessions). Evaluate whether GSAP can be loaded only on pages that use animations (not admin pages)
 - [ ] **Critical CSS:** Extract above-the-fold CSS for the landing page and inline it in `<head>` to eliminate the render-blocking stylesheet on first paint
-- [ ] **Image optimization pipeline:** Current Pillow processing resizes to 2000px max. Add: WebP generation as a secondary format (serve via `<picture>` with JPEG fallback), responsive `srcset` generation (640w, 1024w, 2000w), lazy loading (`loading="lazy"`) on all below-fold images, and LQIP (Low Quality Image Placeholder) blur-up thumbnails
-- [ ] **Font loading:** Audit Google Fonts loading. Implement `font-display: swap`, preconnect hints (`<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>`), and consider self-hosting the 5 font pairings to eliminate the external dependency
+- [ ] **Image optimization pipeline:** *(partially shipped)* WebP secondary format generated by `app/services/photos.py:188-189`; `loading="lazy"` is on every `<img>` in the templates. Still pending: `<picture>` element with JPEG fallback, responsive `srcset` (640w / 1024w / 2000w), and LQIP blur-up thumbnails — those need template changes plus a second Pillow pass.
+- [x] **Font loading:** `app/templates/base.html:45-46` declares `<link rel="preconnect" href="https://fonts.googleapis.com">` + `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>`; line 55 appends `&display=swap` to the CSS URL. Admin base template has the same pair. Self-hosting the five font pairings stays deferred — operators preferring a zero-CDN stance can still set `custom_css` to override.
 
 ### 12.4 — Template Optimization
 
@@ -148,18 +136,11 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 **Problem:** The codebase has no automated code quality gates. Code review catches style issues but misses patterns that tooling detects instantly — unused variables, unreachable code, overly complex functions, security anti-patterns, and inconsistent formatting. Professional codebases enforce quality mechanically, not manually.
 
-- [ ] **Linter (ruff):** Add `ruff` as the primary Python linter. Configure in `pyproject.toml` with rule sets: `E` (pycodestyle errors), `F` (pyflakes), `W` (pycodestyle warnings), `I` (isort — import sorting), `B` (flake8-bugbear — common pitfalls), `S` (flake8-bandit — security), `C4` (flake8-comprehensions), `SIM` (flake8-simplify), `UP` (pyupgrade — Python 3.12+ idioms). Fix all existing violations before enabling in CI
-- [ ] **Formatter (ruff format):** Enable `ruff format` as the code formatter. Configure line length (88, Black-compatible). Run across the entire codebase as a one-time commit, then enforce in CI
-- [ ] **Security scanner (bandit):** Add `bandit` as a dedicated security static analysis tool. Configure to scan all Python files, exclude tests. Target: zero findings of MEDIUM severity or higher. Document any accepted suppressions in-line with `# nosec` and a justification comment
-- [ ] **Pre-commit hooks:** Create `.pre-commit-config.yaml`:
-  - `ruff` (lint + format)
-  - `bandit` (security scan)
-  - `pip-audit` (dependency vulnerabilities)
-  - `check-yaml` / `check-json` / `check-toml` (syntax validation on config files)
-  - `detect-secrets` (prevent accidental credential commits)
-  - `trailing-whitespace` / `end-of-file-fixer` / `mixed-line-ending`
-  - Document pre-commit setup in `CONTRIBUTING.md`
-- [ ] **CI quality gate:** Add a CI job that runs `ruff check`, `ruff format --check`, `bandit`, and `pip-audit` on every push. Failures block merge. This is non-negotiable — no code lands without passing static analysis
+- [x] **Linter (ruff):** `pyproject.toml:[tool.ruff.lint]` selects `E/W/F/I/B/S/C4/SIM/UP` — exactly the roadmap set. Per-file ignores for `tests/**` (assert/hardcoded-password) and `manage.py` (print/subprocess) are documented inline with justifications. Line length 100. Active in pre-commit (`.pre-commit-config.yaml`) and in CI (`.github/workflows/ci.yml`).
+- [x] **Formatter (ruff format):** `pyproject.toml:[tool.ruff.format]` — single-quote style, LF line endings. `ruff format --check` is the second step in the CI "quality" job; it also runs via pre-commit. Entire tree already formatted (verified with `ruff format --check .` → all pass).
+- [x] **Security scanner (bandit):** `pyproject.toml:[tool.bandit]` — excludes tests/ (test fixtures legitimately carry credentials). Runs at severity `-ll` (low+) in both pre-commit and CI. Zero MEDIUM+ findings on the current tree. `# nosec` suppressions carry an explanatory comment alongside the rule ID (e.g. the `B202` on `tarfile.extractall` in `app/services/backups.py` points at the `_safe_extract` contract).
+- [x] **Pre-commit hooks:** `.pre-commit-config.yaml` ships ruff (lint + format), bandit, detect-secrets, trailing-whitespace, end-of-file-fixer, check-yaml, check-toml, check-added-large-files, check-merge-conflict, mixed-line-ending, check-case-conflict. `CONTRIBUTING.md` documents the install + `pre-commit run --all-files` flow. *(Minor gaps vs the roadmap wish-list: `pip-audit` runs in CI but not yet as a pre-commit hook; `check-json` omitted because there are no committed `.json` config files.)*
+- [x] **CI quality gate:** `.github/workflows/ci.yml` "quality" job runs `ruff check .`, `ruff format --check .`, `bandit -r app/ -c pyproject.toml -ll`, and the SQL-interpolation grep guard — all four block the build. Test job `needs: quality`, so failures halt the whole pipeline. `pip-audit` runs in the same workflow but with `continue-on-error: true` (advisory); promoting it to blocking is a ratchet-up deferred until the existing advisory findings are triaged.
 - [ ] **Complexity tracking:** Configure `ruff` to enforce maximum cyclomatic complexity per function (threshold: 15). Functions exceeding this are flagged for refactoring. ~~Add a `manage.py complexity-report` command that prints the top 20 most complex functions in the codebase~~ (`complexity-report` shipped; ruff C901 gate still pending)
 - [ ] **Dead code detection:** Run `vulture` across the codebase to find unused functions, variables, and imports. Fix or document (some apparent dead code is used by Jinja2 templates or Flask's import machinery). Add `vulture` to CI as a warning (not blocking), ratchet to blocking in v0.4.0
 
