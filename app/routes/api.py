@@ -1857,6 +1857,334 @@ def admin_backup_create():
 
 
 # ===========================================================================
+# WEBHOOKS (Phase 19.2 — admin scope, CRUD over the webhooks table)
+# ===========================================================================
+#
+# Mirrors the admin UI under ``/admin/webhooks`` so a headless operator
+# can drive the same workflows. The service layer
+# (``app.services.webhooks``) owns CRUD + delivery + auto-disable; these
+# routes are pure adapters.
+#
+# Field shape:
+#
+#     {
+#       "id": 1,
+#       "name": "Slack",
+#       "url": "https://hooks.example.com/abc",
+#       "events": ["blog.published", "review.approved"],
+#       "enabled": true,
+#       "failure_count": 0,
+#       "created_at": "2026-04-15T10:11:12Z",
+#       "last_triggered_at": "2026-04-15T10:13:14Z"
+#     }
+#
+# The HMAC ``secret`` is intentionally OMITTED from every response. It
+# can only be set / rotated via POST or PUT — once written, the API
+# never reads it back. This matches the admin UI's masked-field
+# convention so tokens shown in the API are no more privileged than
+# tokens shown in HTML.
+#
+# The /test endpoint is synchronous (operator wants the result inline)
+# and returns the full DeliveryResult so a caller can debug a broken
+# downstream without polling /deliveries afterward.
+
+
+def _webhook_to_dict(webhook):
+    """Project a :class:`Webhook` namedtuple to a JSON-safe dict, sans secret."""
+    if webhook is None:
+        return None
+    return {
+        'id': webhook.id,
+        'name': webhook.name,
+        'url': webhook.url,
+        'events': list(webhook.events),
+        'enabled': bool(webhook.enabled),
+        'failure_count': webhook.failure_count,
+        'created_at': webhook.created_at,
+        'last_triggered_at': webhook.last_triggered_at,
+    }
+
+
+def _validate_webhook_url(url):
+    """Return ``(ok, message)`` after URL parsing."""
+    from urllib.parse import urlparse as _urlparse
+
+    if not url:
+        return False, 'url is required'
+    parsed = _urlparse(url)
+    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        return False, 'url must be a valid http(s) address'
+    return True, ''
+
+
+def _coerce_events_field(raw):
+    """Translate the body's ``events`` value into a clean list of strings.
+
+    Accepts a list of strings (canonical), a comma-separated string
+    (curl-friendly), or omits → defaults to ``["*"]``.
+    """
+    if raw is None:
+        return ['*']
+    if isinstance(raw, list):
+        return [str(e).strip() for e in raw if str(e).strip()] or ['*']
+    if isinstance(raw, str):
+        parts = [e.strip() for e in raw.split(',') if e.strip()]
+        return parts or ['*']
+    return ['*']
+
+
+@api_bp.route('/admin/webhooks', methods=['GET'])
+@limiter.limit(rate_limit_admin, methods=['GET'])
+@require_api_token('admin')
+def admin_webhooks_list():
+    """List every webhook subscription (no secrets in the response)."""
+    from app.services.webhooks import list_webhooks
+
+    db = get_db()
+    rows = list_webhooks(db)
+    return _conditional_response({'data': [_webhook_to_dict(r) for r in rows]})
+
+
+@api_bp.route('/admin/webhooks', methods=['POST'])
+@limiter.limit(rate_limit_admin, methods=['POST'])
+@require_api_token('admin')
+def admin_webhooks_create():
+    """Create a new webhook subscription.
+
+    Body (JSON):
+        name (str, required)
+        url (str, required) — http(s) URL
+        secret (str, optional) — auto-generated when omitted
+        events (list[str] | str, optional) — defaults to ``["*"]``
+        enabled (bool, default true)
+
+    Returns 201 with the new webhook payload and the secret echoed back
+    once so the caller can store it for the downstream verifier.
+    """
+    import secrets as _secrets
+
+    from app.services.webhooks import create_webhook, get_webhook
+
+    body = _json_body()
+    name = (body.get('name') or '').strip()
+    url = (body.get('url') or '').strip()
+    secret = (body.get('secret') or '').strip() or _secrets.token_urlsafe(32)
+    enabled = bool(body.get('enabled', True))
+    events_list = _coerce_events_field(body.get('events'))
+
+    if not name:
+        return _error('name is required', 'VALIDATION_ERROR', 400, details={'field': 'name'})
+    ok, msg = _validate_webhook_url(url)
+    if not ok:
+        return _error(msg, 'VALIDATION_ERROR', 400, details={'field': 'url'})
+
+    db = get_db()
+    wh_id = create_webhook(
+        db, name=name, url=url, secret=secret, events=events_list, enabled=enabled
+    )
+    log_action(
+        db,
+        action='Created webhook via API',
+        category='webhooks',
+        detail=f'id={wh_id} name={name}',
+    )
+    payload = _webhook_to_dict(get_webhook(db, wh_id))
+    # Echo the secret exactly once on creation so the caller can stash
+    # it. Mirrors the admin /api-tokens reveal pattern. The secret is
+    # never returned by GET / PUT / list endpoints.
+    payload['secret'] = secret
+    return _conditional_response({'data': payload}, status=201)
+
+
+@api_bp.route('/admin/webhooks/<int:webhook_id>', methods=['GET'])
+@limiter.limit(rate_limit_admin, methods=['GET'])
+@require_api_token('admin')
+def admin_webhooks_get(webhook_id):
+    """Return one webhook by id, or 404."""
+    from app.services.webhooks import get_webhook
+
+    webhook = get_webhook(get_db(), webhook_id)
+    if webhook is None:
+        return _error(f'No webhook with id {webhook_id}', 'NOT_FOUND', 404)
+    return _conditional_response({'data': _webhook_to_dict(webhook)})
+
+
+@api_bp.route('/admin/webhooks/<int:webhook_id>', methods=['PUT'])
+@limiter.limit(rate_limit_admin, methods=['PUT'])
+@require_api_token('admin')
+def admin_webhooks_update(webhook_id):
+    """Update fields on an existing webhook.
+
+    Body (JSON, all fields optional):
+        name, url, secret (str)
+        events (list[str] | str)
+        enabled (bool)
+        reset_failures (bool) — when true, zeros the consecutive-failure counter
+
+    Omitted fields keep their current value. The secret, if rotated, is
+    NOT echoed in the response — fetch it server-side or rotate again
+    if you lose it.
+    """
+    from app.services.webhooks import get_webhook, update_webhook
+
+    db = get_db()
+    existing = get_webhook(db, webhook_id)
+    if existing is None:
+        return _error(f'No webhook with id {webhook_id}', 'NOT_FOUND', 404)
+
+    body = _json_body()
+    fields = {}
+    if 'name' in body:
+        new_name = (body.get('name') or '').strip()
+        if not new_name:
+            return _error(
+                'name cannot be empty', 'VALIDATION_ERROR', 400, details={'field': 'name'}
+            )
+        fields['name'] = new_name
+    if 'url' in body:
+        new_url = (body.get('url') or '').strip()
+        ok, msg = _validate_webhook_url(new_url)
+        if not ok:
+            return _error(msg, 'VALIDATION_ERROR', 400, details={'field': 'url'})
+        fields['url'] = new_url
+    if 'events' in body:
+        fields['events'] = _coerce_events_field(body.get('events'))
+    if 'enabled' in body:
+        fields['enabled'] = bool(body.get('enabled'))
+    if 'secret' in body:
+        new_secret = (body.get('secret') or '').strip()
+        if not new_secret:
+            return _error(
+                'secret cannot be empty', 'VALIDATION_ERROR', 400, details={'field': 'secret'}
+            )
+        fields['secret'] = new_secret
+    if body.get('reset_failures'):
+        fields['failure_count'] = 0
+
+    update_webhook(db, webhook_id, **fields)
+    log_action(
+        db,
+        action='Updated webhook via API',
+        category='webhooks',
+        detail=f'id={webhook_id} fields={",".join(sorted(fields))}',
+    )
+    return _conditional_response({'data': _webhook_to_dict(get_webhook(db, webhook_id))})
+
+
+@api_bp.route('/admin/webhooks/<int:webhook_id>', methods=['DELETE'])
+@limiter.limit(rate_limit_admin, methods=['DELETE'])
+@require_api_token('admin')
+def admin_webhooks_delete(webhook_id):
+    """Hard-delete a webhook (cascades its delivery log). 204 on success."""
+    from app.services.webhooks import delete_webhook, get_webhook
+
+    db = get_db()
+    existing = get_webhook(db, webhook_id)
+    if existing is None:
+        return _error(f'No webhook with id {webhook_id}', 'NOT_FOUND', 404)
+
+    delete_webhook(db, webhook_id)
+    log_action(
+        db,
+        action='Deleted webhook via API',
+        category='webhooks',
+        detail=f'id={webhook_id} name={existing.name}',
+    )
+    return Response(status=204)
+
+
+@api_bp.route('/admin/webhooks/<int:webhook_id>/test', methods=['POST'])
+@limiter.limit(rate_limit_admin, methods=['POST'])
+@require_api_token('admin')
+def admin_webhooks_test(webhook_id):
+    """Fire a synthetic test delivery. Synchronous; returns the result inline.
+
+    Updates ``failure_count`` and the delivery log under the same
+    contract as the bus dispatcher: 2xx → reset; non-2xx → increment +
+    auto-disable when threshold crossed.
+
+    Returns 200 with::
+
+        {
+          "data": {
+            "ok": true,
+            "status_code": 204,
+            "response_time_ms": 87,
+            "error": ""
+          }
+        }
+    """
+    from app.models import get_setting
+    from app.services.webhooks import (
+        deliver_now,
+        get_webhook,
+        increment_failures,
+        record_delivery,
+        reset_failures,
+    )
+
+    db = get_db()
+    webhook = get_webhook(db, webhook_id)
+    if webhook is None:
+        return _error(f'No webhook with id {webhook_id}', 'NOT_FOUND', 404)
+
+    payload = {
+        'test': True,
+        'message': 'resume-site test delivery (api)',
+    }
+    result = deliver_now(webhook, 'webhook.test', payload, timeout=5)
+    record_delivery(db, result)
+    ok = 200 <= result.status_code < 300
+    if ok:
+        reset_failures(db, webhook_id)
+    else:
+        try:
+            threshold = max(0, int(get_setting(db, 'webhook_failure_threshold', '10') or 10))
+        except (TypeError, ValueError):
+            threshold = 10
+        increment_failures(db, webhook_id, threshold=threshold)
+    log_action(
+        db,
+        action='Tested webhook via API',
+        category='webhooks',
+        detail=f'id={webhook_id} status={result.status_code}',
+    )
+    return _conditional_response(
+        {
+            'data': {
+                'ok': ok,
+                'status_code': result.status_code,
+                'response_time_ms': result.response_time_ms,
+                'error': result.error,
+            }
+        }
+    )
+
+
+@api_bp.route('/admin/webhooks/<int:webhook_id>/deliveries', methods=['GET'])
+@limiter.limit(rate_limit_admin, methods=['GET'])
+@require_api_token('admin')
+def admin_webhooks_deliveries(webhook_id):
+    """Per-webhook delivery log.
+
+    Query parameters:
+        limit (int, default 50, max 500): newest entries first.
+    """
+    from app.services.webhooks import get_webhook, list_recent_deliveries
+
+    db = get_db()
+    if get_webhook(db, webhook_id) is None:
+        return _error(f'No webhook with id {webhook_id}', 'NOT_FOUND', 404)
+
+    try:
+        limit = max(1, min(int(request.args.get('limit', 50)), 500))
+    except (TypeError, ValueError):
+        limit = 50
+    deliveries = list_recent_deliveries(db, webhook_id=webhook_id, limit=limit)
+    return _conditional_response({'data': deliveries})
+
+
+# ===========================================================================
 # API DOCUMENTATION (Phase 16.5 — OpenAPI 3.0 + Swagger UI)
 # ===========================================================================
 #
