@@ -476,18 +476,13 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 *Built-in backup command + container-native orchestration via systemd timers.*
 
-### 17.1 — Backup Command
+### 17.1 — Backup Command *(shipped)*
 
-- [ ] `manage.py backup` — creates a timestamped backup archive:
-  - Copies the SQLite database using SQLite's online backup API (`sqlite3.Connection.backup()`) — safe to run while the app is serving requests
-  - Includes the `photos/` directory
-  - Includes `config.yaml` (if readable)
-  - Packages into a `.tar.gz` archive: `resume-site-backup-YYYYMMDD-HHMMSS.tar.gz`
-  - Writes to a configurable backup directory (default `/app/backups/`, overridable via `--output-dir` or `RESUME_SITE_BACKUP_DIR` env var)
-- [ ] `manage.py backup --db-only` — SQLite database only (fast, for frequent snapshots)
-- [ ] `manage.py backup --list` — list existing backups with sizes and dates
-- [ ] `manage.py backup --prune --keep 7` — delete backups older than N, keeping the most recent N
-- [ ] `manage.py restore --from backup-file.tar.gz` — restores database and photos from a backup archive. Requires the app to be stopped (or a confirmation flag `--force`). Backs up the current state before restoring (safety net)
+- [x] `manage.py backup` — creates a timestamped `resume-site-backup-YYYYMMDD-HHMMSS.tar.gz` archive containing the SQLite DB (online backup API), `photos/`, and `config.yaml`. Output dir resolves via `--output-dir` > `RESUME_SITE_BACKUP_DIR` > `<repo>/backups`. Atomic write (`.tar.gz.tmp` → `os.replace`).
+- [x] `manage.py backup --db-only` — database-only archive.
+- [x] `manage.py backup --list` — newest-first table with name, size (MB), mtime. Ignores in-flight `.tmp` files and `pre-restore-*` sidecars.
+- [x] `manage.py backup --prune --keep N` — retention (N ≥ 1 enforced by argparse).
+- [x] `manage.py restore --from FILE [--force]` — round-trip DB + photos; always writes a pre-restore sidecar; `--force` suppresses the interactive prompt; non-TTY without `--force` exits with a clear error. Path-traversal, symlinks, absolute-path members, and corrupted tarballs are rejected by `_safe_extract` (see `app/services/backups.py`).
 
 ### 17.2 — Scheduled Backups (Container-Native)
 
@@ -495,7 +490,7 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 - [ ] **Quadlet integration:** Update `resume-site.container` Quadlet file to reference the backup volume mount
 - [ ] **Backup volume:** Add a `resume-site-backups` volume to `compose.yaml`. Document mount point and recommended host path
 - [ ] **Compose-based schedule:** Document using `podman compose exec` in a cron job or systemd timer for users not using Quadlets
-- [ ] **Backup health:** Add a `backup_last_success` setting that `manage.py backup` updates on completion. The admin dashboard displays "Last backup: 2 hours ago" or "⚠ No backup in 48 hours" warning
+- [ ] **Backup health:** ~~Add a `backup_last_success` setting that `manage.py backup` updates on completion.~~ *(setting write shipped with 17.1 — the settings-table row is maintained by `create_backup` on every successful run, including `--db-only`. The admin-dashboard "Last backup: X ago" widget is still pending.)*
 - [ ] **Documentation:** Dedicated "Backups" section in README covering: automatic setup (Quadlet/timer), manual invocation, restore procedure, offsite backup strategies (rsync, rclone, S3-compatible), and backup encryption (gpg wrapper example)
 
 ---

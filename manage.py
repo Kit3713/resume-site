@@ -15,6 +15,8 @@ Commands:
     purge-analytics      Delete page view records older than N days.
     query-audit          Run EXPLAIN QUERY PLAN on documented hot queries.
     complexity-report    Print the top N most complex functions in the codebase.
+    backup               Create, list, or prune timestamped site backups.
+    restore              Restore the site database and photos from a backup.
     translations         Manage translation files (extract, init, compile, update).
 
 Usage:
@@ -30,6 +32,11 @@ Usage:
     python manage.py query-audit
     python manage.py complexity-report
     python manage.py complexity-report --top 40
+    python manage.py backup
+    python manage.py backup --db-only
+    python manage.py backup --list
+    python manage.py backup --prune --keep 7
+    python manage.py restore --from backups/resume-site-backup-20260401-120000.tar.gz --force
     python manage.py translations extract
     python manage.py translations init es
     python manage.py translations compile
@@ -42,6 +49,7 @@ import getpass
 import os
 import sqlite3
 import sys
+from datetime import UTC, datetime
 
 from werkzeug.security import generate_password_hash
 
@@ -918,6 +926,176 @@ def translations(args):
         sys.exit(1)
 
 
+# =============================================================
+# BACKUP / RESTORE (Phase 17.1)
+# =============================================================
+#
+# Thin argparse glue on top of app/services/backups. The service module
+# owns the real work (tar safety, SQLite online backup, atomic rename,
+# pre-restore sidecar); this layer only resolves paths and translates
+# service exceptions into exit codes.
+
+
+def _resolve_backup_dir(explicit):
+    """Resolve the backup output directory.
+
+    Priority: --output-dir > RESUME_SITE_BACKUP_DIR env > <repo>/backups.
+    """
+    if explicit:
+        return os.path.abspath(explicit)
+    env = os.environ.get('RESUME_SITE_BACKUP_DIR')
+    if env:
+        return os.path.abspath(env)
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), 'backups'))
+
+
+def _config_path_for_backup():
+    """Return the config.yaml path, honouring RESUME_SITE_CONFIG."""
+    return os.environ.get(
+        'RESUME_SITE_CONFIG',
+        os.path.join(os.path.dirname(__file__), 'config.yaml'),
+    )
+
+
+def _positive_int(raw):
+    """argparse type for flags that must be an integer >= 1."""
+    value = int(raw)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f'{raw!r} must be at least 1')
+    return value
+
+
+def backup(args):
+    """Create, list, or prune backups.
+
+    Flags (mutually exclusive for list/prune, otherwise default = create):
+        --list              Print existing archives.
+        --prune --keep N    Delete all but the N newest archives.
+        --db-only           Database-only archive (fast snapshot).
+        --output-dir DIR    Override the output location.
+    """
+    from app.services.backups import (
+        BackupError,
+        create_backup,
+        list_backups,
+        prune_backups,
+    )
+
+    output_dir = _resolve_backup_dir(args.output_dir)
+
+    if args.list:
+        entries = list_backups(output_dir)
+        if not entries:
+            print(f'No backups found in {output_dir}')
+            return
+        print(f'Backups in {output_dir}:')
+        for entry in entries:
+            size_mb = entry.size_bytes / (1024 * 1024)
+            when = datetime.fromtimestamp(entry.mtime, tz=UTC).strftime('%Y-%m-%d %H:%M:%S UTC')
+            print(f'  {entry.name}  {size_mb:8.2f} MB  {when}')
+        return
+
+    if args.prune:
+        if args.keep is None:
+            print('ERROR: --prune requires --keep N', file=sys.stderr)
+            sys.exit(2)
+        try:
+            deleted = prune_backups(output_dir, keep=args.keep)
+        except ValueError as e:
+            print(f'ERROR: {e}', file=sys.stderr)
+            sys.exit(2)
+        print(f'Pruned {len(deleted)} archive(s); kept the {args.keep} newest.')
+        return
+
+    # Default: create a new backup
+    db_path = _get_db_path()
+    from app import create_app
+
+    app = create_app()
+    photos_dir = app.config.get('PHOTO_STORAGE')
+    config_path = _config_path_for_backup()
+
+    try:
+        archive = create_backup(
+            db_path=db_path,
+            photos_dir=photos_dir,
+            config_path=config_path if os.path.isfile(config_path) else None,
+            output_dir=output_dir,
+            db_only=args.db_only,
+        )
+    except BackupError as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        sys.exit(3)
+    except OSError as e:
+        print(f'ERROR: I/O failure during backup: {e}', file=sys.stderr)
+        sys.exit(3)
+
+    print(f'Created backup: {archive}')
+
+
+def restore(args):
+    """Restore DB and photos from an archive.
+
+    A pre-restore sidecar is always created in the backup directory
+    before extraction, so an accidental restore of the wrong archive
+    is recoverable. ``--force`` suppresses the interactive confirmation
+    prompt but does NOT skip the sidecar.
+    """
+    from app.services.backups import (
+        BackupError,
+        BackupSecurityError,
+        restore_backup,
+    )
+
+    archive_path = os.path.abspath(args.source)
+    output_dir = _resolve_backup_dir(args.output_dir)
+
+    if not os.path.isfile(archive_path):
+        print(f'ERROR: backup file not found: {archive_path}', file=sys.stderr)
+        sys.exit(2)
+
+    if not args.force:
+        if not sys.stdin.isatty():
+            print(
+                'ERROR: running in non-interactive mode; pass --force to confirm the restore.',
+                file=sys.stderr,
+            )
+            sys.exit(5)
+        print(f'About to restore from {archive_path}')
+        print('This will overwrite the current database and photos.')
+        print(f'A safety-net copy will be written to {output_dir}/pre-restore-*')
+        answer = input("Type 'yes' to proceed: ").strip().lower()
+        if answer != 'yes':
+            print('Aborted.')
+            sys.exit(0)
+
+    db_path = _get_db_path()
+    from app import create_app
+
+    app = create_app()
+    photos_dir = app.config.get('PHOTO_STORAGE')
+
+    try:
+        sidecar = restore_backup(
+            archive_path=archive_path,
+            db_path=db_path,
+            photos_dir=photos_dir,
+            output_dir=output_dir,
+        )
+    except FileNotFoundError as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        sys.exit(2)
+    except BackupSecurityError as e:
+        print(f'ERROR: archive contains unsafe members: {e}', file=sys.stderr)
+        sys.exit(4)
+    except BackupError as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        sys.exit(3)
+
+    print(f'Restored from {archive_path}')
+    print(f'Previous state saved to {sidecar}')
+
+
 def main():
     """Parse command-line arguments and dispatch to the appropriate handler."""
     parser = argparse.ArgumentParser(description='resume-site management CLI')
@@ -977,6 +1155,45 @@ def main():
         '--top', type=int, default=20, help='Number of functions to show (default: 20)'
     )
 
+    # Backup (Phase 17.1) — create / list / prune site backups
+    backup_parser = subparsers.add_parser(
+        'backup', help='Create, list, or prune timestamped site backups'
+    )
+    backup_parser.add_argument('--output-dir', default=None, help='Where to write / read archives')
+    backup_parser.add_argument('--db-only', action='store_true', help='Archive the database only')
+    backup_mode = backup_parser.add_mutually_exclusive_group()
+    backup_mode.add_argument('--list', action='store_true', help='List existing archives and exit')
+    backup_mode.add_argument(
+        '--prune', action='store_true', help='Delete old archives (requires --keep)'
+    )
+    backup_parser.add_argument(
+        '--keep',
+        type=_positive_int,
+        default=None,
+        help='When pruning, number of newest archives to retain (>= 1)',
+    )
+
+    # Restore (Phase 17.1) — restore DB and photos from an archive
+    restore_parser = subparsers.add_parser(
+        'restore', help='Restore the site database and photos from a backup'
+    )
+    restore_parser.add_argument(
+        '--from',
+        dest='source',
+        required=True,
+        help='Path to the .tar.gz archive to restore from',
+    )
+    restore_parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Skip the interactive confirmation prompt',
+    )
+    restore_parser.add_argument(
+        '--output-dir',
+        default=None,
+        help='Where to write the pre-restore safety sidecar',
+    )
+
     # Translation management
     trans_parser = subparsers.add_parser('translations', help='Manage translation files')
     trans_parser.add_argument(
@@ -999,6 +1216,8 @@ def main():
         'purge-analytics': purge_analytics,
         'query-audit': query_audit,
         'complexity-report': complexity_report,
+        'backup': backup,
+        'restore': restore,
         'translations': translations,
     }
 
