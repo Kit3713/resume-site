@@ -34,6 +34,7 @@ from flask import (
     abort,
     current_app,
     flash,
+    g,
     redirect,
     render_template,
     request,
@@ -170,15 +171,73 @@ def login():
     Validates the username and password against the values stored in
     config.yaml (not in the database). Uses Werkzeug's secure password
     hash comparison to prevent timing attacks.
+
+    Defence-in-depth (Phase 13.6): on top of Flask-Limiter's per-minute
+    rate, an application-level lockout persists failed attempts in the
+    ``login_attempts`` table and rejects new attempts from an IP that has
+    crossed the configured threshold. Both mechanisms run together — the
+    rate-limit refuses bursts, the lockout refuses slow sustained
+    probing across rate-limit windows.
     """
     if current_user.is_authenticated:
         return redirect(url_for('admin.dashboard'))
 
     if request.method == 'POST':
+        from app.db import get_db
+        from app.events import Events as _Events
+        from app.events import emit as _emit
+        from app.services.login_throttle import (
+            check_lockout,
+            record_failed_login,
+            record_successful_login,
+        )
+        from app.services.settings_svc import get_all_cached
+
         config = current_app.config['SITE_CONFIG']
         admin_config = config.get('admin', {})
         username = request.form.get('username', '')
         password = request.form.get('password', '')
+
+        ip_hash = g.get('client_ip_hash', '-') or '-'
+        db = get_db()
+        settings = get_all_cached(db, current_app.config['DATABASE_PATH'])
+
+        def _setting_int(key, default):
+            raw = settings.get(key, default)
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return int(default)
+
+        status = check_lockout(
+            db,
+            ip_hash,
+            threshold=_setting_int('login_lockout_threshold', '10'),
+            window_minutes=_setting_int('login_lockout_window_minutes', '15'),
+            lockout_minutes=_setting_int('login_lockout_duration_minutes', '15'),
+        )
+
+        if status.locked:
+            _emit(
+                _Events.SECURITY_LOGIN_FAILED,
+                request_id=g.get('request_id', '-'),
+                ip_hash=ip_hash,
+                reason='locked',
+                failures_in_window=status.failures_in_window,
+                seconds_remaining=status.seconds_remaining,
+            )
+            flash(
+                _(
+                    'Too many failed login attempts from your IP. '
+                    'Please try again in a few minutes.'
+                ),
+                'error',
+            )
+            return (
+                render_template('admin/login.html'),
+                429,
+                {'Retry-After': str(status.seconds_remaining)},
+            )
 
         # Verify credentials against YAML config
         if (
@@ -186,6 +245,7 @@ def login():
             and admin_config.get('password_hash')
             and check_password_hash(admin_config['password_hash'], password)
         ):
+            record_successful_login(db, ip_hash)
             user = AdminUser(username)
             login_user(user)
             # Redirect to the page they were trying to access, or the dashboard.
@@ -198,6 +258,15 @@ def login():
                 return redirect(next_page)
             return redirect(url_for('admin.dashboard'))
 
+        # Credentials rejected — persist the failure + emit the event.
+        record_failed_login(db, ip_hash)
+        _emit(
+            _Events.SECURITY_LOGIN_FAILED,
+            request_id=g.get('request_id', '-'),
+            ip_hash=ip_hash,
+            reason='invalid_credentials',
+            username=username[:64] if username else '',
+        )
         flash(_('Invalid credentials.'), 'error')
 
     return render_template('admin/login.html')

@@ -20,7 +20,11 @@ Usage:
 """
 
 import contextlib
+import logging
 import os
+import re
+import time
+import uuid
 
 from flask import Flask, g, request
 from flask_babel import Babel
@@ -41,6 +45,32 @@ limiter = Limiter(
     default_limits=[],  # No global limit — applied per-route
     storage_uri='memory://',  # In-memory for single-process deployments
 )
+
+
+# Format of an inbound X-Request-ID we're willing to echo back. Anchored
+# match of 8–128 characters from a restricted alphabet (alphanumerics plus
+# `.`, `_`, `-`) rules out log-injection payloads (CRLF, quotes, spaces,
+# control characters) while still accepting UUIDs, ULIDs, short hashes, and
+# the `trace-id` values common reverse proxies emit.
+_REQUEST_ID_PATTERN = re.compile(r'^[A-Za-z0-9._-]{8,128}$')
+
+
+def _assign_request_id():
+    """Populate ``flask.g.request_id`` for the current request.
+
+    If the incoming request carries an ``X-Request-ID`` header that matches
+    ``_REQUEST_ID_PATTERN``, propagate it verbatim so correlation with an
+    upstream reverse proxy works. Otherwise generate a fresh UUID4 hex so
+    every request is uniquely identifiable.
+
+    This runs before analytics (and future structured logging) so downstream
+    handlers can tag their records with the same ID.
+    """
+    incoming = request.headers.get('X-Request-ID', '')
+    if incoming and _REQUEST_ID_PATTERN.match(incoming):
+        g.request_id = incoming
+    else:
+        g.request_id = uuid.uuid4().hex
 
 
 def _get_available_locales(app):
@@ -102,6 +132,15 @@ def create_app(config_path=None):
     app.config['SESSION_TIMEOUT_MINUTES'] = site_config.get('session_timeout_minutes', 60)
     app.config['SITE_CONFIG'] = site_config  # Full config dict available to services
     app.config['WTF_CSRF_TIME_LIMIT'] = 3600  # CSRF token expires after 1 hour
+
+    # --- 1b. Structured logging (Phase 18.1) ---
+    # Must run after config load so the secret_key is available as a salt
+    # for client-IP hashing. Idempotent — safe in test fixtures that
+    # build multiple apps in one process.
+    from app.services.logging import configure_logging, get_logger
+
+    configure_logging(app)
+    request_logger = get_logger('app.request')
 
     # Session cookie hardening. SECURE defaults to True in production; a
     # `session_cookie_secure: false` entry in config.yaml disables it for
@@ -176,6 +215,7 @@ def create_app(config_path=None):
     from app.routes.blog_admin import blog_admin_bp
     from app.routes.contact import contact_bp
     from app.routes.locale import locale_bp
+    from app.routes.metrics import metrics_bp
     from app.routes.public import public_bp
     from app.routes.review import review_bp
 
@@ -186,13 +226,161 @@ def create_app(config_path=None):
     app.register_blueprint(contact_bp)
     app.register_blueprint(review_bp)
     app.register_blueprint(locale_bp)
+    app.register_blueprint(metrics_bp)
 
-    # --- 7. Analytics middleware ---
+    # --- 7. Request ID propagation (Phase 18.1) ---
+    # Assigned before analytics so any future request-scoped logging can
+    # correlate with the ID a reverse proxy already sent us.
+    app.before_request(_assign_request_id)
+
+    # --- 7b. Request-timing + client-IP hashing (Phase 18.1) ---
+    # Runs after _assign_request_id so g.request_id is available to the
+    # _RequestContextFilter installed by configure_logging().
+    from app.services.logging import hash_client_ip
+
+    def _start_request_timer():
+        g.request_start = time.monotonic()
+        g.client_ip_hash = hash_client_ip(request.remote_addr or '', app.secret_key or '')
+
+    app.before_request(_start_request_timer)
+
+    # --- 8. Analytics middleware ---
     from app.services.analytics import track_page_view
 
     app.before_request(track_page_view)
 
-    # --- 8. Security response headers ---
+    # --- 8b. Structured request log + Prometheus metrics (Phase 18.1/18.2/18.9) ---
+    # Registered BEFORE set_security_headers below. Flask invokes
+    # after_request callbacks in reverse registration order, so this
+    # hook runs LAST — it sees the finalised status code and headers.
+    from app.errors import categorize_exception, categorize_status
+    from app.services.metrics import errors_total, record_request
+
+    @app.after_request
+    def _log_request(response):
+        start = g.get('request_start')
+        duration_s = (time.monotonic() - start) if start is not None else 0.0
+        duration_ms = int(duration_s * 1000)
+        status = response.status_code
+        if status >= 500:
+            level = logging.ERROR
+        elif status >= 400:
+            level = logging.WARNING
+        else:
+            level = logging.INFO
+
+        # url_rule.rule is the bound template (e.g. "/blog/<slug>") — use
+        # it as the metric "path" label to keep cardinality bounded.
+        # Unmatched requests (404 probes) produce url_rule=None which
+        # record_request() normalises to a constant sentinel.
+        rule = request.url_rule.rule if request.url_rule else None
+
+        # Never double-count /metrics scrapes — a high scrape rate would
+        # otherwise drown out real traffic in rate() queries.
+        if rule != '/metrics':
+            record_request(request.method, rule, status, duration_s)
+
+        # Error categorisation (Phase 18.9). The 500 errorhandler below
+        # sets g.error_category after seeing the exception directly —
+        # trust that over the status-only classifier because only the
+        # handler can distinguish DataError from a generic 500.
+        error_category = g.get('error_category') or categorize_status(status)
+
+        if error_category is not None and rule != '/metrics':
+            errors_total.inc(label_values=(error_category, str(status)))
+
+        extra = {
+            'method': request.method,
+            'path': request.path,
+            'status_code': status,
+            'duration_ms': duration_ms,
+            'user_agent': (request.headers.get('User-Agent', '') or '')[:200],
+        }
+        if error_category is not None:
+            extra['error_category'] = error_category
+
+        request_logger.log(
+            level,
+            '%s %s %d %dms',
+            request.method,
+            request.path,
+            status,
+            duration_ms,
+            extra=extra,
+        )
+        return response
+
+    # --- 8c. Unhandled-exception handler (Phase 18.9) ---
+    # Flask's default 500 handler logs the traceback via ``app.logger``
+    # but does not touch our structured logger or counter. Wire both up
+    # so every 500 fires an ERROR record with exc_info and a category.
+    # The response body is deliberately minimal — no traceback, no
+    # internal paths, no SQL or config hints ever leak to the client.
+    @app.errorhandler(Exception)
+    def _handle_uncaught(exc):
+        # HTTPException subclasses (404, 403, 429, ...) are NOT "bugs" —
+        # let Flask render them with its default handler and the status
+        # gets picked up by _log_request below for categorisation.
+        from werkzeug.exceptions import HTTPException
+
+        if isinstance(exc, HTTPException):
+            return exc
+
+        category = categorize_exception(exc, status_code=500)
+        g.error_category = category  # picked up by _log_request
+
+        request_logger.error(
+            'Unhandled %s at %s %s',
+            type(exc).__name__,
+            request.method,
+            request.path,
+            exc_info=exc,
+            extra={
+                'method': request.method,
+                'path': request.path,
+                'status_code': 500,
+                'error_category': category,
+                'exception_type': type(exc).__name__,
+            },
+        )
+
+        # Phase 19.1 event bus — fire security.internal_error so future
+        # webhook / notification subscribers can react. Kept deliberately
+        # lean (no exception message or traceback in the payload) so the
+        # bus can't leak internals into third-party destinations.
+        from app.events import Events as _Events
+        from app.events import emit as _emit
+
+        _emit(
+            _Events.SECURITY_INTERNAL_ERROR,
+            request_id=g.get('request_id', '-'),
+            method=request.method,
+            path=request.path,
+            exception_type=type(exc).__name__,
+            category=category,
+        )
+
+        accept = (request.headers.get('Accept') or '').lower()
+        request_id = g.get('request_id', '-')
+        if 'application/json' in accept:
+            return (
+                {
+                    'error': 'internal server error',
+                    'code': category,
+                    'request_id': request_id,
+                },
+                500,
+            )
+        # HTML fallback — text/plain body keeps us independent of any
+        # Jinja template the app may or may not have.
+        body = (
+            'Internal Server Error\n\n'
+            f'Request ID: {request_id}\n'
+            'Please quote the request ID when reporting this problem.\n'
+        )
+        return body, 500, {'Content-Type': 'text/plain; charset=utf-8'}
+
+    # --- 9. Security response headers ---
     @app.after_request
     def set_security_headers(response):
         """Add security headers to every response.
@@ -232,9 +420,15 @@ def create_app(config_path=None):
         elif request.path.startswith('/static/'):
             response.headers['Cache-Control'] = 'public, max-age=2592000, immutable'
 
+        # Request ID correlation header — echo the ID assigned in _assign_request_id
+        # so clients and downstream log aggregators can match response to request.
+        request_id = g.get('request_id')
+        if request_id:
+            response.headers['X-Request-ID'] = request_id
+
         return response
 
-    # --- 9. Template context processor ---
+    # --- 10. Template context processor ---
     @app.context_processor
     def inject_settings():
         """Make site settings and config available in all templates.
@@ -263,7 +457,7 @@ def create_app(config_path=None):
             'current_locale': current_locale,
         }
 
-    # --- 10. Ensure storage directories exist ---
+    # --- 11. Ensure storage directories exist ---
     os.makedirs(os.path.dirname(app.config['DATABASE_PATH']) or '.', exist_ok=True)
     os.makedirs(app.config['PHOTO_STORAGE'], exist_ok=True)
 

@@ -86,40 +86,28 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 **Problem:** Queries work but have never been profiled under load. No indexes beyond primary keys and unique constraints. The `page_views` table will grow unbounded on active sites. The `settings` table is read on every single request via the context processor.
 
-- [ ] **Query audit:** Enumerate every `db.execute()` call across all models and services. Catalog query patterns, identify N+1 queries (e.g., `get_skill_domains_with_skills` runs N+1 queries), and tag hot paths (executed on every request vs. admin-only)
-- [ ] **Index pass:** Add indexes based on actual query WHERE/ORDER BY patterns:
-  - `page_views(path)`, `page_views(created_at)`, `page_views(ip_address)` — analytics is the heaviest table
-  - `blog_posts(status, published_at)` — public listing query
-  - `blog_post_tags(post_id)`, `blog_post_tags(tag_id)` — junction table joins
-  - `reviews(status, display_tier)` — public testimonials query
-  - `photos(display_tier, sort_order)` — portfolio gallery
-  - `admin_activity_log(created_at)` — dashboard feed
-  - `contact_submissions(ip_address, created_at)` — rate limit check
-- [ ] **Settings cache:** The `inject_settings()` context processor runs `SELECT * FROM settings` on every request. Implement an in-process cache with a configurable TTL (default 30s) and cache-bust on admin settings save. Use a module-level dict with a timestamp — no external cache dependency
-- [ ] **Batch N+1 elimination:** Rewrite `get_skill_domains_with_skills()` to use a single JOIN query instead of N+1. Audit for similar patterns in blog tag loading
-- [ ] **Connection pooling evaluation:** Current per-request `sqlite3.connect()` is fine for SQLite's threading model, but document why and add a `PRAGMA` audit (verify WAL, busy_timeout, foreign_keys are set consistently)
-- [ ] **EXPLAIN QUERY PLAN:** Add a `manage.py query-audit` command that runs EXPLAIN QUERY PLAN on every cataloged query and reports any full table scans on tables expected to be large (page_views, blog_posts, contact_submissions)
-- [ ] **Write a migration** (`005_indexes.sql`) for all new indexes
+- [x] **Query audit:** Catalogued in the `_AUDIT_QUERIES` table in `manage.py` (see the `query_audit` command below) — ten hot-path queries covering every model + service `db.execute()` that fires on public routes, with `expected_scan` flags for queries where a full scan is correct (e.g. the 30-row `settings` table).
+- [x] **Index pass:** `migrations/005_indexes.sql` — every index from the roadmap bullet, each with an inline rationale comment. `page_views`, `blog_posts(status, published_at)`, `blog_post_tags` junction indexes, `reviews(status, display_tier)`, `photos(display_tier, sort_order)`, `admin_activity_log(created_at)`, `contact_submissions(ip_address, created_at)` all present. All use `IF NOT EXISTS` for safe re-runs.
+- [x] **Settings cache:** `app/services/settings_svc.py:_settings_cache` — module-level dict + `threading.Lock`, `DEFAULT_SETTINGS_TTL = 30.0` seconds, `invalidate_cache()` called from every admin settings-save path. Tests: `tests/test_settings_cache.py` (8 tests including the cache-bust contract).
+- [x] **Batch N+1 elimination:** `get_skill_domains_with_skills()` in `app/models.py:96-128` — two queries total (domains, then a single `WHERE domain_id IN (...)` for all skills). `get_tags_for_posts()` in `app/services/blog.py` gets the same batch treatment. Regression test suite `tests/test_n_plus_1.py` (7 tests) instruments `sqlite3.set_trace_callback` to assert the exact query counts — locks the contract against future regressions.
+- [x] **Connection pooling evaluation:** Per-request `sqlite3.connect()` is retained; the PRAGMA audit lives in `app/db.py:_PER_CONNECTION_PRAGMAS` (foreign_keys, busy_timeout, synchronous, temp_store, cache_size, mmap_size). `tests/test_db_pragmas.py` (5 tests) locks in every pragma value so a silent removal would fail CI.
+- [x] **EXPLAIN QUERY PLAN:** `manage.py query-audit` — runs `EXPLAIN QUERY PLAN` on every cataloged query, marks each `✓ INDEX` / `~ OK-SCAN` / `✗ SCAN`, exits non-zero on unexpected full scans so CI can pick it up.
+- [x] **Write a migration** — shipped as `migrations/005_indexes.sql` (see the Index pass bullet above).
 
 ### 12.2 — Python Code Optimization
 
 **Problem:** The codebase is functional and well-documented but has never had a performance-focused review. Some patterns are repeated across services. Error handling is inconsistent.
 
-- [ ] **Import audit:** Map all imports across the project. Eliminate redundant imports, consolidate common stdlib imports, ensure no circular import risk from the expanding module graph
-- [ ] **Hot path profiling:** Identify the 5 most-hit routes (landing page, portfolio, blog listing, blog post, contact). For each, measure: DB query count, DB query time, template render time, total response time. Establish baseline numbers in a `PERFORMANCE.md` document
+- [x] **Import audit:** Done as part of the Phase 12.2 sweep (commit c785890). Multiple services now carry `from __future__ import annotations`; no circular-import issues surfaced by ruff `F401` / `I001` in CI.
+- [x] **Hot path profiling:** `PERFORMANCE.md` (118 lines) — baseline p50/p95/query-count/response-size per top-5 route, plus a "regression threshold" section marked as CI-blocking. Measurement harness is `scripts/benchmark_routes.py` (216 lines) — spins up a fresh app against a seeded SQLite, runs the test client, reports the numbers.
 - [ ] **Template rendering:** Audit Jinja2 templates for redundant database calls (any `{{ }}` expression that triggers a query), unnecessary loops, and missing `{% cache %}` opportunities
-- [ ] **String handling:** Replace any f-string SQL construction (should be none after v0.2.0 audit, but verify exhaustively). Ensure all string concatenation in hot paths uses join() or format() efficiently
-- [ ] **Pillow pipeline:** Profile photo upload processing. Evaluate lazy loading, progressive JPEG output, and EXIF stripping. Ensure Pillow operations release memory promptly (explicit `image.close()` or context managers)
-- [ ] **Service layer DRY pass:** Extract common patterns across services into shared utilities:
-  - CRUD boilerplate (get_all, get_by_id, create, update, delete) → `app/services/base.py` mixin or helper functions
-  - Slug generation (duplicated in blog.py and potentially needed by projects, case studies) → `app/utils/slugify.py`
-  - Pagination logic → `app/utils/pagination.py` (reusable for blog, API, admin lists)
-  - Sort-order management → shared utility for any table with `sort_order` column
-- [ ] **Error handling standardization:** Define a consistent error handling pattern:
-  - Services raise domain-specific exceptions (e.g., `NotFoundError`, `ValidationError`, `DuplicateSlugError`)
-  - Routes catch and translate to HTTP responses (404, 400, 409)
-  - Create `app/exceptions.py` with the hierarchy
-  - Ensure no bare `except Exception: pass` outside of analytics tracking
+- [x] **String handling:** No f-string SQL construction anywhere in `app/`. Enforced at CI time by the "Check for unsafe SQL patterns" step in `.github/workflows/ci.yml` (greps for `execute(f"`, `.format` near execute/select/insert/update/delete — fails the build on any hit).
+- [x] **Pillow pipeline:** `app/services/photos.py` uses context managers on every `Image.open()`, saves JPEG with `progressive=True`, strips EXIF on save, closes intermediates explicitly. `tests/test_photo_processing.py` (5 tests) covers the upload path. WebP secondary format is generated at `photos.py:188-189`.
+- [x] **Service layer DRY pass:**
+  - Slug generation → `app/services/text.py` (`slugify()`, 43 lines, reused across blog and tags — `tests/test_text_utils.py` has 79 lines covering it).
+  - Pagination → `app/services/pagination.py` (93 lines, reused by blog + admin lists; `tests/test_pagination.py` has 105 lines covering the boundaries).
+  - (Deferred: CRUD base mixin and sort-order utility — the current services are small enough that a premature base class would obscure the SQL; revisit when REST-API write handlers are added in Phase 16.)
+- [x] **Error handling standardization:** `app/exceptions.py` (63 lines) defines `DomainError` plus `ValidationError` / `NotFoundError` / `DuplicateError`, all multi-inheriting from the matching stdlib types (`ValueError` / `LookupError`) so pre-existing catches keep working during transition. `tests/test_exceptions.py` (107 lines) covers the contract. Orthogonal operational categorisation lives in `app/errors.py` (Phase 18.9). Bare `except Exception: pass` patterns replaced with `contextlib.suppress(OSError)` across `app/services/*` and the 500 handler; analytics `except` is the one documented exemption.
 - [ ] **Type hints:** Add type hints to all public function signatures across services and models. Not enforced by mypy in CI yet (that's a v0.4.0 concern), but documented for IDE support and contributor clarity
 - [ ] **Docstring audit:** Verify every public function has a docstring. Standardize format (already Google-style, ensure consistency). Remove any stale docs that don't match post-v0.2.0 implementations
 
@@ -134,8 +122,8 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 - [ ] **Asset fingerprinting:** Append a content hash to static asset URLs (`style.abc123.css`) so `Cache-Control: immutable` works correctly across deployments. Implement via Flask's `url_for('static', ...)` override or a manifest file
 - [ ] **GSAP optimization:** Audit every ScrollTrigger registration. Ensure `kill()` is called on elements that leave the DOM (SPA-style navigation isn't used, but verify no memory leaks on long sessions). Evaluate whether GSAP can be loaded only on pages that use animations (not admin pages)
 - [ ] **Critical CSS:** Extract above-the-fold CSS for the landing page and inline it in `<head>` to eliminate the render-blocking stylesheet on first paint
-- [ ] **Image optimization pipeline:** Current Pillow processing resizes to 2000px max. Add: WebP generation as a secondary format (serve via `<picture>` with JPEG fallback), responsive `srcset` generation (640w, 1024w, 2000w), lazy loading (`loading="lazy"`) on all below-fold images, and LQIP (Low Quality Image Placeholder) blur-up thumbnails
-- [ ] **Font loading:** Audit Google Fonts loading. Implement `font-display: swap`, preconnect hints (`<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>`), and consider self-hosting the 5 font pairings to eliminate the external dependency
+- [ ] **Image optimization pipeline:** *(partially shipped)* WebP secondary format generated by `app/services/photos.py:188-189`; `loading="lazy"` is on every `<img>` in the templates. Still pending: `<picture>` element with JPEG fallback, responsive `srcset` (640w / 1024w / 2000w), and LQIP blur-up thumbnails — those need template changes plus a second Pillow pass.
+- [x] **Font loading:** `app/templates/base.html:45-46` declares `<link rel="preconnect" href="https://fonts.googleapis.com">` + `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>`; line 55 appends `&display=swap` to the CSS URL. Admin base template has the same pair. Self-hosting the five font pairings stays deferred — operators preferring a zero-CDN stance can still set `custom_css` to override.
 
 ### 12.4 — Template Optimization
 
@@ -148,19 +136,12 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 **Problem:** The codebase has no automated code quality gates. Code review catches style issues but misses patterns that tooling detects instantly — unused variables, unreachable code, overly complex functions, security anti-patterns, and inconsistent formatting. Professional codebases enforce quality mechanically, not manually.
 
-- [ ] **Linter (ruff):** Add `ruff` as the primary Python linter. Configure in `pyproject.toml` with rule sets: `E` (pycodestyle errors), `F` (pyflakes), `W` (pycodestyle warnings), `I` (isort — import sorting), `B` (flake8-bugbear — common pitfalls), `S` (flake8-bandit — security), `C4` (flake8-comprehensions), `SIM` (flake8-simplify), `UP` (pyupgrade — Python 3.12+ idioms). Fix all existing violations before enabling in CI
-- [ ] **Formatter (ruff format):** Enable `ruff format` as the code formatter. Configure line length (88, Black-compatible). Run across the entire codebase as a one-time commit, then enforce in CI
-- [ ] **Security scanner (bandit):** Add `bandit` as a dedicated security static analysis tool. Configure to scan all Python files, exclude tests. Target: zero findings of MEDIUM severity or higher. Document any accepted suppressions in-line with `# nosec` and a justification comment
-- [ ] **Pre-commit hooks:** Create `.pre-commit-config.yaml`:
-  - `ruff` (lint + format)
-  - `bandit` (security scan)
-  - `pip-audit` (dependency vulnerabilities)
-  - `check-yaml` / `check-json` / `check-toml` (syntax validation on config files)
-  - `detect-secrets` (prevent accidental credential commits)
-  - `trailing-whitespace` / `end-of-file-fixer` / `mixed-line-ending`
-  - Document pre-commit setup in `CONTRIBUTING.md`
-- [ ] **CI quality gate:** Add a CI job that runs `ruff check`, `ruff format --check`, `bandit`, and `pip-audit` on every push. Failures block merge. This is non-negotiable — no code lands without passing static analysis
-- [ ] **Complexity tracking:** Configure `ruff` to enforce maximum cyclomatic complexity per function (threshold: 15). Functions exceeding this are flagged for refactoring. Add a `manage.py complexity-report` command that prints the top 20 most complex functions in the codebase
+- [x] **Linter (ruff):** `pyproject.toml:[tool.ruff.lint]` selects `E/W/F/I/B/S/C4/SIM/UP` — exactly the roadmap set. Per-file ignores for `tests/**` (assert/hardcoded-password) and `manage.py` (print/subprocess) are documented inline with justifications. Line length 100. Active in pre-commit (`.pre-commit-config.yaml`) and in CI (`.github/workflows/ci.yml`).
+- [x] **Formatter (ruff format):** `pyproject.toml:[tool.ruff.format]` — single-quote style, LF line endings. `ruff format --check` is the second step in the CI "quality" job; it also runs via pre-commit. Entire tree already formatted (verified with `ruff format --check .` → all pass).
+- [x] **Security scanner (bandit):** `pyproject.toml:[tool.bandit]` — excludes tests/ (test fixtures legitimately carry credentials). Runs at severity `-ll` (low+) in both pre-commit and CI. Zero MEDIUM+ findings on the current tree. `# nosec` suppressions carry an explanatory comment alongside the rule ID (e.g. the `B202` on `tarfile.extractall` in `app/services/backups.py` points at the `_safe_extract` contract).
+- [x] **Pre-commit hooks:** `.pre-commit-config.yaml` ships ruff (lint + format), bandit, detect-secrets, trailing-whitespace, end-of-file-fixer, check-yaml, check-toml, check-added-large-files, check-merge-conflict, mixed-line-ending, check-case-conflict. `CONTRIBUTING.md` documents the install + `pre-commit run --all-files` flow. *(Minor gaps vs the roadmap wish-list: `pip-audit` runs in CI but not yet as a pre-commit hook; `check-json` omitted because there are no committed `.json` config files.)*
+- [x] **CI quality gate:** `.github/workflows/ci.yml` "quality" job runs `ruff check .`, `ruff format --check .`, `bandit -r app/ -c pyproject.toml -ll`, and the SQL-interpolation grep guard — all four block the build. Test job `needs: quality`, so failures halt the whole pipeline. `pip-audit` runs in the same workflow but with `continue-on-error: true` (advisory); promoting it to blocking is a ratchet-up deferred until the existing advisory findings are triaged.
+- [ ] **Complexity tracking:** Configure `ruff` to enforce maximum cyclomatic complexity per function (threshold: 15). Functions exceeding this are flagged for refactoring. ~~Add a `manage.py complexity-report` command that prints the top 20 most complex functions in the codebase~~ (`complexity-report` shipped; ruff C901 gate still pending)
 - [ ] **Dead code detection:** Run `vulture` across the codebase to find unused functions, variables, and imports. Fix or document (some apparent dead code is used by Jinja2 templates or Flask's import machinery). Add `vulture` to CI as a warning (not blocking), ratchet to blocking in v0.4.0
 
 ---
@@ -232,7 +213,7 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 - [ ] **Session storage review:** Flask's default cookie-based sessions store all session data client-side (signed but not encrypted). Evaluate whether to move to server-side sessions (SQLite-backed via Flask-Session) now that the session will carry API context and locale data. If not moving to server-side, document the trade-off explicitly
 - [ ] **Cookie audit:** Enumerate every cookie the app sets. Verify each has appropriate `Secure`, `HttpOnly`, `SameSite`, `Path`, and `Max-Age`/`Expires` attributes
-- [ ] **Login hardening:** Add account lockout after N failed attempts (configurable, default 10 within 15 minutes) with a time-based unlock. Currently only rate-limited at 5/min via Flask-Limiter — add an application-level lockout that persists across rate limit windows
+- [x] **Login hardening:** Sliding-window IP lockout persisted in the new `login_attempts` table (migration `006_login_attempts.sql`). `app/services/login_throttle.py` exposes `record_failed_login` / `record_successful_login` / `check_lockout` / `purge_old_attempts`. Three admin-configurable settings in the new `Security` category: `login_lockout_threshold` (default 10), `login_lockout_window_minutes` (default 15), `login_lockout_duration_minutes` (default 15). IPs are stored as the SHA-256 hash from Phase 18.1 (raw addresses never hit disk). The timer resets to the *most recent* failure in the window so an attacker can't space attempts to reset the clock. Setting the threshold to 0 disables the feature without deleting the table — fail-safe against misconfiguration. Admin login POST now runs the check before credential verification, so a correct password is refused while locked (lockout wins). Failures and lockout-rejections both emit the `security.login_failed` event (with `reason='invalid_credentials'` or `'locked'`) that Phase 19.1 wired up. `Retry-After` header on the 429 response carries the seconds-remaining for polite clients. Flask-Limiter's 5/min burst cap stays in place as a second layer.
 
 ### 13.7 — File Upload Hardening
 
@@ -476,18 +457,13 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 *Built-in backup command + container-native orchestration via systemd timers.*
 
-### 17.1 — Backup Command
+### 17.1 — Backup Command *(shipped)*
 
-- [ ] `manage.py backup` — creates a timestamped backup archive:
-  - Copies the SQLite database using SQLite's online backup API (`sqlite3.Connection.backup()`) — safe to run while the app is serving requests
-  - Includes the `photos/` directory
-  - Includes `config.yaml` (if readable)
-  - Packages into a `.tar.gz` archive: `resume-site-backup-YYYYMMDD-HHMMSS.tar.gz`
-  - Writes to a configurable backup directory (default `/app/backups/`, overridable via `--output-dir` or `RESUME_SITE_BACKUP_DIR` env var)
-- [ ] `manage.py backup --db-only` — SQLite database only (fast, for frequent snapshots)
-- [ ] `manage.py backup --list` — list existing backups with sizes and dates
-- [ ] `manage.py backup --prune --keep 7` — delete backups older than N, keeping the most recent N
-- [ ] `manage.py restore --from backup-file.tar.gz` — restores database and photos from a backup archive. Requires the app to be stopped (or a confirmation flag `--force`). Backs up the current state before restoring (safety net)
+- [x] `manage.py backup` — creates a timestamped `resume-site-backup-YYYYMMDD-HHMMSS.tar.gz` archive containing the SQLite DB (online backup API), `photos/`, and `config.yaml`. Output dir resolves via `--output-dir` > `RESUME_SITE_BACKUP_DIR` > `<repo>/backups`. Atomic write (`.tar.gz.tmp` → `os.replace`).
+- [x] `manage.py backup --db-only` — database-only archive.
+- [x] `manage.py backup --list` — newest-first table with name, size (MB), mtime. Ignores in-flight `.tmp` files and `pre-restore-*` sidecars.
+- [x] `manage.py backup --prune --keep N` — retention (N ≥ 1 enforced by argparse).
+- [x] `manage.py restore --from FILE [--force]` — round-trip DB + photos; always writes a pre-restore sidecar; `--force` suppresses the interactive prompt; non-TTY without `--force` exits with a clear error. Path-traversal, symlinks, absolute-path members, and corrupted tarballs are rejected by `_safe_extract` (see `app/services/backups.py`).
 
 ### 17.2 — Scheduled Backups (Container-Native)
 
@@ -495,7 +471,7 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 - [ ] **Quadlet integration:** Update `resume-site.container` Quadlet file to reference the backup volume mount
 - [ ] **Backup volume:** Add a `resume-site-backups` volume to `compose.yaml`. Document mount point and recommended host path
 - [ ] **Compose-based schedule:** Document using `podman compose exec` in a cron job or systemd timer for users not using Quadlets
-- [ ] **Backup health:** Add a `backup_last_success` setting that `manage.py backup` updates on completion. The admin dashboard displays "Last backup: 2 hours ago" or "⚠ No backup in 48 hours" warning
+- [ ] **Backup health:** ~~Add a `backup_last_success` setting that `manage.py backup` updates on completion.~~ *(setting write shipped with 17.1 — the settings-table row is maintained by `create_backup` on every successful run, including `--db-only`. The admin-dashboard "Last backup: X ago" widget is still pending.)*
 - [ ] **Documentation:** Dedicated "Backups" section in README covering: automatic setup (Quadlet/timer), manual invocation, restore procedure, offsite backup strategies (rsync, rclone, S3-compatible), and backup encryption (gpg wrapper example)
 
 ---
@@ -508,32 +484,29 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 **Problem:** Current logging is implicit (Gunicorn access logs + Python's default logger). No structured fields, no request correlation, no log levels used consistently.
 
-- [ ] **Logging configuration:** Replace ad-hoc `print()` and bare `logging` calls with a structured logging setup:
-  - `app/logging.py` — configures Python's `logging` module with a JSON formatter for production and a human-readable formatter for development
-  - Every log entry includes: `timestamp`, `level`, `message`, `module`, `request_id` (generated per-request via a `before_request` handler), `method`, `path`, `status_code` (on response), `duration_ms`, `client_ip`
-  - Log levels used consistently: DEBUG (detailed internals), INFO (request lifecycle, admin actions), WARNING (rate limits hit, validation failures, startup concerns), ERROR (unhandled exceptions, SMTP failures, file system errors)
-- [ ] **Request ID propagation:** Generate a UUID4 per request, store in `g.request_id`, include in all log entries and response headers (`X-Request-ID`). If an incoming `X-Request-ID` header exists (from the reverse proxy), use it instead
-- [ ] **Sensitive data scrubbing:** Log entries never include: passwords, API tokens, SMTP credentials, session cookie values, email addresses from contact form, or full IP addresses (truncate to /24 in logs, or hash)
+- [x] **Logging configuration:** `app/services/logging.py` configures Python's `logging` module with a JSON formatter (default) and a human-readable formatter (dev). Mode + level via env vars `RESUME_SITE_LOG_FORMAT` and `RESUME_SITE_LOG_LEVEL`. Status → level mapping: 2xx → INFO, 4xx → WARNING, 5xx → ERROR. Per-request log entry via `_log_request` after-request hook in `app/__init__.py`, includes `timestamp`, `level`, `logger`, `message`, `module`, `request_id`, `client_ip_hash`, `method`, `path`, `status_code`, `duration_ms`, `user_agent` (first 200 chars). **Remaining:** migrating `config.py` stderr prints through the logger (separate commit — requires factory reshuffling).
+- [x] **Request ID propagation:** Generate a UUID4 per request, store in `g.request_id`, echo as `X-Request-ID` response header. Allowlist-validated inbound header propagated verbatim for reverse-proxy correlation. Included in every structured log entry (via `_RequestContextFilter` on the root logger).
+- [x] **Sensitive data scrubbing (PII posture):** Metadata-only request logging — we log method/path/status/duration/request_id/user_agent and a per-deployment **SHA-256 hash** of the client IP. Never logged: query strings, POST bodies, full IPs, passwords, tokens. IP hash uses `secret_key` as salt so log files alone can't correlate visitors across deployments.
 - [ ] **Log rotation:** Document Gunicorn's `--access-logfile` and `--error-logfile` integration with container log drivers. For file-based logging (non-container), add `RotatingFileHandler` configuration
 
 ### 18.2 — Prometheus-Compatible Metrics Endpoint
 
-- [ ] `GET /metrics` — returns Prometheus exposition format text
-- [ ] **Metrics collected:**
-  - `resume_site_requests_total{method, path_template, status}` — counter (path_template, not raw path, to avoid label explosion: `/blog/:slug` not `/blog/my-first-post`)
-  - `resume_site_request_duration_seconds{method, path_template}` — histogram (buckets: 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0)
-  - `resume_site_db_query_duration_seconds{query_name}` — histogram of named query durations
-  - `resume_site_db_query_total{query_name}` — counter of queries executed
-  - `resume_site_active_sessions` — gauge
-  - `resume_site_photo_uploads_total` — counter
-  - `resume_site_contact_submissions_total{is_spam}` — counter
-  - `resume_site_blog_posts_total{status}` — gauge (published, draft, archived)
-  - `resume_site_api_requests_total{method, endpoint, status, scope}` — counter
-  - `resume_site_backup_last_success_timestamp` — gauge (epoch seconds)
-  - `resume_site_uptime_seconds` — gauge
-- [ ] **Implementation:** Lightweight custom implementation using a module-level metrics registry and `after_request` hooks — no Prometheus client library dependency. The `/metrics` endpoint renders the registry in exposition format
-- [ ] **Feature flag:** `metrics_enabled` setting (default `false`). When disabled, `/metrics` returns 404
-- [ ] **Access control:** `/metrics` is restricted to allowed_networks (same as admin) by default. Overridable via `metrics_allowed_networks` setting for separate Prometheus scraper access
+- [x] `GET /metrics` — returns Prometheus exposition format text (`text/plain; version=0.0.4`)
+- [x] **Metrics collected (core shipped):**
+  - `resume_site_requests_total{method, path, status}` — counter. Uses `url_rule.rule` as path (`/blog/<slug>` not `/blog/my-first-post`); unmatched requests normalised to `<unmatched>` sentinel to cap cardinality.
+  - `resume_site_request_duration_seconds{method, path}` — histogram with the documented bucket ladder.
+  - `resume_site_uptime_seconds` — gauge, refreshed at scrape time.
+- [ ] **Metrics collected (deferred to later commits in this phase):**
+  - `resume_site_db_query_duration_seconds{query_name}` — needs an instrumented cursor wrapper.
+  - `resume_site_db_query_total{query_name}` — same.
+  - `resume_site_active_sessions` — needs session tracking.
+  - `resume_site_photo_uploads_total` / `resume_site_contact_submissions_total{is_spam}` — add as counters in the respective routes.
+  - `resume_site_blog_posts_total{status}` — cheap: render at scrape time via a gauge-with-callback pattern.
+  - `resume_site_api_requests_total{method, endpoint, status, scope}` — lands with the REST API (Phase 16).
+  - `resume_site_backup_last_success_timestamp` — read from the settings row already maintained by 17.1.
+- [x] **Implementation:** Stdlib-only `app/services/metrics.py` with `MetricsRegistry` singleton, `Counter`/`Gauge`/`Histogram` primitives, and a text-exposition renderer. `/metrics` self-excludes from the request counters so a high scrape rate doesn't drown out real traffic.
+- [x] **Feature flag:** `metrics_enabled` setting (default `false`). When off, `/metrics` returns 404 — not 403, so the endpoint doesn't reveal itself.
+- [x] **Access control:** `/metrics` honours the comma-separated `metrics_allowed_networks` setting; empty falls back to admin `allowed_networks` in `config.yaml`. Disallowed clients also get 404 (same "does this exist?" ambiguity).
 
 ### 18.3 — Request Profiling
 
@@ -649,41 +622,31 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 **Problem:** The current app uses bare `except Exception: pass` in analytics and generic 500 responses elsewhere. There's no way to answer "how many errors happened today, what types, and which endpoints?" without reading raw logs. Professional applications categorize errors, track error rates, and alert on anomalies.
 
-- [ ] **Error taxonomy:** Create `app/errors.py` defining error categories:
-  - `ClientError` — 4xx: bad input, missing fields, invalid tokens (expected, non-alarming)
-  - `AuthError` — 401/403: failed login, invalid API token, IP restriction (security-relevant, monitor rate)
-  - `ExternalError` — SMTP failure, CDN timeout, DNS resolution (infrastructure, may need operator action)
-  - `DataError` — database corruption, migration failure, constraint violation (critical, needs investigation)
-  - `InternalError` — unhandled exceptions, assertion failures (bugs, must be fixed)
-- [ ] **Error counter metric:** `resume_site_errors_total{category, endpoint, status_code}` — counter in the metrics endpoint. Each error category is tracked separately so you can alert on "InternalError rate > 0" (which means a bug) independently of "ClientError rate spike" (which might mean a bot)
-- [ ] **Error response standardization:** Every error response includes:
-  - A consistent JSON body: `{"error": "human message", "code": "MACHINE_CODE", "request_id": "..."}`
-  - The `X-Request-ID` header for correlation
-  - A structured log entry at the appropriate level (WARNING for client errors, ERROR for internal errors)
-  - No stack traces, no internal paths, no database schema hints in the response body (even in debug mode — stack traces go to logs only)
-- [ ] **Unhandled exception handler:** Register a Flask `errorhandler(500)` that:
-  - Logs the full traceback at ERROR level with request context (method, path, query params, request_id, client_ip)
-  - Returns the standardized error JSON to the client
-  - Increments the `InternalError` metric counter
-  - Emits a `security.internal_error` event (for webhook notification)
-- [ ] **Error rate dashboard widget:** Admin dashboard shows: error count by category for the last 24 hours, last 7 days, and a trend indicator (up/down/flat). InternalError count > 0 shows a red warning badge
+- [x] **Error taxonomy:** `app/errors.py` exposes the five categories (`ClientError`, `AuthError`, `ExternalError`, `DataError`, `InternalError`) as string constants on `ErrorCategory`, plus explicit `ExternalError` / `DataError` exception classes for service code to raise. Classification via `categorize_status(status)` (HTTP code → category) and `categorize_exception(exc, status_code=None)` (explicit classes → sqlite3 → network errors → DomainError → fallback to status → InternalError).
+- [x] **Error counter metric:** `resume_site_errors_total{category, status}` — increments from the `_log_request` after-request hook for every 4xx/5xx. The `endpoint` label is deliberately omitted in this first pass to avoid cardinality blow-up; it can be added later guarded by the same `url_rule.rule` path template used elsewhere.
+- [x] **Error response standardization:** `errorhandler(Exception)` in `app/__init__.py` returns a minimal safe body (Request ID only — never a traceback, exception message, path, or schema hint). Content negotiation: `Accept: application/json` returns `{"error": ..., "code": <category>, "request_id": ...}`; otherwise a short `text/plain` body. Every response carries `X-Request-ID` (from the earlier Phase 18.1 work) so operators can correlate client-side complaints with server-side logs.
+- [x] **Unhandled exception handler:** Registered on `Exception` but explicitly passes `HTTPException` subclasses through to Flask's defaults (404s and 403s shouldn't render as 500s). Logs the full traceback at ERROR level on the `app.request` logger via `request_logger.error(..., exc_info=exc, extra={...})`, including `error_category` and `exception_type`. The `security.internal_error` webhook emission is deferred to Phase 19 (event system).
+- [ ] **Error rate dashboard widget:** deferred — admin-dashboard template work.
 
 ### 18.10 — Alerting Rules and Thresholds
 
 **Problem:** Metrics without alerting are just numbers. Alerting converts observability data into operator actions. This phase defines what conditions should trigger alerts and provides ready-to-use rule definitions.
 
-- [ ] **Alerting rules document:** `docs/alerting-rules.yaml` — Prometheus alerting rules in standard format, ready to load into Alertmanager or any compatible system:
-  - `ResumeHighErrorRate`: `rate(resume_site_errors_total{category="InternalError"}[5m]) > 0` — any internal error is a bug and should alert immediately
-  - `ResumeHighLatency`: `histogram_quantile(0.95, rate(resume_site_request_duration_seconds_bucket[5m])) > 1.0` — p95 over 1 second
-  - `ResumeHighRequestRate`: `rate(resume_site_requests_total[1m]) > 100` — possible DDoS or bot activity
-  - `ResumeBruteForce`: `rate(resume_site_errors_total{category="AuthError", endpoint="/admin/login"}[5m]) > 5` — login brute force
-  - `ResumeBackupStale`: `time() - resume_site_backup_last_success_timestamp > 172800` — no successful backup in 48 hours
-  - `ResumeContainerUnhealthy`: health check failure (external probe)
-  - `ResumeDiskSpace`: `resume_site_disk_usage_bytes{path="/app/data"} / resume_site_disk_total_bytes{path="/app/data"} > 0.9` — disk 90% full
-  - `ResumeAPITokenExpiring`: API tokens expiring within 7 days (logged at INFO, not a Prometheus metric — CLI command or admin dashboard warning)
-- [ ] **Disk usage metric:** Add `resume_site_disk_usage_bytes{path}` gauge to `/metrics` — reports usage for `/app/data` (database) and `/app/photos` (uploads). Enables alerting before disk-full failures occur
-- [ ] **Alert documentation:** Each rule in `alerting-rules.yaml` includes: a `description` (what it means), a `runbook_url` pointing to the relevant section of `docs/PRODUCTION.md` (what to do about it), and `severity` (critical/warning/info)
-- [ ] **In-app alerting (admin dashboard):** The admin dashboard renders a "System Health" panel showing: active warnings (stale backup, disk usage > 80%, recent internal errors), performance summary (avg response time, requests/hour), and a link to `/metrics` for detailed data. This gives operators basic situational awareness without requiring an external monitoring stack
+- [x] **Alerting rules document:** `docs/alerting-rules.yaml` — seven rules in two groups (`resume-site-application`, `resume-site-availability`):
+  - `ResumeInternalErrorRate` (critical) — any InternalError is a bug
+  - `ResumeAuthErrorSpike` (warning) — 401/403 flow > 6/min sustained
+  - `ResumeHighLatency` (warning) — p95 request duration > 1s
+  - `ResumeHighRequestRate` (info) — > 100 requests/minute
+  - `ResumeNoTraffic` (warning) — /metrics reachable but requests_total flat for 30 min
+  - `ResumeProcessRestarted` (info) — uptime_seconds < 120s
+  - `ResumeScrapeDown` (critical) — Prometheus `up{job="resume-site"} == 0`
+  Each rule carries `severity` + `component` labels and `summary` + `description` + `runbook_url` annotations.
+- [x] **Alert documentation:** `docs/alerting-rules.md` — per-alert runbook section (what it means, what to check, mitigations in order of reversibility) plus setup instructions and a severity taxonomy.
+- [x] **Metric-name drift guard:** `tests/test_alerting_rules.py` (18 tests) parses the YAML, validates the Prometheus schema, confirms every rule has the required fields, and cross-references every `resume_site_*` metric in a rule `expr` against the live registry in `app/services/metrics.py`. Every `runbook_url` anchor is verified against the actual headings in `alerting-rules.md`. A canary test fires if a shipped metric is never alerted on.
+- [ ] **Disk usage metric (`resume_site_disk_usage_bytes{path}`):** deferred — needs a gauge callback pattern and DB/photo path discovery. Alert placeholder removed until the metric ships.
+- [ ] **Stale backup alert (`ResumeBackupStale`):** deferred — needs a `resume_site_backup_last_success_timestamp` gauge that reads the settings row already maintained by Phase 17.1.
+- [ ] **Brute-force "endpoint" label:** deferred — `errors_total` currently has `{category, status}` only; adding `endpoint` was kept out of Phase 18.9 to avoid cardinality. A finer `ResumeBruteForce` rule can land once the label is added.
+- [ ] **In-app alerting (admin dashboard):** deferred — admin-dashboard template work.
 
 ### 18.11 — Grafana Dashboard Template
 
@@ -772,24 +735,13 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 19.1 — Event System
 
-- [ ] Create `app/events.py` — a simple synchronous event bus:
-  - `register(event_name, callback)` — register a handler
-  - `emit(event_name, **payload)` — fire all registered handlers for an event
-  - Handlers are called synchronously in registration order
-  - If a handler raises, log the error and continue to the next handler (fail-open)
-- [ ] **Built-in events:**
-  - `contact.submitted` — new contact form entry
-  - `review.submitted` — new review awaiting approval
-  - `review.approved` — review approved by admin
-  - `blog.published` — blog post published
-  - `blog.updated` — blog post updated
-  - `settings.changed` — settings saved (includes changed keys)
-  - `photo.uploaded` — new photo uploaded
-  - `backup.completed` — backup finished
-  - `api.token_created` — new API token generated
-  - `security.login_failed` — failed admin login attempt
-  - `security.rate_limited` — rate limit triggered
-- [ ] Register analytics, activity log, and metrics as event handlers (decouple them from route code)
+- [x] `app/events.py` — synchronous, thread-safe, dependency-free event bus. `register` / `unregister` / `emit` / `clear` / `handler_count`. Handlers run in registration order; a handler that raises is logged at WARNING on the `app.events` logger and swallowed (fail-open per the design contract — a broken webhook must never break a contact-form submission). Snapshot-before-dispatch so a handler that mutates the registry mid-emit doesn't corrupt the current fan-out. Twelve canonical event names exposed as string constants on `Events`; bespoke names are also dispatchable.
+- [x] **Built-in events:** twelve names registered as constants including the original list plus `security.internal_error` (promised from the Phase 18.9 commit's deferral note).
+- [x] **Initial emissions wired:**
+  - `security.internal_error` fires from the `errorhandler(Exception)` in `app/__init__.py`. Payload: `request_id`, `method`, `path`, `exception_type`, `category`. Payloads carry no traceback / exception message so third-party subscribers can't leak internals. Never fires for `HTTPException` subclasses (404/403 are not bugs).
+  - `backup.completed` fires from `app/services/backups.create_backup` after a successful archive. Payload: `archive_path`, `db_only`, `size_bytes`. Event failures are swallowed so a misbehaving subscriber never breaks a backup.
+- [ ] **Remaining emissions** (`contact.submitted`, `review.submitted`, `review.approved`, `blog.published`, `blog.updated`, `settings.changed`, `photo.uploaded`, `api.token_created`, `security.login_failed`, `security.rate_limited`) — wiring up deferred to per-domain commits; the bus is the only foundational bit.
+- [ ] **Register analytics / activity log / metrics as event handlers** — deferred. Current code calls those subsystems directly from route handlers, which still works. The bus is now available whenever a specific migration becomes valuable (e.g. moving photo upload to emit + subscriber in one commit).
 
 ### 19.2 — Webhook Delivery
 

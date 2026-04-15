@@ -1,0 +1,198 @@
+# =============================================================================
+# resume-site — Prometheus alerting rules (Phase 18.10)
+# =============================================================================
+#
+# Drop this file into your Prometheus rules directory (usually next to
+# prometheus.yml) and reference it from your Prometheus config:
+#
+#   rule_files:
+#     - alerting-rules.yaml
+#
+# Then reload Prometheus (SIGHUP or `curl -XPOST /-/reload`). Alerts fire to
+# Alertmanager, which can fan them out to Slack, email, PagerDuty, etc.
+#
+# Every rule below:
+#   * references a metric that is actually declared in
+#     app/services/metrics.py — tests/test_alerting_rules.py cross-checks.
+#   * carries a `severity` label (critical / warning / info) for routing.
+#   * carries a `description` annotation and a `runbook_url` annotation
+#     pointing at the section in docs/alerting-rules.md that explains
+#     what the alert means and what to do about it.
+#
+# Thresholds are starting points — tune to your deployment. A one-VM home
+# lab wants different numbers than a production deployment serving 10k
+# requests/hour. Read docs/alerting-rules.md for the rationale behind
+# each threshold.
+# =============================================================================
+
+groups:
+  - name: resume-site-application
+    interval: 30s
+    rules:
+
+      # -----------------------------------------------------------------
+      # ResumeInternalErrorRate
+      # -----------------------------------------------------------------
+      # Any InternalError is a bug. We don't tolerate even one — the
+      # `errorhandler(Exception)` in app/__init__.py categorises anything
+      # that isn't a known HTTPException, DomainError, sqlite3 error, or
+      # network error as InternalError, so this firing means a real crash
+      # made it to the 500 page.
+      - alert: ResumeInternalErrorRate
+        expr: |
+          rate(resume_site_errors_total{category="InternalError"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: application
+        annotations:
+          summary: resume-site is serving 500s with unhandled exceptions
+          description: |
+            InternalError counter is incrementing. This means an exception
+            reached the top-level errorhandler — a bug, not a client problem.
+            Check structured logs for ERROR-level records with
+            error_category=InternalError. Every record carries request_id
+            so you can trace end-to-end.
+          runbook_url: "./alerting-rules.md#ResumeInternalErrorRate"
+
+      # -----------------------------------------------------------------
+      # ResumeAuthErrorSpike
+      # -----------------------------------------------------------------
+      # Matches failed login attempts + IP-restriction rejections + rate
+      # limiter 429s. A sustained spike almost always means credential-
+      # stuffing or brute-force. Phase 13.6 has an application-level
+      # lockout that reacts in-process, but an alert still matters so an
+      # operator can look at firewall / upstream WAF posture.
+      - alert: ResumeAuthErrorSpike
+        expr: |
+          rate(resume_site_errors_total{category="AuthError"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: Elevated rate of 401/403 responses
+          description: |
+            AuthError (401/403) responses are arriving faster than
+            0.1/sec (~6/min) over the last 5 minutes. Check the
+            security.login_failed event stream and the login_attempts
+            table — the Phase 13.6 lockout may already be engaging.
+          runbook_url: "./alerting-rules.md#ResumeAuthErrorSpike"
+
+      # -----------------------------------------------------------------
+      # ResumeHighLatency
+      # -----------------------------------------------------------------
+      # p95 over 1 second means page rendering has degraded meaningfully.
+      # The histogram has the standard Prometheus ladder; we use it as-is.
+      - alert: ResumeHighLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(resume_site_request_duration_seconds_bucket[5m])) by (le)
+          ) > 1.0
+        for: 10m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: p95 request latency exceeds 1 second
+          description: |
+            The 95th percentile of request duration over the last 5 minutes
+            is over a second. Check DB query count (query-audit CLI),
+            template render time, and photo-processing traffic.
+          runbook_url: "./alerting-rules.md#ResumeHighLatency"
+
+      # -----------------------------------------------------------------
+      # ResumeHighRequestRate
+      # -----------------------------------------------------------------
+      # A portfolio site's steady state is measured in requests per minute,
+      # not per second. Anything over ~100 RPM is either a viral moment or
+      # a bot swarm — either way, worth a human look.
+      - alert: ResumeHighRequestRate
+        expr: |
+          sum(rate(resume_site_requests_total[1m])) > 1.67
+        for: 5m
+        labels:
+          severity: info
+          component: traffic
+        annotations:
+          summary: Request rate exceeds 100/minute
+          description: |
+            Total request rate is above 1.67 req/sec (100/min) for the
+            last 5 minutes. Could be legitimate traffic, could be a
+            scanner. Cross-check with AuthError and the <unmatched>
+            path label in resume_site_requests_total.
+          runbook_url: "./alerting-rules.md#ResumeHighRequestRate"
+
+      # -----------------------------------------------------------------
+      # ResumeNoTraffic
+      # -----------------------------------------------------------------
+      # The site is up and Prometheus can scrape /metrics, but nothing is
+      # flowing. Either a reverse-proxy / DNS outage is blocking all real
+      # traffic, or the process has wedged. Fires only during daytime-ish
+      # windows — a truly quiet site at 3 AM UTC is normal.
+      - alert: ResumeNoTraffic
+        expr: |
+          sum(rate(resume_site_requests_total[15m])) == 0
+        for: 30m
+        labels:
+          severity: warning
+          component: availability
+        annotations:
+          summary: No HTTP traffic for 30 minutes
+          description: |
+            /metrics is reachable (otherwise this rule would be stale),
+            but resume_site_requests_total is not incrementing. Check
+            the reverse proxy, DNS, and any upstream CDN.
+          runbook_url: "./alerting-rules.md#ResumeNoTraffic"
+
+      # -----------------------------------------------------------------
+      # ResumeProcessRestarted
+      # -----------------------------------------------------------------
+      # uptime_seconds resets on every process start. A sudden drop means
+      # Gunicorn (or the whole container) respawned — worth noticing even
+      # if the restart was benign (deploy), because unexpected restarts
+      # often precede real outages.
+      - alert: ResumeProcessRestarted
+        expr: |
+          resume_site_uptime_seconds < 120
+        for: 1m
+        labels:
+          severity: info
+          component: availability
+        annotations:
+          summary: resume-site process restarted in the last 2 minutes
+          description: |
+            uptime_seconds is below 120 — the process has been up less
+            than 2 minutes. If this fires outside a planned deploy
+            window, investigate OOM, crash loops, or systemd restart
+            triggers.
+          runbook_url: "./alerting-rules.md#ResumeProcessRestarted"
+
+  # -------------------------------------------------------------------------
+  # Prometheus-generic rules (don't reference our custom metrics but are
+  # useful to ship alongside). Kept in a separate group so operators who
+  # already have `up == 0` handling elsewhere can drop just this group.
+  # -------------------------------------------------------------------------
+  - name: resume-site-availability
+    interval: 30s
+    rules:
+
+      # Prometheus's built-in `up` gauge: 1 if the last scrape succeeded,
+      # 0 otherwise. Scoped by job label so this only fires for the
+      # resume-site target, not every scrape job in the Prometheus config.
+      - alert: ResumeScrapeDown
+        expr: |
+          up{job="resume-site"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: availability
+        annotations:
+          summary: resume-site /metrics is unreachable
+          description: |
+            Prometheus cannot scrape resume-site. The process is either
+            down, the /metrics endpoint is disabled in settings
+            (metrics_enabled=false), or your scraper's IP is outside
+            metrics_allowed_networks.
+          runbook_url: "./alerting-rules.md#ResumeScrapeDown"

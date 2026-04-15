@@ -14,6 +14,9 @@ Commands:
     list-reviews         Display reviews filtered by status (pending/approved/rejected).
     purge-analytics      Delete page view records older than N days.
     query-audit          Run EXPLAIN QUERY PLAN on documented hot queries.
+    complexity-report    Print the top N most complex functions in the codebase.
+    backup               Create, list, or prune timestamped site backups.
+    restore              Restore the site database and photos from a backup.
     translations         Manage translation files (extract, init, compile, update).
 
 Usage:
@@ -27,6 +30,13 @@ Usage:
     python manage.py list-reviews --status pending
     python manage.py purge-analytics --days 90
     python manage.py query-audit
+    python manage.py complexity-report
+    python manage.py complexity-report --top 40
+    python manage.py backup
+    python manage.py backup --db-only
+    python manage.py backup --list
+    python manage.py backup --prune --keep 7
+    python manage.py restore --from backups/resume-site-backup-20260401-120000.tar.gz --force
     python manage.py translations extract
     python manage.py translations init es
     python manage.py translations compile
@@ -34,10 +44,12 @@ Usage:
 """
 
 import argparse
+import ast
 import getpass
 import os
 import sqlite3
 import sys
+from datetime import UTC, datetime
 
 from werkzeug.security import generate_password_hash
 
@@ -605,6 +617,203 @@ def query_audit(args):  # noqa: ARG001 — argparse passes args even when unused
     sys.exit(1 if unexpected_scan else 0)
 
 
+# =============================================================
+# COMPLEXITY REPORT (Phase 12.5)
+# =============================================================
+#
+# Cyclomatic complexity ranking over the project's Python sources.
+# Uses the stdlib `ast` module only — no radon/mccabe dependency —
+# to keep this a zero-cost dev utility.
+#
+# Complexity is McCabe-style: start at 1, add 1 for each branching
+# construct inside the function body. Nested functions and classes
+# are reported separately so each entry's score reflects just its
+# own body. Exit code is always 0 — this command is informational.
+#
+# Output columns: complexity, path:lineno, qualified name.
+
+_COMPLEX_THRESHOLD = 10  # Traditional "complex" cutoff for the summary line
+
+
+def _cyclomatic_complexity(func_node):
+    """Return the McCabe cyclomatic complexity of a function AST node.
+
+    Walks the function body without descending into nested function or
+    class definitions — those are reported as their own entries by
+    `_analyze_file` so their branches should not inflate the parent's
+    score.
+
+    Args:
+        func_node: A FunctionDef, AsyncFunctionDef, or any AST node whose
+            ``body`` and nested expressions should be counted.
+
+    Returns:
+        int: The complexity score (minimum 1).
+    """
+    complexity = 1
+    stack = list(func_node.body)
+    while stack:
+        node = stack.pop()
+
+        # Statements that introduce a branch
+        if isinstance(
+            node,
+            (
+                ast.If,
+                ast.For,
+                ast.AsyncFor,
+                ast.While,
+                ast.ExceptHandler,
+                ast.With,
+                ast.AsyncWith,
+                ast.Assert,
+                ast.IfExp,
+            ),
+        ):
+            complexity += 1
+        elif isinstance(node, ast.BoolOp):
+            # `a and b and c` is two extra branches beyond the first operand
+            complexity += len(node.values) - 1
+        elif isinstance(node, ast.comprehension):
+            # One branch for the `for`, plus one per `if` filter clause
+            complexity += 1 + len(node.ifs)
+        elif isinstance(node, ast.Match):
+            complexity += len(node.cases)
+
+        # Descend into children, but NOT into nested functions/classes
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        for child in ast.iter_child_nodes(node):
+            stack.append(child)
+
+    return complexity
+
+
+def _iter_python_files(roots):
+    """Yield .py file paths under each root, pruning __pycache__ and dot-dirs.
+
+    Roots may be directories or individual files.
+    """
+    for root in roots:
+        if os.path.isfile(root):
+            if root.endswith('.py'):
+                yield root
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            # Prune in-place so os.walk skips these subtrees
+            dirnames[:] = [d for d in dirnames if d != '__pycache__' and not d.startswith('.')]
+            for fname in filenames:
+                if fname.endswith('.py'):
+                    yield os.path.join(dirpath, fname)
+
+
+def _analyze_file(path, project_root):
+    """Parse a .py file and return complexity entries for every function.
+
+    Args:
+        path: Absolute path to the .py file.
+        project_root: Absolute path to the project root, used to build
+            portable relative paths in the output.
+
+    Returns:
+        list[tuple[int, str, int, str]]: one entry per function/method as
+        ``(complexity, relpath, lineno, qualname)``. Qualified names encode
+        the enclosing class/function chain (e.g. ``MyClass.method`` or
+        ``outer.<locals>.inner``). Lambdas are skipped. Files with syntax
+        errors print a warning to stderr and contribute no entries.
+    """
+    try:
+        with open(path, encoding='utf-8') as f:
+            source = f.read()
+    except OSError as e:
+        print(f'warning: could not read {path}: {e}', file=sys.stderr)
+        return []
+
+    try:
+        tree = ast.parse(source, filename=path)
+    except SyntaxError as e:
+        print(f'warning: skipping {path} due to SyntaxError: {e}', file=sys.stderr)
+        return []
+
+    relpath = os.path.relpath(path, project_root)
+    results = []
+
+    def visit(node, name_stack):
+        if isinstance(node, ast.ClassDef):
+            for child in node.body:
+                visit(child, name_stack + [node.name])
+            return
+
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            qualname = '.'.join(name_stack + [node.name]) if name_stack else node.name
+            complexity = _cyclomatic_complexity(node)
+            results.append((complexity, relpath, node.lineno, qualname))
+            # Nested functions live in the function's own `<locals>` scope
+            inner_stack = name_stack + [node.name, '<locals>']
+            for child in node.body:
+                visit(child, inner_stack)
+            return
+
+        # Descend into other containers to find functions hidden in if/try/etc.
+        for child in ast.iter_child_nodes(node):
+            visit(child, name_stack)
+
+    for node in tree.body:
+        visit(node, [])
+
+    return results
+
+
+def complexity_report(args):
+    """Print the top N most complex functions in the codebase.
+
+    Scans `app/` and `manage.py`, computes McCabe cyclomatic complexity
+    per function, and prints a ranked table. Exits 0 — this command is
+    informational, not a gate.
+
+    Flags:
+        --top N: Number of functions to show (default: 20). Must be >= 1.
+    """
+    top_n = args.top
+    if top_n < 1:
+        print('ERROR: --top must be >= 1', file=sys.stderr)
+        sys.exit(2)
+
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    roots = [
+        os.path.join(project_root, 'app'),
+        os.path.join(project_root, 'manage.py'),
+    ]
+
+    entries = []
+    for path in _iter_python_files(roots):
+        entries.extend(_analyze_file(path, project_root))
+
+    if not entries:
+        print('No Python files found.')
+        return
+
+    # Sort by (-complexity, relpath, lineno) for a deterministic ranking
+    entries.sort(key=lambda e: (-e[0], e[1], e[2]))
+
+    total = len(entries)
+    shown = entries[:top_n]
+    max_complexity = entries[0][0]
+    mean_complexity = sum(e[0] for e in entries) / total
+    over_threshold = sum(1 for e in entries if e[0] >= _COMPLEX_THRESHOLD)
+
+    print(f'Cyclomatic complexity report (top {len(shown)} of {total} functions)')
+    print('-' * 72)
+    for complexity, relpath, lineno, qualname in shown:
+        print(f'{complexity:>4}  {relpath}:{lineno}  {qualname}')
+    print('-' * 72)
+    print(
+        f'Scanned {total} functions — max={max_complexity}, '
+        f'mean={mean_complexity:.1f}, '
+        f'{over_threshold} at or above threshold ({_COMPLEX_THRESHOLD}).'
+    )
+
+
 def translations(args):
     """Manage translation message catalogs.
 
@@ -717,6 +926,176 @@ def translations(args):
         sys.exit(1)
 
 
+# =============================================================
+# BACKUP / RESTORE (Phase 17.1)
+# =============================================================
+#
+# Thin argparse glue on top of app/services/backups. The service module
+# owns the real work (tar safety, SQLite online backup, atomic rename,
+# pre-restore sidecar); this layer only resolves paths and translates
+# service exceptions into exit codes.
+
+
+def _resolve_backup_dir(explicit):
+    """Resolve the backup output directory.
+
+    Priority: --output-dir > RESUME_SITE_BACKUP_DIR env > <repo>/backups.
+    """
+    if explicit:
+        return os.path.abspath(explicit)
+    env = os.environ.get('RESUME_SITE_BACKUP_DIR')
+    if env:
+        return os.path.abspath(env)
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), 'backups'))
+
+
+def _config_path_for_backup():
+    """Return the config.yaml path, honouring RESUME_SITE_CONFIG."""
+    return os.environ.get(
+        'RESUME_SITE_CONFIG',
+        os.path.join(os.path.dirname(__file__), 'config.yaml'),
+    )
+
+
+def _positive_int(raw):
+    """argparse type for flags that must be an integer >= 1."""
+    value = int(raw)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f'{raw!r} must be at least 1')
+    return value
+
+
+def backup(args):
+    """Create, list, or prune backups.
+
+    Flags (mutually exclusive for list/prune, otherwise default = create):
+        --list              Print existing archives.
+        --prune --keep N    Delete all but the N newest archives.
+        --db-only           Database-only archive (fast snapshot).
+        --output-dir DIR    Override the output location.
+    """
+    from app.services.backups import (
+        BackupError,
+        create_backup,
+        list_backups,
+        prune_backups,
+    )
+
+    output_dir = _resolve_backup_dir(args.output_dir)
+
+    if args.list:
+        entries = list_backups(output_dir)
+        if not entries:
+            print(f'No backups found in {output_dir}')
+            return
+        print(f'Backups in {output_dir}:')
+        for entry in entries:
+            size_mb = entry.size_bytes / (1024 * 1024)
+            when = datetime.fromtimestamp(entry.mtime, tz=UTC).strftime('%Y-%m-%d %H:%M:%S UTC')
+            print(f'  {entry.name}  {size_mb:8.2f} MB  {when}')
+        return
+
+    if args.prune:
+        if args.keep is None:
+            print('ERROR: --prune requires --keep N', file=sys.stderr)
+            sys.exit(2)
+        try:
+            deleted = prune_backups(output_dir, keep=args.keep)
+        except ValueError as e:
+            print(f'ERROR: {e}', file=sys.stderr)
+            sys.exit(2)
+        print(f'Pruned {len(deleted)} archive(s); kept the {args.keep} newest.')
+        return
+
+    # Default: create a new backup
+    db_path = _get_db_path()
+    from app import create_app
+
+    app = create_app()
+    photos_dir = app.config.get('PHOTO_STORAGE')
+    config_path = _config_path_for_backup()
+
+    try:
+        archive = create_backup(
+            db_path=db_path,
+            photos_dir=photos_dir,
+            config_path=config_path if os.path.isfile(config_path) else None,
+            output_dir=output_dir,
+            db_only=args.db_only,
+        )
+    except BackupError as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        sys.exit(3)
+    except OSError as e:
+        print(f'ERROR: I/O failure during backup: {e}', file=sys.stderr)
+        sys.exit(3)
+
+    print(f'Created backup: {archive}')
+
+
+def restore(args):
+    """Restore DB and photos from an archive.
+
+    A pre-restore sidecar is always created in the backup directory
+    before extraction, so an accidental restore of the wrong archive
+    is recoverable. ``--force`` suppresses the interactive confirmation
+    prompt but does NOT skip the sidecar.
+    """
+    from app.services.backups import (
+        BackupError,
+        BackupSecurityError,
+        restore_backup,
+    )
+
+    archive_path = os.path.abspath(args.source)
+    output_dir = _resolve_backup_dir(args.output_dir)
+
+    if not os.path.isfile(archive_path):
+        print(f'ERROR: backup file not found: {archive_path}', file=sys.stderr)
+        sys.exit(2)
+
+    if not args.force:
+        if not sys.stdin.isatty():
+            print(
+                'ERROR: running in non-interactive mode; pass --force to confirm the restore.',
+                file=sys.stderr,
+            )
+            sys.exit(5)
+        print(f'About to restore from {archive_path}')
+        print('This will overwrite the current database and photos.')
+        print(f'A safety-net copy will be written to {output_dir}/pre-restore-*')
+        answer = input("Type 'yes' to proceed: ").strip().lower()
+        if answer != 'yes':
+            print('Aborted.')
+            sys.exit(0)
+
+    db_path = _get_db_path()
+    from app import create_app
+
+    app = create_app()
+    photos_dir = app.config.get('PHOTO_STORAGE')
+
+    try:
+        sidecar = restore_backup(
+            archive_path=archive_path,
+            db_path=db_path,
+            photos_dir=photos_dir,
+            output_dir=output_dir,
+        )
+    except FileNotFoundError as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        sys.exit(2)
+    except BackupSecurityError as e:
+        print(f'ERROR: archive contains unsafe members: {e}', file=sys.stderr)
+        sys.exit(4)
+    except BackupError as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        sys.exit(3)
+
+    print(f'Restored from {archive_path}')
+    print(f'Previous state saved to {sidecar}')
+
+
 def main():
     """Parse command-line arguments and dispatch to the appropriate handler."""
     parser = argparse.ArgumentParser(description='resume-site management CLI')
@@ -767,6 +1146,54 @@ def main():
     # Query audit (Phase 12.1) — runs EXPLAIN QUERY PLAN on hot queries
     subparsers.add_parser('query-audit', help='EXPLAIN QUERY PLAN on documented hot queries')
 
+    # Complexity report (Phase 12.5) — ranks functions by cyclomatic complexity
+    cr_parser = subparsers.add_parser(
+        'complexity-report',
+        help='Print the N most complex functions in the codebase',
+    )
+    cr_parser.add_argument(
+        '--top', type=int, default=20, help='Number of functions to show (default: 20)'
+    )
+
+    # Backup (Phase 17.1) — create / list / prune site backups
+    backup_parser = subparsers.add_parser(
+        'backup', help='Create, list, or prune timestamped site backups'
+    )
+    backup_parser.add_argument('--output-dir', default=None, help='Where to write / read archives')
+    backup_parser.add_argument('--db-only', action='store_true', help='Archive the database only')
+    backup_mode = backup_parser.add_mutually_exclusive_group()
+    backup_mode.add_argument('--list', action='store_true', help='List existing archives and exit')
+    backup_mode.add_argument(
+        '--prune', action='store_true', help='Delete old archives (requires --keep)'
+    )
+    backup_parser.add_argument(
+        '--keep',
+        type=_positive_int,
+        default=None,
+        help='When pruning, number of newest archives to retain (>= 1)',
+    )
+
+    # Restore (Phase 17.1) — restore DB and photos from an archive
+    restore_parser = subparsers.add_parser(
+        'restore', help='Restore the site database and photos from a backup'
+    )
+    restore_parser.add_argument(
+        '--from',
+        dest='source',
+        required=True,
+        help='Path to the .tar.gz archive to restore from',
+    )
+    restore_parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Skip the interactive confirmation prompt',
+    )
+    restore_parser.add_argument(
+        '--output-dir',
+        default=None,
+        help='Where to write the pre-restore safety sidecar',
+    )
+
     # Translation management
     trans_parser = subparsers.add_parser('translations', help='Manage translation files')
     trans_parser.add_argument(
@@ -788,6 +1215,9 @@ def main():
         'list-reviews': list_reviews,
         'purge-analytics': purge_analytics,
         'query-audit': query_audit,
+        'complexity-report': complexity_report,
+        'backup': backup,
+        'restore': restore,
         'translations': translations,
     }
 

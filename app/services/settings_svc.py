@@ -296,6 +296,61 @@ SETTINGS_REGISTRY = {
         'label': 'Retention Days',
         'category': 'Analytics',
     },
+    # --- Security (Phase 13.6) ---
+    'login_lockout_threshold': {
+        'type': 'int',
+        'default': '10',
+        'label': 'Login Lockout Threshold',
+        'category': 'Security',
+        'description': (
+            'Number of failed admin logins from one IP within the window that '
+            'triggers a lockout. 0 disables the application-level lockout '
+            '(Flask-Limiter still enforces 5/minute regardless).'
+        ),
+    },
+    'login_lockout_window_minutes': {
+        'type': 'int',
+        'default': '15',
+        'label': 'Login Lockout Window (minutes)',
+        'category': 'Security',
+        'description': (
+            'Sliding window over which failed attempts are counted toward the threshold.'
+        ),
+    },
+    'login_lockout_duration_minutes': {
+        'type': 'int',
+        'default': '15',
+        'label': 'Login Lockout Duration (minutes)',
+        'category': 'Security',
+        'description': (
+            'How long an IP remains locked out once the threshold is reached. '
+            'Timer resets on any further failed attempt during the lockout.'
+        ),
+    },
+    # --- Observability (Phase 18.2) ---
+    'metrics_enabled': {
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Enable Prometheus /metrics Endpoint',
+        'category': 'Observability',
+        'description': (
+            'Expose a /metrics endpoint in Prometheus text format. When on, the '
+            'endpoint is further restricted to the admin allowed_networks (from '
+            'config.yaml) unless a comma-separated override is set in '
+            'metrics_allowed_networks below. When off, /metrics returns 404.'
+        ),
+    },
+    'metrics_allowed_networks': {
+        'type': 'text',
+        'default': '',
+        'label': 'Metrics Allowed Networks',
+        'category': 'Observability',
+        'description': (
+            'Comma-separated CIDR ranges permitted to scrape /metrics (e.g. '
+            '"10.0.0.0/8, 192.168.0.0/16"). Leave blank to reuse the admin '
+            'allowed_networks list.'
+        ),
+    },
 }
 
 # Ordered list of categories for the admin settings page.
@@ -308,7 +363,9 @@ SETTINGS_CATEGORIES = [
     'Contact & Social',
     'Blog',
     'Internationalization',
+    'Security',
     'Analytics',
+    'Observability',
 ]
 
 # Color preset definitions: preset name → accent color hex value.
