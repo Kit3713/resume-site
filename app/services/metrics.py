@@ -320,6 +320,12 @@ uptime_seconds = _registry.gauge(
     'Seconds since this process started serving.',
 )
 
+errors_total = _registry.counter(
+    'resume_site_errors_total',
+    'Total errors by operational category and response status code. See app/errors.py.',
+    label_names=('category', 'status'),
+)
+
 
 # ---------------------------------------------------------------------------
 # Request instrumentation helper

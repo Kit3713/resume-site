@@ -641,24 +641,11 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 **Problem:** The current app uses bare `except Exception: pass` in analytics and generic 500 responses elsewhere. There's no way to answer "how many errors happened today, what types, and which endpoints?" without reading raw logs. Professional applications categorize errors, track error rates, and alert on anomalies.
 
-- [ ] **Error taxonomy:** Create `app/errors.py` defining error categories:
-  - `ClientError` — 4xx: bad input, missing fields, invalid tokens (expected, non-alarming)
-  - `AuthError` — 401/403: failed login, invalid API token, IP restriction (security-relevant, monitor rate)
-  - `ExternalError` — SMTP failure, CDN timeout, DNS resolution (infrastructure, may need operator action)
-  - `DataError` — database corruption, migration failure, constraint violation (critical, needs investigation)
-  - `InternalError` — unhandled exceptions, assertion failures (bugs, must be fixed)
-- [ ] **Error counter metric:** `resume_site_errors_total{category, endpoint, status_code}` — counter in the metrics endpoint. Each error category is tracked separately so you can alert on "InternalError rate > 0" (which means a bug) independently of "ClientError rate spike" (which might mean a bot)
-- [ ] **Error response standardization:** Every error response includes:
-  - A consistent JSON body: `{"error": "human message", "code": "MACHINE_CODE", "request_id": "..."}`
-  - The `X-Request-ID` header for correlation
-  - A structured log entry at the appropriate level (WARNING for client errors, ERROR for internal errors)
-  - No stack traces, no internal paths, no database schema hints in the response body (even in debug mode — stack traces go to logs only)
-- [ ] **Unhandled exception handler:** Register a Flask `errorhandler(500)` that:
-  - Logs the full traceback at ERROR level with request context (method, path, query params, request_id, client_ip)
-  - Returns the standardized error JSON to the client
-  - Increments the `InternalError` metric counter
-  - Emits a `security.internal_error` event (for webhook notification)
-- [ ] **Error rate dashboard widget:** Admin dashboard shows: error count by category for the last 24 hours, last 7 days, and a trend indicator (up/down/flat). InternalError count > 0 shows a red warning badge
+- [x] **Error taxonomy:** `app/errors.py` exposes the five categories (`ClientError`, `AuthError`, `ExternalError`, `DataError`, `InternalError`) as string constants on `ErrorCategory`, plus explicit `ExternalError` / `DataError` exception classes for service code to raise. Classification via `categorize_status(status)` (HTTP code → category) and `categorize_exception(exc, status_code=None)` (explicit classes → sqlite3 → network errors → DomainError → fallback to status → InternalError).
+- [x] **Error counter metric:** `resume_site_errors_total{category, status}` — increments from the `_log_request` after-request hook for every 4xx/5xx. The `endpoint` label is deliberately omitted in this first pass to avoid cardinality blow-up; it can be added later guarded by the same `url_rule.rule` path template used elsewhere.
+- [x] **Error response standardization:** `errorhandler(Exception)` in `app/__init__.py` returns a minimal safe body (Request ID only — never a traceback, exception message, path, or schema hint). Content negotiation: `Accept: application/json` returns `{"error": ..., "code": <category>, "request_id": ...}`; otherwise a short `text/plain` body. Every response carries `X-Request-ID` (from the earlier Phase 18.1 work) so operators can correlate client-side complaints with server-side logs.
+- [x] **Unhandled exception handler:** Registered on `Exception` but explicitly passes `HTTPException` subclasses through to Flask's defaults (404s and 403s shouldn't render as 500s). Logs the full traceback at ERROR level on the `app.request` logger via `request_logger.error(..., exc_info=exc, extra={...})`, including `error_category` and `exception_type`. The `security.internal_error` webhook emission is deferred to Phase 19 (event system).
+- [ ] **Error rate dashboard widget:** deferred — admin-dashboard template work.
 
 ### 18.10 — Alerting Rules and Thresholds
 

@@ -249,11 +249,12 @@ def create_app(config_path=None):
 
     app.before_request(track_page_view)
 
-    # --- 8b. Structured request log + Prometheus metrics (Phase 18.1/18.2) ---
+    # --- 8b. Structured request log + Prometheus metrics (Phase 18.1/18.2/18.9) ---
     # Registered BEFORE set_security_headers below. Flask invokes
     # after_request callbacks in reverse registration order, so this
     # hook runs LAST — it sees the finalised status code and headers.
-    from app.services.metrics import record_request
+    from app.errors import categorize_exception, categorize_status
+    from app.services.metrics import errors_total, record_request
 
     @app.after_request
     def _log_request(response):
@@ -279,6 +280,25 @@ def create_app(config_path=None):
         if rule != '/metrics':
             record_request(request.method, rule, status, duration_s)
 
+        # Error categorisation (Phase 18.9). The 500 errorhandler below
+        # sets g.error_category after seeing the exception directly —
+        # trust that over the status-only classifier because only the
+        # handler can distinguish DataError from a generic 500.
+        error_category = g.get('error_category') or categorize_status(status)
+
+        if error_category is not None and rule != '/metrics':
+            errors_total.inc(label_values=(error_category, str(status)))
+
+        extra = {
+            'method': request.method,
+            'path': request.path,
+            'status_code': status,
+            'duration_ms': duration_ms,
+            'user_agent': (request.headers.get('User-Agent', '') or '')[:200],
+        }
+        if error_category is not None:
+            extra['error_category'] = error_category
+
         request_logger.log(
             level,
             '%s %s %d %dms',
@@ -286,15 +306,63 @@ def create_app(config_path=None):
             request.path,
             status,
             duration_ms,
+            extra=extra,
+        )
+        return response
+
+    # --- 8c. Unhandled-exception handler (Phase 18.9) ---
+    # Flask's default 500 handler logs the traceback via ``app.logger``
+    # but does not touch our structured logger or counter. Wire both up
+    # so every 500 fires an ERROR record with exc_info and a category.
+    # The response body is deliberately minimal — no traceback, no
+    # internal paths, no SQL or config hints ever leak to the client.
+    @app.errorhandler(Exception)
+    def _handle_uncaught(exc):
+        # HTTPException subclasses (404, 403, 429, ...) are NOT "bugs" —
+        # let Flask render them with its default handler and the status
+        # gets picked up by _log_request below for categorisation.
+        from werkzeug.exceptions import HTTPException
+
+        if isinstance(exc, HTTPException):
+            return exc
+
+        category = categorize_exception(exc, status_code=500)
+        g.error_category = category  # picked up by _log_request
+
+        request_logger.error(
+            'Unhandled %s at %s %s',
+            type(exc).__name__,
+            request.method,
+            request.path,
+            exc_info=exc,
             extra={
                 'method': request.method,
                 'path': request.path,
-                'status_code': status,
-                'duration_ms': duration_ms,
-                'user_agent': (request.headers.get('User-Agent', '') or '')[:200],
+                'status_code': 500,
+                'error_category': category,
+                'exception_type': type(exc).__name__,
             },
         )
-        return response
+
+        accept = (request.headers.get('Accept') or '').lower()
+        request_id = g.get('request_id', '-')
+        if 'application/json' in accept:
+            return (
+                {
+                    'error': 'internal server error',
+                    'code': category,
+                    'request_id': request_id,
+                },
+                500,
+            )
+        # HTML fallback — text/plain body keeps us independent of any
+        # Jinja template the app may or may not have.
+        body = (
+            'Internal Server Error\n\n'
+            f'Request ID: {request_id}\n'
+            'Please quote the request ID when reporting this problem.\n'
+        )
+        return body, 500, {'Content-Type': 'text/plain; charset=utf-8'}
 
     # --- 9. Security response headers ---
     @app.after_request
