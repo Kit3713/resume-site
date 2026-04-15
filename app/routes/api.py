@@ -54,7 +54,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
 
 from flask import Blueprint, Response, current_app, g, jsonify, request
 
@@ -136,13 +135,12 @@ def _api_method_not_allowed(_exc):
 # JSON Content-Type enforcement (Phase 16.1 deferred bullet)
 # ---------------------------------------------------------------------------
 
-# Endpoints that legitimately accept non-JSON request bodies. Phase 16.3
-# ships none of these yet; Phase 16.3b will add /portfolio which uses
-# multipart/form-data for the binary image payload. Including the path
-# template here now keeps the middleware stable across future commits.
+# Endpoints that legitimately accept non-JSON request bodies. The
+# portfolio upload route takes multipart/form-data because the image
+# payload is binary; every other write route expects application/json.
 _MULTIPART_ENDPOINTS = frozenset(
     {
-        'api.portfolio_create',  # added in Phase 16.3b
+        'api.portfolio_create',
     }
 )
 
@@ -385,6 +383,11 @@ def site_metadata():
         loc.strip() for loc in settings.get('available_locales', 'en').split(',') if loc.strip()
     ] or ['en']
 
+    # NOTE: `server_time` is deliberately NOT in this payload. Including
+    # a per-second-changing field would break the ETag contract — every
+    # request would produce a fresh hash, so If-None-Match could never
+    # short-circuit. Clients needing a server clock can read the
+    # standard HTTP `Date` response header instead.
     payload = {
         'title': settings.get('site_title', 'My Portfolio'),
         'tagline': settings.get('site_tagline', ''),
@@ -398,7 +401,6 @@ def site_metadata():
         'contact_form_enabled': _truthy(settings.get('contact_form_enabled', 'true')),
         'available_locales': available_locales,
         'api_version': 'v1',
-        'server_time': datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ'),
     }
     return _conditional_response(payload)
 
@@ -989,6 +991,223 @@ def blog_unpublish(slug):
         source='api.blog_unpublish',
     )
     return _conditional_response({'data': _serialize_post_detail(db, updated)})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/portfolio — upload a photo (multipart/form-data)
+# ---------------------------------------------------------------------------
+
+_VALID_DISPLAY_TIERS = frozenset({'featured', 'grid', 'hidden'})
+
+
+@api_bp.route('/portfolio', methods=['POST'])
+@limiter.limit(rate_limit_write, methods=['POST'])
+@require_api_token('write')
+def portfolio_create():
+    """Upload a photo + metadata.
+
+    Content-Type MUST be ``multipart/form-data`` (allow-listed in
+    ``_MULTIPART_ENDPOINTS`` for the Content-Type middleware). The file
+    part is named ``photo``; metadata fields come from the form body:
+
+        photo         — the image file (jpg / jpeg / png / gif / webp)
+        title         — str, optional
+        description   — str, optional
+        category      — str, optional
+        tech_used     — str, optional
+        display_tier  — 'featured' | 'grid' | 'hidden' (default 'grid')
+
+    The Pillow pipeline (``app.services.photos.process_upload``)
+    handles magic-byte validation, size check, EXIF stripping, and
+    downscaling > 2000px. On success, returns 201 with the full photo
+    record. On validation failure, returns 400 with a
+    ``VALIDATION_ERROR`` code and a ``details`` dict describing the
+    problem (invalid type / magic bytes mismatch / size limit).
+    """
+    from app.services.photos import process_upload
+
+    file = request.files.get('photo')
+    if file is None or not file.filename:
+        return _error(
+            'Missing "photo" file part in multipart body',
+            'VALIDATION_ERROR',
+            400,
+            details={'field': 'photo'},
+        )
+
+    result = process_upload(file)
+    if result is None:
+        return _error(
+            'Invalid file type. Allowed: jpg, png, gif, webp',
+            'VALIDATION_ERROR',
+            400,
+            details={'field': 'photo', 'reason': 'invalid_type'},
+        )
+    if isinstance(result, str):
+        # process_upload returns a string error message for size-limit
+        # / magic-byte mismatch / null-byte filename. Surface it with a
+        # structured tag rather than the raw string.
+        return _error(
+            result,
+            'VALIDATION_ERROR',
+            400,
+            details={'field': 'photo', 'reason': 'rejected'},
+        )
+
+    title = (request.form.get('title') or '').strip()
+    description = (request.form.get('description') or '').strip()
+    category = (request.form.get('category') or '').strip()
+    tech_used = (request.form.get('tech_used') or '').strip()
+    display_tier = (request.form.get('display_tier') or 'grid').strip()
+
+    if display_tier not in _VALID_DISPLAY_TIERS:
+        # The DB's CHECK constraint would reject the INSERT anyway, but
+        # a 400 here is friendlier than a 500. Clean up the uploaded
+        # file so a bad tier isn't silent data retention.
+        from app.services.photos import delete_photo_file
+
+        delete_photo_file(result['storage_name'])
+        return _error(
+            f'Invalid display_tier {display_tier!r}',
+            'VALIDATION_ERROR',
+            400,
+            details={'field': 'display_tier', 'allowed': sorted(_VALID_DISPLAY_TIERS)},
+        )
+
+    db = get_db()
+    cursor = db.execute(
+        'INSERT INTO photos '
+        '(filename, storage_name, mime_type, width, height, file_size, '
+        'title, description, tech_used, category, display_tier) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        (
+            result['filename'],
+            result['storage_name'],
+            result['mime_type'],
+            result['width'],
+            result['height'],
+            result['file_size'],
+            title,
+            description,
+            tech_used,
+            category,
+            display_tier,
+        ),
+    )
+    db.commit()
+    photo_id = cursor.lastrowid
+
+    emit(
+        Events.PHOTO_UPLOADED,
+        photo_id=photo_id,
+        title=title,
+        category=category,
+        display_tier=display_tier,
+        storage_name=result['storage_name'],
+        file_size=result['file_size'],
+        source='api.portfolio_create',
+    )
+
+    row = db.execute('SELECT * FROM photos WHERE id = ?', (photo_id,)).fetchone()
+    return _conditional_response(
+        {'data': _row_to_dict(row, _PHOTO_PUBLIC_FIELDS)},
+        status=201,
+    )
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/v1/portfolio/<id> — update metadata (JSON body)
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/portfolio/<int:photo_id>', methods=['PUT'])
+@limiter.limit(rate_limit_write, methods=['PUT'])
+@require_api_token('write')
+def portfolio_update(photo_id):
+    """Update photo metadata. The file itself is immutable — a new photo
+    is a fresh upload.
+
+    Body (JSON, all fields optional):
+        title, description, category, tech_used (str)
+        display_tier ('featured' | 'grid' | 'hidden')
+        sort_order (int)
+    """
+    db = get_db()
+    existing = db.execute('SELECT * FROM photos WHERE id = ?', (photo_id,)).fetchone()
+    if existing is None:
+        return _error(f'No photo with id {photo_id}', 'NOT_FOUND', 404)
+
+    body = _json_body()
+    title = body.get('title', existing['title'])
+    description = body.get('description', existing['description'])
+    category = body.get('category', existing['category'])
+    tech_used = body.get('tech_used', existing['tech_used'])
+    display_tier = body.get('display_tier', existing['display_tier'])
+    sort_order_raw = body.get('sort_order', existing['sort_order'])
+
+    if display_tier not in _VALID_DISPLAY_TIERS:
+        return _error(
+            f'Invalid display_tier {display_tier!r}',
+            'VALIDATION_ERROR',
+            400,
+            details={'field': 'display_tier', 'allowed': sorted(_VALID_DISPLAY_TIERS)},
+        )
+    try:
+        sort_order = int(sort_order_raw)
+    except (TypeError, ValueError):
+        return _error(
+            'sort_order must be an integer',
+            'VALIDATION_ERROR',
+            400,
+            details={'field': 'sort_order'},
+        )
+
+    db.execute(
+        'UPDATE photos SET title = ?, description = ?, category = ?, '
+        'tech_used = ?, display_tier = ?, sort_order = ?, '
+        "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') "
+        'WHERE id = ?',
+        (title, description, category, tech_used, display_tier, sort_order, photo_id),
+    )
+    db.commit()
+
+    updated = db.execute('SELECT * FROM photos WHERE id = ?', (photo_id,)).fetchone()
+    return _conditional_response({'data': _row_to_dict(updated, _PHOTO_PUBLIC_FIELDS)})
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/v1/portfolio/<id> — delete row + file from disk
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/portfolio/<int:photo_id>', methods=['DELETE'])
+@limiter.limit(rate_limit_write, methods=['DELETE'])
+@require_api_token('write')
+def portfolio_delete(photo_id):
+    """Delete a photo row and clean up the file on disk.
+
+    Returns 204 No Content on success, 404 if the id doesn't exist.
+    File-cleanup failure (disk error, file already gone) is logged but
+    doesn't fail the request — the DB row is removed either way so the
+    site doesn't keep serving a broken reference.
+    """
+    from app.services.photos import delete_photo_file
+
+    db = get_db()
+    row = db.execute('SELECT storage_name FROM photos WHERE id = ?', (photo_id,)).fetchone()
+    if row is None:
+        return _error(f'No photo with id {photo_id}', 'NOT_FOUND', 404)
+
+    db.execute('DELETE FROM photos WHERE id = ?', (photo_id,))
+    db.commit()
+
+    try:
+        delete_photo_file(row['storage_name'])
+    except OSError as exc:
+        current_app.logger.warning(
+            'api.portfolio_delete: failed to remove %s (%s)', row['storage_name'], exc
+        )
+    return Response(status=204)
 
 
 # ---------------------------------------------------------------------------

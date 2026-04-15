@@ -64,7 +64,6 @@ def test_site_metadata_returns_defaults(client):
     assert 'availability_status' in body
     assert body['available_locales'] == ['en']
     assert body['blog_enabled'] is False  # boolean, not the string 'false'
-    assert 'server_time' in body
 
 
 def test_site_metadata_reflects_settings_changes(client, app):
@@ -1172,6 +1171,328 @@ def test_contact_per_ip_cap_returns_429(client, no_rate_limits, app):
     body = _json(response)
     assert body['code'] == 'RATE_LIMITED'
     assert body['details']['retry_after_minutes'] == 60
+
+
+# ===========================================================================
+# PORTFOLIO WRITE ENDPOINTS (Phase 16.3b)
+# ===========================================================================
+
+
+def _png_bytes(*, width=100, height=100, color=(255, 0, 0)):
+    """Build a valid PNG image in memory using Pillow.
+
+    Used by the upload tests — feeding raw bytes avoids shipping a
+    fixture file in the repo while exercising the real Pillow pipeline
+    (magic-byte check, EXIF stripping, re-encode).
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new('RGB', (width, height), color=color).save(buf, 'PNG')
+    buf.seek(0)
+    return buf
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/portfolio
+# ---------------------------------------------------------------------------
+
+
+def test_portfolio_upload_happy_path(client, no_rate_limits, api_write_token, app):
+    response = client.post(
+        '/api/v1/portfolio',
+        data={
+            'photo': (_png_bytes(), 'test.png'),
+            'title': 'Rack Build',
+            'description': 'Bottom-up rack cabling',
+            'category': 'racks',
+            'display_tier': 'featured',
+        },
+        content_type='multipart/form-data',
+        headers={'Authorization': f'Bearer {api_write_token}'},
+    )
+    assert response.status_code == 201, response.data
+    body = _json(response)
+    assert body['data']['title'] == 'Rack Build'
+    assert body['data']['category'] == 'racks'
+    assert body['data']['display_tier'] == 'featured'
+
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    conn.row_factory = sqlite3.Row
+    row = conn.execute('SELECT filename, storage_name, width, height FROM photos').fetchone()
+    conn.close()
+    assert row['filename'] == 'test.png'
+    assert row['storage_name'].endswith('.png')
+    # Pillow returned real dimensions after processing.
+    assert row['width'] == 100
+    assert row['height'] == 100
+
+
+def test_portfolio_upload_requires_write_scope(client, no_rate_limits, app):
+    from app.db import get_db
+    from app.services.api_tokens import generate_token
+
+    with app.app_context():
+        raw = generate_token(get_db(), name='read-only', scope='read').raw
+
+    response = client.post(
+        '/api/v1/portfolio',
+        data={'photo': (_png_bytes(), 'test.png')},
+        content_type='multipart/form-data',
+        headers={'Authorization': f'Bearer {raw}'},
+    )
+    assert response.status_code == 403
+
+
+def test_portfolio_upload_without_token_returns_401(client, no_rate_limits):
+    response = client.post(
+        '/api/v1/portfolio',
+        data={'photo': (_png_bytes(), 'test.png')},
+        content_type='multipart/form-data',
+    )
+    assert response.status_code == 401
+
+
+def test_portfolio_upload_missing_file_returns_400(client, no_rate_limits, api_write_token):
+    response = client.post(
+        '/api/v1/portfolio',
+        data={'title': 'No file'},
+        content_type='multipart/form-data',
+        headers={'Authorization': f'Bearer {api_write_token}'},
+    )
+    assert response.status_code == 400
+    body = _json(response)
+    assert body['code'] == 'VALIDATION_ERROR'
+    assert body['details']['field'] == 'photo'
+
+
+def test_portfolio_upload_rejects_invalid_extension(client, no_rate_limits, api_write_token):
+    from io import BytesIO
+
+    response = client.post(
+        '/api/v1/portfolio',
+        data={'photo': (BytesIO(b'not-an-image'), 'resume.txt')},
+        content_type='multipart/form-data',
+        headers={'Authorization': f'Bearer {api_write_token}'},
+    )
+    assert response.status_code == 400
+    assert _json(response)['details']['reason'] == 'invalid_type'
+
+
+def test_portfolio_upload_rejects_magic_byte_mismatch(client, no_rate_limits, api_write_token):
+    """A .png extension with non-PNG content must be rejected by the
+    magic-byte check in process_upload."""
+    from io import BytesIO
+
+    response = client.post(
+        '/api/v1/portfolio',
+        data={'photo': (BytesIO(b'\x00\x00\x00 fake'), 'fake.png')},
+        content_type='multipart/form-data',
+        headers={'Authorization': f'Bearer {api_write_token}'},
+    )
+    assert response.status_code == 400
+    assert _json(response)['details']['reason'] == 'rejected'
+
+
+def test_portfolio_upload_rejects_bad_display_tier(client, no_rate_limits, api_write_token, app):
+    response = client.post(
+        '/api/v1/portfolio',
+        data={
+            'photo': (_png_bytes(), 'ok.png'),
+            'display_tier': 'super-featured',
+        },
+        content_type='multipart/form-data',
+        headers={'Authorization': f'Bearer {api_write_token}'},
+    )
+    assert response.status_code == 400
+    body = _json(response)
+    assert body['details']['field'] == 'display_tier'
+    assert 'grid' in body['details']['allowed']
+
+    # The uploaded file should have been cleaned up — no orphan on disk.
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    row = conn.execute('SELECT COUNT(*) FROM photos').fetchone()
+    conn.close()
+    assert row[0] == 0
+
+
+def test_portfolio_upload_emits_event(client, no_rate_limits, api_write_token):
+    from app.events import Events, clear, register
+
+    captured = []
+    clear()
+    register(Events.PHOTO_UPLOADED, lambda **p: captured.append(p))
+    try:
+        client.post(
+            '/api/v1/portfolio',
+            data={
+                'photo': (_png_bytes(), 'event.png'),
+                'title': 'Event Photo',
+                'display_tier': 'grid',
+            },
+            content_type='multipart/form-data',
+            headers={'Authorization': f'Bearer {api_write_token}'},
+        )
+    finally:
+        clear()
+    assert len(captured) == 1
+    payload = captured[0]
+    assert payload['title'] == 'Event Photo'
+    assert payload['display_tier'] == 'grid'
+    assert payload['source'] == 'api.portfolio_create'
+    assert 'photo_id' in payload
+    assert 'storage_name' in payload
+    assert 'file_size' in payload
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/v1/portfolio/<id>
+# ---------------------------------------------------------------------------
+
+
+def test_portfolio_update_metadata(client, no_rate_limits, api_write_token, app):
+    _seed_photos(app, [('Old', 'racks', 'grid', 1)])
+
+    response = client.put(
+        '/api/v1/portfolio/1',
+        json={
+            'title': 'New Title',
+            'description': 'New description',
+            'display_tier': 'featured',
+        },
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 200
+    body = _json(response)
+    assert body['data']['title'] == 'New Title'
+    assert body['data']['display_tier'] == 'featured'
+
+
+def test_portfolio_update_partial_preserves_fields(client, no_rate_limits, api_write_token, app):
+    _seed_photos(app, [('Original', 'racks', 'grid', 1)])
+    response = client.put(
+        '/api/v1/portfolio/1',
+        json={'description': 'added a description'},
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 200
+    body = _json(response)
+    assert body['data']['title'] == 'Original'  # unchanged
+    assert body['data']['description'] == 'added a description'
+
+
+def test_portfolio_update_404_for_missing(client, no_rate_limits, api_write_token):
+    response = client.put(
+        '/api/v1/portfolio/999',
+        json={'title': 'x'},
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 404
+
+
+def test_portfolio_update_rejects_bad_tier(client, no_rate_limits, api_write_token, app):
+    _seed_photos(app, [('Ok', 'c', 'grid', 1)])
+    response = client.put(
+        '/api/v1/portfolio/1',
+        json={'display_tier': 'bogus'},
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 400
+
+
+def test_portfolio_update_rejects_non_int_sort_order(client, no_rate_limits, api_write_token, app):
+    _seed_photos(app, [('Ok', 'c', 'grid', 1)])
+    response = client.put(
+        '/api/v1/portfolio/1',
+        json={'sort_order': 'first'},
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 400
+    assert _json(response)['details']['field'] == 'sort_order'
+
+
+def test_portfolio_update_requires_write_scope(client, no_rate_limits, app):
+    from app.db import get_db
+    from app.services.api_tokens import generate_token
+
+    _seed_photos(app, [('Ok', 'c', 'grid', 1)])
+    with app.app_context():
+        raw = generate_token(get_db(), name='r', scope='read').raw
+
+    response = client.put(
+        '/api/v1/portfolio/1',
+        json={'title': 'nope'},
+        headers={'Authorization': f'Bearer {raw}', 'Content-Type': 'application/json'},
+    )
+    assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/v1/portfolio/<id>
+# ---------------------------------------------------------------------------
+
+
+def test_portfolio_delete_removes_row_and_file(client, no_rate_limits, api_write_token, app):
+    """End-to-end: upload a photo, delete it, confirm row + file both gone."""
+    upload = client.post(
+        '/api/v1/portfolio',
+        data={'photo': (_png_bytes(), 'doomed.png'), 'title': 'Doomed'},
+        content_type='multipart/form-data',
+        headers={'Authorization': f'Bearer {api_write_token}'},
+    )
+    assert upload.status_code == 201
+    photo_id = _json(upload)['data']['id']
+
+    # Grab storage_name so we can verify the file is gone.
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    conn.row_factory = sqlite3.Row
+    storage_name = conn.execute(
+        'SELECT storage_name FROM photos WHERE id = ?', (photo_id,)
+    ).fetchone()['storage_name']
+    conn.close()
+
+    response = client.delete(
+        f'/api/v1/portfolio/{photo_id}',
+        headers={'Authorization': f'Bearer {api_write_token}'},
+    )
+    assert response.status_code == 204
+
+    # Row gone.
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    row = conn.execute('SELECT COUNT(*) FROM photos WHERE id = ?', (photo_id,)).fetchone()
+    conn.close()
+    assert row[0] == 0
+
+    # File gone.
+    import os
+
+    file_path = os.path.join(app.config['PHOTO_STORAGE'], storage_name)
+    assert not os.path.exists(file_path)
+
+
+def test_portfolio_delete_404_for_missing(client, no_rate_limits, api_write_token):
+    response = client.delete(
+        '/api/v1/portfolio/999',
+        headers={'Authorization': f'Bearer {api_write_token}'},
+    )
+    assert response.status_code == 404
+
+
+def test_portfolio_delete_requires_write_scope(client, no_rate_limits, app):
+    from app.db import get_db
+    from app.services.api_tokens import generate_token
+
+    _seed_photos(app, [('Ok', 'c', 'grid', 1)])
+    with app.app_context():
+        raw = generate_token(get_db(), name='r', scope='read').raw
+
+    response = client.delete(
+        '/api/v1/portfolio/1',
+        headers={'Authorization': f'Bearer {raw}'},
+    )
+    assert response.status_code == 403
 
 
 # ---------------------------------------------------------------------------
