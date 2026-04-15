@@ -867,10 +867,10 @@ Build-arg `IMAGE_VERSION` (default `dev`) added to the runtime stage so CI label
 
 ### 21.3 — Container Security Scanning
 
-- [ ] Add Trivy container scan to CI pipeline (scan the built image for OS and Python package CVEs)
-- [ ] Fail the pipeline on CRITICAL and HIGH vulnerabilities
-- [ ] Document the remediation process for base image CVEs (rebuild with `--pull` and `--no-cache`)
-- [ ] Add `cosign` image signing to the publish workflow (signs the GHCR image with a keyless signature for supply chain verification)
+- [x] **Trivy CVE scan in CI:** New `container-scan` job in `.github/workflows/ci.yml` between `container-build` and `publish`. Uses `aquasecurity/trivy-action@0.28.0` against a freshly-built image with `--severity CRITICAL,HIGH --exit-code 1 --ignore-unfixed --scanners vuln,secret`. SARIF results uploaded as a build artifact (`trivy-results`) so triagers can review. Vuln database cached between runs to keep scan time bounded.
+- [x] **Pipeline gate:** Both `publish` and `publish-main` jobs gain `needs: [test, container-build, container-scan]` — no image is pushed to GHCR if Trivy finds an actionable HIGH or CRITICAL CVE.
+- [x] **Cosign keyless signing:** `publish` and `publish-main` install `sigstore/cosign-installer@v3` and sign the published image with the GitHub Actions OIDC identity (`COSIGN_EXPERIMENTAL=1` for the keyless flow). Signature + certificate land in the public Sigstore transparency log; no key material to manage. Both jobs gain `permissions: { id-token: write, contents: read, packages: write }` so the OIDC token is available.
+- [x] **Remediation docs:** Operators verify a pulled image with `cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp 'https://github.com/Kit3713/resume-site/.+' ...`. The exact invocation lives in `CONTRIBUTING.md` (developer-facing) and will land in `docs/PRODUCTION.md` (operator-facing) in Phase 21.4. Base-image CVE remediation: `docker build --pull --no-cache` then re-tag and re-push — same flow as before, just gated by Trivy now.
 
 ### 21.4 — Deployment Documentation
 

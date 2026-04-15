@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.0
 
+### Added — Phase 21.3: CVE Scanning + Image Signing
+- New `container-scan` CI job between `container-build` and `publish`. Uses Trivy (`aquasecurity/trivy-action@0.28.0`) to scan the freshly-built image for OS and Python package CVEs plus leaked secrets. Flags: `--severity CRITICAL,HIGH --exit-code 1 --ignore-unfixed --scanners vuln,secret`. Vuln database cached between runs for fast scans. SARIF report uploaded as the `trivy-results` artifact for triage.
+- `publish` and `publish-main` jobs gain `needs: [test, container-build, container-scan]` — no image is pushed to GHCR if Trivy finds an actionable HIGH or CRITICAL CVE.
+- Cosign keyless OIDC signing on every published image. Both publish jobs install `sigstore/cosign-installer@v3`, request `id-token: write` permission, and run `cosign sign --yes ghcr.io/.../resume-site@<digest>`. Signature + certificate land in the public Sigstore transparency log; no key material to manage. Operators verify with `cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp 'https://github.com/Kit3713/resume-site/.+' ...`.
+- `CONTRIBUTING.md` — new "Container Image Changes" section documenting local Trivy scan + cosign verify invocations for contributors who touch `Containerfile` or `requirements.txt`.
+
 ### Changed — Phase 21.1: Containerfile + `.containerignore` Tidy
 - `Containerfile` — runtime stage now takes an `IMAGE_VERSION` build-arg (default `dev`) sourcing the OCI version label, replacing the hardcoded `0.2.0`. CI's `container-build` job sets it to `ci-<short-sha>`; the publish workflow sets it to the git tag (Phase 21.5). Volume-mount and health-check sections in the header comment block updated to reference the Phase 21.2 `/readyz` endpoint and the Phase 17.2 backups volume.
 - `.containerignore` — explicit exclusions for `tests/`, `docs/`, every `*.md` (ROADMAP/CHANGELOG/README/CONTRIBUTING/SECURITY/PERFORMANCE), `pyproject.toml`, `requirements-dev*`, `babel.cfg`, `.pre-commit-config.yaml`, `.secrets.baseline`, dev-tooling dirs (`.venv`, `.pytest_cache`, `.coverage`), and operator-side files (`compose.yaml`, `resume-site.container`, the systemd backup units). Dropped the no-op `!requirements.txt` exception.
