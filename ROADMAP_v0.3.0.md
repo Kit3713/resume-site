@@ -751,24 +751,13 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 19.1 — Event System
 
-- [ ] Create `app/events.py` — a simple synchronous event bus:
-  - `register(event_name, callback)` — register a handler
-  - `emit(event_name, **payload)` — fire all registered handlers for an event
-  - Handlers are called synchronously in registration order
-  - If a handler raises, log the error and continue to the next handler (fail-open)
-- [ ] **Built-in events:**
-  - `contact.submitted` — new contact form entry
-  - `review.submitted` — new review awaiting approval
-  - `review.approved` — review approved by admin
-  - `blog.published` — blog post published
-  - `blog.updated` — blog post updated
-  - `settings.changed` — settings saved (includes changed keys)
-  - `photo.uploaded` — new photo uploaded
-  - `backup.completed` — backup finished
-  - `api.token_created` — new API token generated
-  - `security.login_failed` — failed admin login attempt
-  - `security.rate_limited` — rate limit triggered
-- [ ] Register analytics, activity log, and metrics as event handlers (decouple them from route code)
+- [x] `app/events.py` — synchronous, thread-safe, dependency-free event bus. `register` / `unregister` / `emit` / `clear` / `handler_count`. Handlers run in registration order; a handler that raises is logged at WARNING on the `app.events` logger and swallowed (fail-open per the design contract — a broken webhook must never break a contact-form submission). Snapshot-before-dispatch so a handler that mutates the registry mid-emit doesn't corrupt the current fan-out. Twelve canonical event names exposed as string constants on `Events`; bespoke names are also dispatchable.
+- [x] **Built-in events:** twelve names registered as constants including the original list plus `security.internal_error` (promised from the Phase 18.9 commit's deferral note).
+- [x] **Initial emissions wired:**
+  - `security.internal_error` fires from the `errorhandler(Exception)` in `app/__init__.py`. Payload: `request_id`, `method`, `path`, `exception_type`, `category`. Payloads carry no traceback / exception message so third-party subscribers can't leak internals. Never fires for `HTTPException` subclasses (404/403 are not bugs).
+  - `backup.completed` fires from `app/services/backups.create_backup` after a successful archive. Payload: `archive_path`, `db_only`, `size_bytes`. Event failures are swallowed so a misbehaving subscriber never breaks a backup.
+- [ ] **Remaining emissions** (`contact.submitted`, `review.submitted`, `review.approved`, `blog.published`, `blog.updated`, `settings.changed`, `photo.uploaded`, `api.token_created`, `security.login_failed`, `security.rate_limited`) — wiring up deferred to per-domain commits; the bus is the only foundational bit.
+- [ ] **Register analytics / activity log / metrics as event handlers** — deferred. Current code calls those subsystems directly from route handlers, which still works. The bus is now available whenever a specific migration becomes valuable (e.g. moving photo upload to emit + subscriber in one commit).
 
 ### 19.2 — Webhook Delivery
 

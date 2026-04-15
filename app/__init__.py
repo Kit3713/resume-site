@@ -344,6 +344,22 @@ def create_app(config_path=None):
             },
         )
 
+        # Phase 19.1 event bus — fire security.internal_error so future
+        # webhook / notification subscribers can react. Kept deliberately
+        # lean (no exception message or traceback in the payload) so the
+        # bus can't leak internals into third-party destinations.
+        from app.events import Events as _Events
+        from app.events import emit as _emit
+
+        _emit(
+            _Events.SECURITY_INTERNAL_ERROR,
+            request_id=g.get('request_id', '-'),
+            method=request.method,
+            path=request.path,
+            exception_type=type(exc).__name__,
+            category=category,
+        )
+
         accept = (request.headers.get('Accept') or '').lower()
         request_id = g.get('request_id', '-')
         if 'application/json' in accept:

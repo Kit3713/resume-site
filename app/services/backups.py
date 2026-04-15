@@ -253,6 +253,26 @@ def create_backup(
             file=sys.stderr,
         )
 
+    # Phase 19.1 event bus — fire backup.completed with a minimal payload
+    # (path, size, and the db_only flag). Lazy import so CLI paths that
+    # never trigger events don't pay the import cost.
+    try:
+        from app.events import Events as _Events
+        from app.events import emit as _emit
+
+        size_bytes = os.path.getsize(final_path) if os.path.isfile(final_path) else 0
+        _emit(
+            _Events.BACKUP_COMPLETED,
+            archive_path=final_path,
+            db_only=db_only,
+            size_bytes=size_bytes,
+        )
+    except Exception as e:  # noqa: BLE001 — event failure never breaks the backup
+        print(
+            f'WARNING: backup succeeded but event emission failed: {e}',
+            file=sys.stderr,
+        )
+
     return final_path
 
 
