@@ -1,22 +1,71 @@
+# =============================================================
+# .containerignore — files excluded from the container build context
+#
+# Phase 21.1 audit: anything not needed at runtime stays here. The
+# image is multi-stage, so dev / test / docs files copied into the
+# builder would still inflate the build context size and slow CI.
+# =============================================================
+
+# --- Source-control & CI metadata ---
 .git
+.gitignore
 .github
+
+# --- Tests ---
+# Tests run in CI before the image is built; they should never ship
+# inside the runtime image. Phase 21.1 explicitly calls this out.
 tests/
-docs/
-*.md
-!requirements.txt
-config.yaml
-config.example.yaml
-data/
-photos/
-uploads/
-__pycache__
-*.pyc
-*.pyo
 .pytest_cache
 .coverage
 coverage.xml
+
+# --- Docs (not needed at runtime) ---
+docs/
+*.md
+ROADMAP*.md
+CHANGELOG.md
+PERFORMANCE.md
+README.md
+CONTRIBUTING.md
+SECURITY.md
+LICENSE
+
+# --- Configuration (mounted at runtime, never baked in) ---
+config.yaml
+config.example.yaml
+config.schema.json
+
+# --- Runtime data directories (mounted as volumes) ---
+data/
+photos/
+uploads/
+backups/
+
+# --- Dev tooling ---
 .editorconfig
 .flake8
 .venv
-venv
+venv/
 *.egg-info
+.pre-commit-config.yaml
+.secrets.baseline
+pyproject.toml
+requirements-dev.in
+requirements-dev.txt
+babel.cfg
+
+# --- Python build / cache artifacts ---
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# --- Compose / Quadlet (operator-side, not container-side) ---
+compose.yaml
+resume-site.container
+resume-site-backup.service
+resume-site-backup.timer
+
+# --- Local backup archives that may exist in the dev tree ---
+*.tar.gz
+*.tar.gz.tmp

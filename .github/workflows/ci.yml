@@ -108,7 +108,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build container image
-        run: docker build -t ${{ env.IMAGE_NAME }}:test -f Containerfile .
+        # IMAGE_VERSION (Phase 21.1) labels the test image with the
+        # commit SHA so a failed CI run is traceable back to source.
+        run: |
+          docker build \
+            --build-arg IMAGE_VERSION="ci-${GITHUB_SHA::7}" \
+            -t ${{ env.IMAGE_NAME }}:test \
+            -f Containerfile .
 
       - name: Smoke test container
         run: |
@@ -130,8 +136,14 @@ jobs:
           # Wait for startup
           sleep 5
 
-          # Verify health
-          curl -f http://localhost:8080/ || (docker logs test-container && exit 1)
+          # Verify the landing page renders + both health endpoints respond.
+          # /healthz is the lightweight liveness probe used by HEALTHCHECK;
+          # /readyz (Phase 21.2) does the deeper DB/migration/disk/photos
+          # check. CI must verify both so a regression in either probe is
+          # caught before publish.
+          curl -fsS http://localhost:8080/        || (docker logs test-container && exit 1)
+          curl -fsS http://localhost:8080/healthz || (docker logs test-container && exit 1)
+          curl -fsS http://localhost:8080/readyz  || (docker logs test-container && exit 1)
 
           # Cleanup
           docker stop test-container
