@@ -56,10 +56,13 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
-from flask import Blueprint, Response, g, jsonify, request
+from flask import Blueprint, Response, current_app, g, jsonify, request
 
+from app import limiter
 from app.db import get_db
+from app.events import Events, emit
 from app.models import (
+    count_recent_submissions,
     get_all_approved_reviews,
     get_all_visible_photos,
     get_approved_reviews_by_tier,
@@ -72,14 +75,22 @@ from app.models import (
     get_visible_projects,
     get_visible_services,
     get_visible_stats,
+    save_contact_submission,
 )
+from app.services.api_tokens import rate_limit_write, require_api_token
 from app.services.blog import (
+    create_post,
+    delete_post,
     get_all_tags,
+    get_post_by_id,
     get_post_by_slug,
     get_posts_by_tag,
     get_published_posts,
     get_tags_for_post,
+    publish_post,
     render_post_content,
+    unpublish_post,
+    update_post,
 )
 from app.services.pagination import clamp_page, offset_for, paginate
 from app.services.settings_svc import get_all_cached
@@ -119,6 +130,49 @@ def _api_not_found(_exc):
 def _api_method_not_allowed(_exc):
     """Return a JSON 405 instead of Flask's text/html default."""
     return _error('Method not allowed', 'METHOD_NOT_ALLOWED', 405)
+
+
+# ---------------------------------------------------------------------------
+# JSON Content-Type enforcement (Phase 16.1 deferred bullet)
+# ---------------------------------------------------------------------------
+
+# Endpoints that legitimately accept non-JSON request bodies. Phase 16.3
+# ships none of these yet; Phase 16.3b will add /portfolio which uses
+# multipart/form-data for the binary image payload. Including the path
+# template here now keeps the middleware stable across future commits.
+_MULTIPART_ENDPOINTS = frozenset(
+    {
+        'api.portfolio_create',  # added in Phase 16.3b
+    }
+)
+
+
+@api_bp.before_request
+def _enforce_json_content_type():
+    """Reject POST/PUT/PATCH bodies that don't declare JSON.
+
+    Browsers default to ``application/x-www-form-urlencoded`` which the
+    API won't parse. Rejecting mismatched types up front is clearer than
+    letting ``request.get_json()`` silently return ``None`` and
+    producing a confusing 400 later.
+
+    The check runs on every write to any /api/v1/ route. Multipart
+    uploads (Phase 16.3b) are allow-listed via ``_MULTIPART_ENDPOINTS``.
+    GET / HEAD / OPTIONS / DELETE are always permitted (no body).
+    """
+    if request.method not in ('POST', 'PUT', 'PATCH'):
+        return None
+    if request.endpoint in _MULTIPART_ENDPOINTS:
+        return None
+    ctype = (request.headers.get('Content-Type') or '').split(';', 1)[0].strip().lower()
+    if ctype != 'application/json':
+        return _error(
+            'Content-Type must be application/json',
+            'UNSUPPORTED_MEDIA_TYPE',
+            415,
+            details={'received': ctype or 'missing'},
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +287,7 @@ _BLOG_POST_LIST_FIELDS = (
     'reading_time',
     'meta_description',
     'content_format',
+    'status',
     'published_at',
     'created_at',
     'updated_at',
@@ -324,8 +379,6 @@ def site_metadata():
     called, whether the author is available, and which locales are
     configured for multilingual content (Phase 15).
     """
-    from flask import current_app
-
     db = get_db()
     settings = get_all_cached(db, current_app.config['DATABASE_PATH'])
     available_locales = [
@@ -689,6 +742,370 @@ def blog_detail(slug):
         db=db,
     )
     return _conditional_response({'data': data})
+
+
+# ===========================================================================
+# WRITE ENDPOINTS (Phase 16.3)
+# ===========================================================================
+#
+# All blog-write routes require a Bearer token with ``write`` scope.
+# Rate limits come from the ``api_rate_limit_write`` setting (default 30
+# per minute) via the limiter callable in ``app.services.api_tokens``.
+#
+# The /contact endpoint is deliberately NOT token-gated — it mirrors the
+# public HTML form so a kiosk / widget can POST submissions without
+# provisioning a token. It enforces honeypot + per-IP rate limits
+# instead.
+
+
+def _json_body():
+    """Return the parsed JSON request body, or an empty dict if missing.
+
+    ``request.get_json(silent=True)`` returns ``None`` for empty bodies;
+    coerce to a dict so handlers can ``.get()`` without None-checking.
+    Non-object roots (arrays / scalars) also collapse to ``{}`` so a
+    call like ``body.get('title')`` doesn't raise.
+    """
+    raw = request.get_json(silent=True)
+    return raw if isinstance(raw, dict) else {}
+
+
+def _serialize_post_detail(db, post_row):
+    """Build the standard blog detail payload for a POST / PUT response."""
+    return _blog_post_to_dict(
+        post_row,
+        fields=_BLOG_POST_DETAIL_FIELDS,
+        include_tags=True,
+        include_rendered=True,
+        db=db,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/blog — create a blog post (draft by default)
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/blog', methods=['POST'])
+@limiter.limit(rate_limit_write, methods=['POST'])
+@require_api_token('write')
+def blog_create():
+    """Create a new blog post.
+
+    Body (JSON):
+        title (str, required)
+        summary (str, optional)
+        content (str, optional)
+        content_format ('html' | 'markdown', default 'html')
+        cover_image (str, optional)
+        author (str, optional)
+        tags (str, optional — comma-separated)
+        meta_description (str, optional)
+        featured (bool, default false)
+        publish (bool, default false) — when true, immediately publishes.
+            Matches the admin UI's "Publish" action.
+
+    Returns 201 with the full post detail. The server-generated slug is
+    in the response so the caller can follow up with PUT / DELETE.
+    """
+    body = _json_body()
+    title = (body.get('title') or '').strip()
+    if not title:
+        return _error('Title is required', 'VALIDATION_ERROR', 400, details={'field': 'title'})
+
+    db = get_db()
+    post_id = create_post(
+        db,
+        title=title,
+        summary=body.get('summary', '') or '',
+        content=body.get('content', '') or '',
+        content_format=body.get('content_format', 'html') or 'html',
+        cover_image=body.get('cover_image', '') or '',
+        author=body.get('author', '') or '',
+        tags=body.get('tags', '') or '',
+        meta_description=body.get('meta_description', '') or '',
+        featured=bool(body.get('featured', False)),
+    )
+
+    published = False
+    if body.get('publish'):
+        publish_post(db, post_id)
+        published = True
+
+    post = get_post_by_id(db, post_id)
+    emit(
+        Events.BLOG_PUBLISHED if published else Events.BLOG_UPDATED,
+        post_id=post_id,
+        slug=post['slug'],
+        title=post['title'],
+        status=post['status'],
+        source='api.blog_create',
+    )
+    return _conditional_response({'data': _serialize_post_detail(db, post)}, status=201)
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/v1/blog/<slug> — update an existing post
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/blog/<slug>', methods=['PUT'])
+@limiter.limit(rate_limit_write, methods=['PUT'])
+@require_api_token('write')
+def blog_update(slug):
+    """Update a post identified by slug.
+
+    Every field is optional — omitted fields keep their current value.
+    The caller can also rename the slug by including a new ``slug`` in
+    the body; uniqueness is enforced by ``update_post`` via
+    ``_ensure_unique_slug``.
+    """
+    db = get_db()
+    existing = db.execute('SELECT * FROM blog_posts WHERE slug = ?', (slug,)).fetchone()
+    if existing is None:
+        return _error(f'No blog post with slug {slug!r}', 'NOT_FOUND', 404)
+
+    body = _json_body()
+    # Title is the one field `update_post` requires. Keep the current
+    # value when the caller omits it.
+    title = body.get('title', existing['title']) or existing['title']
+    if not title.strip():
+        return _error('Title cannot be empty', 'VALIDATION_ERROR', 400, details={'field': 'title'})
+
+    update_post(
+        db,
+        post_id=existing['id'],
+        title=title.strip(),
+        summary=body.get('summary', existing['summary']) or '',
+        content=body.get('content', existing['content']) or '',
+        content_format=body.get('content_format', existing['content_format']) or 'html',
+        cover_image=body.get('cover_image', existing['cover_image']) or '',
+        author=body.get('author', existing['author']) or '',
+        # tags=None means "leave untouched"; tags='' means "remove all".
+        # We can't distinguish "omitted" from "set to empty" in JSON, so
+        # only resync tags when the key is present.
+        tags=body.get('tags', '') if 'tags' in body else '',
+        meta_description=body.get('meta_description', existing['meta_description']) or '',
+        featured=bool(body.get('featured', bool(existing['featured']))),
+        slug=body.get('slug'),
+    )
+    updated = get_post_by_id(db, existing['id'])
+    emit(
+        Events.BLOG_UPDATED,
+        post_id=existing['id'],
+        slug=updated['slug'],
+        title=updated['title'],
+        status=updated['status'],
+        source='api.blog_update',
+    )
+    return _conditional_response({'data': _serialize_post_detail(db, updated)})
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/v1/blog/<slug>
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/blog/<slug>', methods=['DELETE'])
+@limiter.limit(rate_limit_write, methods=['DELETE'])
+@require_api_token('write')
+def blog_delete(slug):
+    """Delete a blog post and its tag associations.
+
+    Returns 204 No Content on success. 404 if the slug doesn't match.
+    """
+    db = get_db()
+    existing = db.execute(
+        'SELECT id, title, status FROM blog_posts WHERE slug = ?', (slug,)
+    ).fetchone()
+    if existing is None:
+        return _error(f'No blog post with slug {slug!r}', 'NOT_FOUND', 404)
+
+    delete_post(db, existing['id'])
+    emit(
+        Events.BLOG_UPDATED,
+        post_id=existing['id'],
+        slug=slug,
+        title=existing['title'],
+        status='deleted',
+        source='api.blog_delete',
+    )
+    return Response(status=204)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/blog/<slug>/publish
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/blog/<slug>/publish', methods=['POST'])
+@limiter.limit(rate_limit_write, methods=['POST'])
+@require_api_token('write')
+def blog_publish(slug):
+    """Publish a draft post, preserving the original ``published_at`` if
+    the post was previously published and unpublished.
+    """
+    db = get_db()
+    existing = db.execute('SELECT id FROM blog_posts WHERE slug = ?', (slug,)).fetchone()
+    if existing is None:
+        return _error(f'No blog post with slug {slug!r}', 'NOT_FOUND', 404)
+
+    publish_post(db, existing['id'])
+    updated = get_post_by_id(db, existing['id'])
+    emit(
+        Events.BLOG_PUBLISHED,
+        post_id=existing['id'],
+        slug=updated['slug'],
+        title=updated['title'],
+        status=updated['status'],
+        source='api.blog_publish',
+    )
+    return _conditional_response({'data': _serialize_post_detail(db, updated)})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/blog/<slug>/unpublish
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/blog/<slug>/unpublish', methods=['POST'])
+@limiter.limit(rate_limit_write, methods=['POST'])
+@require_api_token('write')
+def blog_unpublish(slug):
+    """Revert a published post back to draft status."""
+    db = get_db()
+    existing = db.execute('SELECT id FROM blog_posts WHERE slug = ?', (slug,)).fetchone()
+    if existing is None:
+        return _error(f'No blog post with slug {slug!r}', 'NOT_FOUND', 404)
+
+    unpublish_post(db, existing['id'])
+    updated = get_post_by_id(db, existing['id'])
+    emit(
+        Events.BLOG_UPDATED,
+        post_id=existing['id'],
+        slug=updated['slug'],
+        title=updated['title'],
+        status=updated['status'],
+        source='api.blog_unpublish',
+    )
+    return _conditional_response({'data': _serialize_post_detail(db, updated)})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/contact  (public, honeypot + rate limit)
+# ---------------------------------------------------------------------------
+
+
+def _client_ip_from_request():
+    """Return the real client IP, honouring X-Forwarded-For from a proxy.
+
+    Mirrors the logic in :mod:`app.routes.contact` so the API and the
+    HTML form agree on "whose" submission is whose for rate limiting.
+    """
+    forwarded = request.headers.get('X-Forwarded-For', request.remote_addr)
+    if forwarded and ',' in forwarded:
+        forwarded = forwarded.split(',')[0].strip()
+    return forwarded or 'unknown'
+
+
+@api_bp.route('/contact', methods=['POST'])
+@limiter.limit('10 per minute', methods=['POST'])
+def contact_submit():
+    """Submit a contact form entry.
+
+    Public — no token required. Mirrors the HTML form's validation:
+
+    * ``contact_form_enabled`` setting must be ``true`` (404 otherwise).
+    * ``website`` honeypot field flags submissions as spam but still
+      saves them (so an admin can see attack patterns).
+    * Per-IP limit: 5 non-spam submissions per hour (enforced alongside
+      Flask-Limiter's 10/min burst cap).
+    * Required fields: name, email, message. Email must contain '@' and
+      a period.
+
+    Returns 201 on success with ``{ok: true, id: N}``. Returns 400 on
+    validation failure, 404 if the form is disabled, 429 on rate limit.
+    SMTP relay failure is NOT surfaced — the submission is still saved
+    and a warning is logged server-side (same contract as the HTML form).
+    """
+    db = get_db()
+    if get_setting(db, 'contact_form_enabled', 'true') != 'true':
+        return _error('Contact form is disabled on this site', 'NOT_FOUND', 404)
+
+    body = _json_body()
+    name = (body.get('name') or '').strip()
+    email = (body.get('email') or '').strip()
+    message = (body.get('message') or '').strip()
+    honeypot = (body.get('website') or '').strip()
+
+    missing = [f for f, v in (('name', name), ('email', email), ('message', message)) if not v]
+    if missing:
+        return _error(
+            'Missing required field(s)',
+            'VALIDATION_ERROR',
+            400,
+            details={'fields': missing},
+        )
+    if '@' not in email or '.' not in email:
+        return _error(
+            'Email address is not valid',
+            'VALIDATION_ERROR',
+            400,
+            details={'field': 'email'},
+        )
+
+    is_spam = bool(honeypot)
+    client_ip = _client_ip_from_request()
+    user_agent = (request.headers.get('User-Agent') or '')[:200]
+
+    # Real humans (honeypot empty) get the per-IP hourly cap. Bots
+    # filling the honeypot skip the check so they can't work it out
+    # by probing for 429s.
+    if not is_spam:
+        recent = count_recent_submissions(db, client_ip)
+        if recent >= 5:
+            return _error(
+                'Too many submissions from this IP in the past hour',
+                'RATE_LIMITED',
+                429,
+                details={'retry_after_minutes': 60},
+            )
+
+    submission_id = save_contact_submission(
+        db,
+        name=name,
+        email=email,
+        message=message,
+        ip_address=client_ip,
+        user_agent=user_agent,
+        is_spam=is_spam,
+    )
+
+    # Fire the event regardless of spam flag so admin dashboards can
+    # choose to surface attack patterns. Subscribers filter as needed.
+    emit(
+        Events.CONTACT_SUBMITTED,
+        submission_id=submission_id,
+        is_spam=is_spam,
+        source='api.contact_submit',
+    )
+
+    # SMTP relay (best-effort, matches HTML form's fire-and-forget).
+    # Import locally so module load doesn't bring up smtplib.
+    if not is_spam:
+        try:
+            from app.services.mail import send_contact_email
+
+            send_contact_email(name, email, message)
+        except Exception:  # noqa: BLE001 — match HTML-form contract
+            current_app.logger.warning(
+                'API /contact: SMTP send failed for submission %s', submission_id
+            )
+
+    return _conditional_response(
+        {'data': {'id': submission_id, 'ok': True, 'is_spam': is_spam}},
+        status=201,
+    )
 
 
 # ---------------------------------------------------------------------------

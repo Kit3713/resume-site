@@ -414,15 +414,29 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 16.3 — Authenticated Write Endpoints (Token Required — `write` scope)
 
-- [ ] `POST /api/v1/blog` — create blog post (draft by default)
-- [ ] `PUT /api/v1/blog/:slug` — update blog post
-- [ ] `DELETE /api/v1/blog/:slug` — delete blog post
-- [ ] `POST /api/v1/blog/:slug/publish` — publish a draft
-- [ ] `POST /api/v1/blog/:slug/unpublish` — unpublish
-- [ ] `POST /api/v1/portfolio` — upload photo (multipart/form-data)
-- [ ] `PUT /api/v1/portfolio/:id` — update photo metadata
-- [ ] `DELETE /api/v1/portfolio/:id` — delete photo (with file cleanup)
-- [ ] `POST /api/v1/contact` — submit a contact form entry (rate limited, honeypot enforced)
+**Infrastructure shipped with this phase (closes the 16.1 deferrals):**
+
+- [x] **JSON Content-Type enforcement on POST/PUT/PATCH.** `before_request` middleware on the API blueprint rejects non-JSON bodies with 415 + `UNSUPPORTED_MEDIA_TYPE` code (details dict echoes the received Content-Type). Multipart routes are allow-listed via `_MULTIPART_ENDPOINTS` (reserved for 16.3b photo upload).
+- [x] **Rate limiting via `rate_limit_write` callable** (60/30/10-per-minute read/write/admin, configurable through the Security-category settings shipped in Phase 13.4). Every blog write route wears `@limiter.limit(rate_limit_write, methods=[...])`.
+
+**Endpoints shipped:**
+
+- [x] `POST /api/v1/blog` — create blog post. Body `{title, summary?, content?, content_format?, cover_image?, author?, tags?, meta_description?, featured?, publish?}`. Draft by default; `"publish": true` publishes immediately (mirrors the admin "Publish" action). Returns 201 with full detail including server-generated slug + tags. Emits `BLOG_PUBLISHED` (when publish=true) or `BLOG_UPDATED` (draft save).
+- [x] `PUT /api/v1/blog/<slug>` — update a post. Every field optional; omitted fields keep current value. Supports slug renames via `{"slug": "new-slug"}`. Rejects empty/whitespace-only title. Emits `BLOG_UPDATED`.
+- [x] `DELETE /api/v1/blog/<slug>` — deletes the post + tag associations (via `delete_post` which cascades `blog_post_tags`). Returns 204 No Content on success. Emits `BLOG_UPDATED` with `status='deleted'` so subscribers can distinguish.
+- [x] `POST /api/v1/blog/<slug>/publish` — publishes a draft (preserves original `published_at` if previously published). Emits `BLOG_PUBLISHED`.
+- [x] `POST /api/v1/blog/<slug>/unpublish` — reverts to draft. Emits `BLOG_UPDATED`.
+- [x] `POST /api/v1/contact` — public (no token required) submission endpoint. Body `{name, email, message, website?}` where `website` is the honeypot. Honors `contact_form_enabled` toggle (404 if off), validates required fields + email format, per-IP hourly cap of 5 non-spam submissions (spam bypasses the cap so bots can't probe 429s), and fire-and-forget SMTP relay (mirrors the HTML form). Emits `CONTACT_SUBMITTED` with `{submission_id, is_spam, source}`. Flask-Limiter applies a 10/min burst cap on top.
+- [ ] `POST /api/v1/portfolio` — deferred to Phase 16.3b (multipart + Pillow pipeline).
+- [ ] `PUT /api/v1/portfolio/<id>` — deferred to Phase 16.3b.
+- [ ] `DELETE /api/v1/portfolio/<id>` — deferred to Phase 16.3b (needs file-cleanup hook).
+
+**Auth + scope semantics:** every blog write route sits behind `@require_api_token('write')`. A `read`-only token returns 403 `insufficient_scope`; a revoked token returns 401 `revoked`; a missing / malformed header returns 401 with `WWW-Authenticate: Bearer`. Verified in tests.
+
+**Events wired in this phase (Phase 19.1 progress):**
+- `blog.published`, `blog.updated`, `contact.submitted` now fire from API routes. Equivalent admin-UI emissions are still TODO — every API-side subscriber will already see the payload when the admin routes catch up.
+
+**Tests:** 28 new tests in `tests/test_api.py` (total 74). Coverage includes: JSON Content-Type 415 on form-encoded / no-content-type / GETs-are-fine; 401/403/401 for missing/wrong-scope/revoked tokens on the blog create path; create flow (draft default, publish flag, slug generation, tags sync, title validation, whitespace-only title); update flow (partial updates preserve fields, 404 on unknown slug, empty-title rejection); delete flow (204 + row actually gone, 404 on missing); publish/unpublish status transitions + event emission; contact flow (valid submission, honeypot flagging, required-field validation, malformed email, disabled-form 404, per-IP 429 after 5 prior submissions, event emission). A `no_rate_limits` fixture isolates write tests from Flask-Limiter's shared in-memory bucket.
 
 ### 16.4 — Admin Endpoints (Token Required — `admin` scope)
 

@@ -700,6 +700,480 @@ def test_blog_tags_404_when_disabled(client, app):
     assert response.status_code == 404
 
 
+# ===========================================================================
+# WRITE ENDPOINTS (Phase 16.3)
+# ===========================================================================
+
+
+@pytest.fixture
+def no_rate_limits(app):
+    """Disable Flask-Limiter for tests that exercise write endpoints.
+
+    The limiter's in-memory storage persists across the test process
+    (storage_uri='memory://'), so rapid-fire POSTs in test bodies can
+    hit the configured cap. This fixture turns the limiter off; tests
+    that specifically want to exercise rate limiting skip it.
+    """
+    app.config['RATELIMIT_ENABLED'] = False
+    yield
+    app.config['RATELIMIT_ENABLED'] = True
+
+
+@pytest.fixture
+def api_write_token(app):
+    """Create a ``write``-scoped API token and return the raw Bearer value."""
+    from app.db import get_db
+    from app.services.api_tokens import generate_token
+
+    with app.app_context():
+        generated = generate_token(get_db(), name='test-bot', scope='read,write')
+    return generated.raw
+
+
+def _auth(token):
+    return {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+
+
+# ---------------------------------------------------------------------------
+# JSON Content-Type enforcement
+# ---------------------------------------------------------------------------
+
+
+def test_post_without_json_content_type_returns_415(client, no_rate_limits, api_write_token):
+    response = client.post(
+        '/api/v1/blog',
+        data='title=Hello',
+        headers={
+            'Authorization': f'Bearer {api_write_token}',
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+    )
+    assert response.status_code == 415
+    body = _json(response)
+    assert body['code'] == 'UNSUPPORTED_MEDIA_TYPE'
+    assert body['details']['received'] == 'application/x-www-form-urlencoded'
+
+
+def test_post_without_any_content_type_returns_415(client, no_rate_limits, api_write_token):
+    response = client.post(
+        '/api/v1/blog',
+        headers={'Authorization': f'Bearer {api_write_token}'},
+    )
+    assert response.status_code == 415
+
+
+def test_get_without_content_type_is_fine(client):
+    """The middleware only gates POST/PUT/PATCH — GETs with no body must pass."""
+    assert client.get('/api/v1/site').status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Auth gating
+# ---------------------------------------------------------------------------
+
+
+def test_blog_create_without_token_returns_401(client, no_rate_limits):
+    response = client.post(
+        '/api/v1/blog',
+        json={'title': 'Hello'},
+    )
+    assert response.status_code == 401
+    assert response.headers.get('WWW-Authenticate') == 'Bearer'
+
+
+def test_blog_create_with_read_only_token_returns_403(client, no_rate_limits, app):
+    from app.db import get_db
+    from app.services.api_tokens import generate_token
+
+    with app.app_context():
+        raw = generate_token(get_db(), name='read-only', scope='read').raw
+
+    response = client.post(
+        '/api/v1/blog',
+        json={'title': 'Hello'},
+        headers={'Authorization': f'Bearer {raw}'},
+    )
+    assert response.status_code == 403
+    assert _json(response)['error'] == 'insufficient_scope'
+
+
+def test_blog_create_with_revoked_token_returns_401(client, no_rate_limits, app):
+    from app.db import get_db
+    from app.services.api_tokens import generate_token, revoke_token
+
+    with app.app_context():
+        token = generate_token(get_db(), name='gone', scope='write')
+        revoke_token(get_db(), token.id)
+
+    response = client.post(
+        '/api/v1/blog',
+        json={'title': 'Hello'},
+        headers={'Authorization': f'Bearer {token.raw}'},
+    )
+    assert response.status_code == 401
+    assert _json(response)['error'] == 'revoked'
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/blog
+# ---------------------------------------------------------------------------
+
+
+def test_blog_create_draft_by_default(client, no_rate_limits, api_write_token):
+    response = client.post(
+        '/api/v1/blog',
+        json={
+            'title': 'Hello World',
+            'content': '<p>First post</p>',
+            'author': 'Admin',
+            'tags': 'hello, world',
+        },
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 201
+    body = _json(response)
+    assert body['data']['title'] == 'Hello World'
+    assert body['data']['slug'] == 'hello-world'
+    assert body['data']['status'] != 'published'  # default draft
+    tag_slugs = sorted(t['slug'] for t in body['data']['tags'])
+    assert tag_slugs == ['hello', 'world']
+
+
+def test_blog_create_with_publish_flag_publishes(client, no_rate_limits, api_write_token):
+    response = client.post(
+        '/api/v1/blog',
+        json={'title': 'Live Post', 'content': '<p>Now live</p>', 'publish': True},
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 201
+    body = _json(response)
+    assert body['data']['status'] == 'published'
+    assert body['data']['published_at']
+
+
+def test_blog_create_requires_title(client, no_rate_limits, api_write_token):
+    response = client.post(
+        '/api/v1/blog',
+        json={'content': 'no title'},
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 400
+    body = _json(response)
+    assert body['code'] == 'VALIDATION_ERROR'
+    assert body['details']['field'] == 'title'
+
+
+def test_blog_create_rejects_whitespace_only_title(client, no_rate_limits, api_write_token):
+    response = client.post(
+        '/api/v1/blog',
+        json={'title': '   '},
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 400
+
+
+def test_blog_create_emits_event(client, no_rate_limits, api_write_token):
+    from app.events import Events, clear, register
+
+    captured = []
+    clear()
+    register(Events.BLOG_PUBLISHED, lambda **p: captured.append(('published', p)))
+    register(Events.BLOG_UPDATED, lambda **p: captured.append(('updated', p)))
+    try:
+        client.post(
+            '/api/v1/blog',
+            json={'title': 'With Event', 'publish': True},
+            headers=_auth(api_write_token),
+        )
+    finally:
+        clear()
+    assert len(captured) == 1
+    kind, payload = captured[0]
+    assert kind == 'published'
+    assert payload['slug'] == 'with-event'
+    assert payload['source'] == 'api.blog_create'
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/v1/blog/<slug>
+# ---------------------------------------------------------------------------
+
+
+def test_blog_update_changes_title_and_content(client, no_rate_limits, api_write_token, app):
+    _enable_blog(app)
+    _seed_blog_post(app, 'original', 'Original')
+
+    response = client.put(
+        '/api/v1/blog/original',
+        json={'title': 'Renamed', 'content': '<p>New body</p>'},
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 200
+    body = _json(response)
+    assert body['data']['title'] == 'Renamed'
+    assert body['data']['content'] == '<p>New body</p>'
+
+
+def test_blog_update_404_for_unknown_slug(client, no_rate_limits, api_write_token):
+    response = client.put(
+        '/api/v1/blog/ghost',
+        json={'title': 'Ghost'},
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 404
+
+
+def test_blog_update_preserves_untouched_fields(client, no_rate_limits, api_write_token, app):
+    _enable_blog(app)
+    _seed_blog_post(app, 'original', 'Original')
+
+    # Update only the summary; title + content must be preserved.
+    response = client.put(
+        '/api/v1/blog/original',
+        json={'summary': 'Brand new summary'},
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 200
+    body = _json(response)
+    assert body['data']['title'] == 'Original'
+    assert body['data']['summary'] == 'Brand new summary'
+
+
+def test_blog_update_rejects_empty_title(client, no_rate_limits, api_write_token, app):
+    _enable_blog(app)
+    _seed_blog_post(app, 'original', 'Original')
+
+    response = client.put(
+        '/api/v1/blog/original',
+        json={'title': '   '},
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/v1/blog/<slug>
+# ---------------------------------------------------------------------------
+
+
+def test_blog_delete_returns_204(client, no_rate_limits, api_write_token, app):
+    _enable_blog(app)
+    _seed_blog_post(app, 'doomed', 'Doomed')
+
+    response = client.delete(
+        '/api/v1/blog/doomed',
+        headers={'Authorization': f'Bearer {api_write_token}'},
+    )
+    assert response.status_code == 204
+    assert response.data == b''
+
+    # Row actually gone.
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    row = conn.execute('SELECT id FROM blog_posts WHERE slug = ?', ('doomed',)).fetchone()
+    conn.close()
+    assert row is None
+
+
+def test_blog_delete_404_for_missing(client, no_rate_limits, api_write_token):
+    response = client.delete(
+        '/api/v1/blog/ghost',
+        headers={'Authorization': f'Bearer {api_write_token}'},
+    )
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# publish / unpublish
+# ---------------------------------------------------------------------------
+
+
+def test_blog_publish_changes_status(client, no_rate_limits, api_write_token, app):
+    _enable_blog(app)
+    _seed_blog_post(app, 'draft', 'Draft Post', status='draft', published_at=None)
+
+    response = client.post(
+        '/api/v1/blog/draft/publish',
+        json={},
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 200
+    body = _json(response)
+    assert body['data']['status'] == 'published'
+    assert body['data']['published_at']
+
+
+def test_blog_publish_emits_event(client, no_rate_limits, api_write_token, app):
+    from app.events import Events, clear, register
+
+    _enable_blog(app)
+    _seed_blog_post(app, 'd', 'D', status='draft', published_at=None)
+    captured = []
+    clear()
+    register(Events.BLOG_PUBLISHED, lambda **p: captured.append(p))
+    try:
+        client.post(
+            '/api/v1/blog/d/publish',
+            json={},
+            headers=_auth(api_write_token),
+        )
+    finally:
+        clear()
+    assert len(captured) == 1
+    assert captured[0]['slug'] == 'd'
+    assert captured[0]['source'] == 'api.blog_publish'
+
+
+def test_blog_unpublish_reverts_to_draft(client, no_rate_limits, api_write_token, app):
+    _enable_blog(app)
+    _seed_blog_post(app, 'live', 'Live')
+
+    response = client.post(
+        '/api/v1/blog/live/unpublish',
+        json={},
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 200
+    assert _json(response)['data']['status'] == 'draft'
+
+
+def test_blog_publish_404_for_unknown(client, no_rate_limits, api_write_token):
+    response = client.post(
+        '/api/v1/blog/ghost/publish',
+        json={},
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/contact (public — no token required)
+# ---------------------------------------------------------------------------
+
+
+def test_contact_accepts_valid_submission(client, no_rate_limits, app):
+    response = client.post(
+        '/api/v1/contact',
+        json={
+            'name': 'Ada Lovelace',
+            'email': 'ada@example.com',
+            'message': 'Hello world',
+        },
+    )
+    assert response.status_code == 201
+    body = _json(response)
+    assert body['data']['ok'] is True
+    assert body['data']['is_spam'] is False
+
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    conn.row_factory = sqlite3.Row
+    row = conn.execute('SELECT name, email, is_spam FROM contact_submissions').fetchone()
+    conn.close()
+    assert row['name'] == 'Ada Lovelace'
+    assert row['email'] == 'ada@example.com'
+    assert row['is_spam'] == 0
+
+
+def test_contact_honeypot_flags_spam(client, no_rate_limits, app):
+    response = client.post(
+        '/api/v1/contact',
+        json={
+            'name': 'Bot',
+            'email': 'bot@spam.com',
+            'message': 'buy viagra',
+            'website': 'http://spam.example',
+        },
+    )
+    assert response.status_code == 201
+    assert _json(response)['data']['is_spam'] is True
+
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    row = conn.execute('SELECT is_spam FROM contact_submissions').fetchone()
+    conn.close()
+    assert row[0] == 1
+
+
+def test_contact_requires_name_email_message(client, no_rate_limits):
+    response = client.post(
+        '/api/v1/contact',
+        json={'name': '', 'email': '', 'message': ''},
+    )
+    assert response.status_code == 400
+    body = _json(response)
+    assert body['code'] == 'VALIDATION_ERROR'
+    assert set(body['details']['fields']) == {'name', 'email', 'message'}
+
+
+def test_contact_rejects_malformed_email(client, no_rate_limits):
+    response = client.post(
+        '/api/v1/contact',
+        json={
+            'name': 'Test',
+            'email': 'not-an-email',
+            'message': 'Hello',
+        },
+    )
+    assert response.status_code == 400
+    assert _json(response)['details']['field'] == 'email'
+
+
+def test_contact_404_when_disabled(client, no_rate_limits, app):
+    _seed(
+        app,
+        "INSERT OR REPLACE INTO settings(key, value) VALUES ('contact_form_enabled', 'false')",
+    )
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
+    response = client.post(
+        '/api/v1/contact',
+        json={'name': 'A', 'email': 'a@b.co', 'message': 'x'},
+    )
+    assert response.status_code == 404
+
+
+def test_contact_emits_event(client, no_rate_limits, app):
+    from app.events import Events, clear, register
+
+    captured = []
+    clear()
+    register(Events.CONTACT_SUBMITTED, lambda **p: captured.append(p))
+    try:
+        client.post(
+            '/api/v1/contact',
+            json={'name': 'E', 'email': 'e@x.co', 'message': 'hi'},
+        )
+    finally:
+        clear()
+    assert len(captured) == 1
+    assert captured[0]['is_spam'] is False
+    assert captured[0]['source'] == 'api.contact_submit'
+    _ = app
+
+
+def test_contact_per_ip_cap_returns_429(client, no_rate_limits, app):
+    """After 5 non-spam submissions from an IP in the past hour, return 429."""
+    # Seed 5 prior submissions from 127.0.0.1 (the test client IP).
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    for i in range(5):
+        conn.execute(
+            'INSERT INTO contact_submissions (name, email, message, ip_address, '
+            'user_agent, is_spam) VALUES (?, ?, ?, ?, ?, ?)',
+            (f'User{i}', f'u{i}@x.co', 'msg', '127.0.0.1', 'pytest', 0),
+        )
+    conn.commit()
+    conn.close()
+
+    response = client.post(
+        '/api/v1/contact',
+        json={'name': 'Sixth', 'email': 's@x.co', 'message': 'over the cap'},
+    )
+    assert response.status_code == 429
+    body = _json(response)
+    assert body['code'] == 'RATE_LIMITED'
+    assert body['details']['retry_after_minutes'] == 60
+
+
 # ---------------------------------------------------------------------------
 # csrf_client fixture (mirrors tests/test_security.py for this module)
 # ---------------------------------------------------------------------------
