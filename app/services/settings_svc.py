@@ -296,6 +296,37 @@ SETTINGS_REGISTRY = {
         'label': 'Retention Days',
         'category': 'Analytics',
     },
+    # --- Security (Phase 13.6) ---
+    'login_lockout_threshold': {
+        'type': 'int',
+        'default': '10',
+        'label': 'Login Lockout Threshold',
+        'category': 'Security',
+        'description': (
+            'Number of failed admin logins from one IP within the window that '
+            'triggers a lockout. 0 disables the application-level lockout '
+            '(Flask-Limiter still enforces 5/minute regardless).'
+        ),
+    },
+    'login_lockout_window_minutes': {
+        'type': 'int',
+        'default': '15',
+        'label': 'Login Lockout Window (minutes)',
+        'category': 'Security',
+        'description': (
+            'Sliding window over which failed attempts are counted toward the threshold.'
+        ),
+    },
+    'login_lockout_duration_minutes': {
+        'type': 'int',
+        'default': '15',
+        'label': 'Login Lockout Duration (minutes)',
+        'category': 'Security',
+        'description': (
+            'How long an IP remains locked out once the threshold is reached. '
+            'Timer resets on any further failed attempt during the lockout.'
+        ),
+    },
     # --- Observability (Phase 18.2) ---
     'metrics_enabled': {
         'type': 'bool',
@@ -332,6 +363,7 @@ SETTINGS_CATEGORIES = [
     'Contact & Social',
     'Blog',
     'Internationalization',
+    'Security',
     'Analytics',
     'Observability',
 ]
