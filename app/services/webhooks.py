@@ -178,7 +178,15 @@ def _matches(webhook, event_name):
 # ---------------------------------------------------------------------------
 
 
-def create_webhook(db, *, name, url, secret, events=('*',), enabled=True):
+def create_webhook(
+    db: sqlite3.Connection,
+    *,
+    name: str,
+    url: str,
+    secret: str,
+    events: list | tuple | str = ('*',),
+    enabled: bool = True,
+) -> int | None:
     """Insert a new webhook row. Returns the new id.
 
     ``events`` may be a list, tuple, or comma-separated / JSON string —
@@ -194,13 +202,13 @@ def create_webhook(db, *, name, url, secret, events=('*',), enabled=True):
     return cursor.lastrowid
 
 
-def get_webhook(db, webhook_id):
+def get_webhook(db: sqlite3.Connection, webhook_id: int) -> Webhook | None:
     """Return one :class:`Webhook` or ``None``."""
     row = db.execute('SELECT * FROM webhooks WHERE id = ?', (webhook_id,)).fetchone()
     return _row_to_webhook(row)
 
 
-def list_webhooks(db, *, include_disabled=True):
+def list_webhooks(db: sqlite3.Connection, *, include_disabled: bool = True) -> list[Webhook]:
     """Return every webhook, newest first."""
     if include_disabled:
         rows = db.execute('SELECT * FROM webhooks ORDER BY created_at DESC, id DESC').fetchall()
@@ -211,7 +219,7 @@ def list_webhooks(db, *, include_disabled=True):
     return [_row_to_webhook(r) for r in rows]
 
 
-def list_enabled_subscribers(db, event_name):
+def list_enabled_subscribers(db: sqlite3.Connection, event_name: str) -> list[Webhook]:
     """Return enabled webhooks subscribed to ``event_name``.
 
     Filters in Python rather than via SQL JSON functions so we don't
@@ -222,7 +230,7 @@ def list_enabled_subscribers(db, event_name):
     return [w for w in (_row_to_webhook(r) for r in rows) if _matches(w, event_name)]
 
 
-def update_webhook(db, webhook_id, **fields):
+def update_webhook(db: sqlite3.Connection, webhook_id: int, **fields: object) -> None:
     """Update an arbitrary subset of columns. Unknown keys are ignored.
 
     The ``events`` field, if passed, is normalised before storage.
@@ -246,7 +254,7 @@ def update_webhook(db, webhook_id, **fields):
     db.commit()
 
 
-def delete_webhook(db, webhook_id):
+def delete_webhook(db: sqlite3.Connection, webhook_id: int) -> None:
     """Hard-delete the webhook (ON DELETE CASCADE drops its delivery log)."""
     db.execute('DELETE FROM webhooks WHERE id = ?', (webhook_id,))
     db.commit()
@@ -257,7 +265,7 @@ def delete_webhook(db, webhook_id):
 # ---------------------------------------------------------------------------
 
 
-def record_delivery(db, result):
+def record_delivery(db: sqlite3.Connection, result: DeliveryResult) -> None:
     """Persist a :class:`DeliveryResult` to ``webhook_deliveries`` and
     bump ``webhooks.last_triggered_at``.
 
@@ -284,7 +292,9 @@ def record_delivery(db, result):
     db.commit()
 
 
-def list_recent_deliveries(db, *, webhook_id=None, limit=50):
+def list_recent_deliveries(
+    db: sqlite3.Connection, *, webhook_id: int | None = None, limit: int = 50
+) -> list[dict]:
     """Return the newest ``limit`` delivery rows, optionally filtered."""
     limit = max(1, min(int(limit), 500))
     if webhook_id is None:
@@ -301,7 +311,7 @@ def list_recent_deliveries(db, *, webhook_id=None, limit=50):
     return [dict(r) for r in rows]
 
 
-def purge_old_deliveries(db, *, keep_days=30):
+def purge_old_deliveries(db: sqlite3.Connection, *, keep_days: int = 30) -> int:
     """Delete delivery rows older than ``keep_days``. Returns the deleted count."""
     keep_days = max(1, int(keep_days))
     cursor = db.execute(
@@ -318,13 +328,15 @@ def purge_old_deliveries(db, *, keep_days=30):
 # ---------------------------------------------------------------------------
 
 
-def reset_failures(db, webhook_id):
+def reset_failures(db: sqlite3.Connection, webhook_id: int) -> None:
     """Zero the consecutive-failure counter after a successful delivery."""
     db.execute('UPDATE webhooks SET failure_count = 0 WHERE id = ?', (webhook_id,))
     db.commit()
 
 
-def increment_failures(db, webhook_id, *, threshold=10):
+def increment_failures(
+    db: sqlite3.Connection, webhook_id: int, *, threshold: int = 10
+) -> bool:
     """Bump ``failure_count`` and auto-disable when it crosses ``threshold``.
 
     Returns ``True`` when the row was just disabled by this call (so
@@ -360,7 +372,7 @@ def increment_failures(db, webhook_id, *, threshold=10):
 # ---------------------------------------------------------------------------
 
 
-def sign_payload(secret, body):
+def sign_payload(secret: str | bytes, body: str | bytes) -> str:
     """Return the hex HMAC-SHA256 of ``body`` keyed by ``secret``.
 
     Both arguments accept ``bytes`` or ``str`` (strings are encoded as
@@ -389,7 +401,9 @@ def _build_envelope(event_name, payload):
     return json.dumps(envelope, sort_keys=True, default=str).encode('utf-8')
 
 
-def deliver_now(webhook, event_name, payload, *, timeout=5):
+def deliver_now(
+    webhook: Webhook, event_name: str, payload: dict, *, timeout: int = 5
+) -> DeliveryResult:
     """Synchronously POST ``payload`` to ``webhook.url`` and return the result.
 
     Never raises — every failure mode is captured in the returned
@@ -497,8 +511,14 @@ def _deliver_and_record(db_path, webhook_id, event_name, payload, *, timeout, th
 
 
 def dispatch_event_async(
-    db_path, event_name, payload, *, timeout=5, threshold=10, _join_for_tests=False
-):
+    db_path: str,
+    event_name: str,
+    payload: dict,
+    *,
+    timeout: int = 5,
+    threshold: int = 10,
+    _join_for_tests: bool = False,
+) -> list[threading.Thread]:
     """Find matching enabled webhooks and spawn one daemon thread per delivery.
 
     ``_join_for_tests`` is an undocumented kwarg used by the test suite
@@ -578,7 +598,7 @@ def _settings_snapshot(db_path):
     return enabled, timeout, threshold
 
 
-def register_bus_handlers(db_path):
+def register_bus_handlers(db_path: str) -> None:
     """Subscribe one handler per :class:`Events` constant.
 
     Called once at app startup from ``app.__init__.create_app``. The

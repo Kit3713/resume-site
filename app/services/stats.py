@@ -5,15 +5,25 @@ Business logic for the stats table (animated counter cards on the landing page).
 Admin routes call these functions instead of writing SQL inline.
 """
 
+from __future__ import annotations
+
+import sqlite3
+
 from app.exceptions import ValidationError
 
 
-def get_all_stats(db):
+def get_all_stats(db: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return all stat counters ordered by sort_order."""
     return db.execute('SELECT * FROM stats ORDER BY sort_order').fetchall()
 
 
-def add_stat(db, label, value, suffix='', sort_order=0):
+def add_stat(
+    db: sqlite3.Connection,
+    label: str,
+    value: int,
+    suffix: str = '',
+    sort_order: int = 0,
+) -> None:
     """Insert a new stat counter.
 
     Args:
@@ -32,7 +42,15 @@ def add_stat(db, label, value, suffix='', sort_order=0):
     db.commit()
 
 
-def update_stat(db, stat_id, label, value, suffix='', sort_order=0, visible=True):
+def update_stat(
+    db: sqlite3.Connection,
+    stat_id: int,
+    label: str,
+    value: int,
+    suffix: str = '',
+    sort_order: int = 0,
+    visible: bool = True,
+) -> None:
     """Update an existing stat counter.
 
     Args:
@@ -51,7 +69,7 @@ def update_stat(db, stat_id, label, value, suffix='', sort_order=0, visible=True
     db.commit()
 
 
-def delete_stat(db, stat_id):
+def delete_stat(db: sqlite3.Connection, stat_id: int) -> None:
     """Delete a stat counter by ID."""
     db.execute('DELETE FROM stats WHERE id = ?', (stat_id,))
     db.commit()

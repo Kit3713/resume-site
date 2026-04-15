@@ -158,14 +158,14 @@ def _safe_extract(tar, target_dir):
 
 
 def create_backup(
-    db_path,
-    photos_dir,
-    config_path,
-    output_dir,
+    db_path: str,
+    photos_dir: str | None,
+    config_path: str | None,
+    output_dir: str,
     *,
-    db_only=False,
-    now=None,
-):
+    db_only: bool = False,
+    now: datetime | None = None,
+) -> str:
     """Create a timestamped backup archive.
 
     The archive is written atomically: we build at a ``.tar.gz.tmp``
@@ -296,7 +296,7 @@ def _record_backup_success(db_path, now=None):
         conn.close()
 
 
-def list_backups(output_dir):
+def list_backups(output_dir: str) -> list[BackupEntry]:
     """Return archives in ``output_dir`` sorted newest-first.
 
     Ignores in-flight ``.tar.gz.tmp`` files and ``pre-restore-*``
@@ -326,7 +326,7 @@ def list_backups(output_dir):
     return entries
 
 
-def prune_backups(output_dir, keep):
+def prune_backups(output_dir: str, keep: int) -> list[str]:
     """Delete all but the ``keep`` newest archives in ``output_dir``.
 
     Args:
@@ -358,14 +358,14 @@ def prune_backups(output_dir, keep):
 
 
 def restore_backup(
-    archive_path,
-    db_path,
-    photos_dir,
-    output_dir,
+    archive_path: str,
+    db_path: str,
+    photos_dir: str | None,
+    output_dir: str,
     *,
-    force=False,
-    now=None,
-):
+    force: bool = False,
+    now: datetime | None = None,
+) -> str:
     """Restore the database and photos from ``archive_path``.
 
     Before extracting, the current DB and photos directory are copied

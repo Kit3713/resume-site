@@ -109,14 +109,17 @@ class _Metric:
 
     TYPE = 'untyped'
 
-    def __init__(self, name, help_text, label_names=()):
+    def __init__(
+        self, name: str, help_text: str, label_names: Iterable[str] = ()
+    ) -> None:
+        """Store the metric identity; subclasses own the value semantics."""
         self.name = name
         self.help = help_text
         self.label_names = tuple(label_names)
         # {label_values_tuple: value}
         self._values: dict[tuple, float] = {}
 
-    def _key(self, label_values):
+    def _key(self, label_values: Iterable) -> tuple:
         if len(label_values) != len(self.label_names):
             raise ValueError(
                 f'{self.name}: expected {len(self.label_names)} label values, '
@@ -141,7 +144,12 @@ class Counter(_Metric):
 
     TYPE = 'counter'
 
-    def inc(self, label_values=(), amount=1):
+    def inc(self, label_values: Iterable = (), amount: float = 1) -> None:
+        """Add ``amount`` to the series keyed by ``label_values``.
+
+        Raises ``ValueError`` if ``amount`` is negative — counters are
+        monotonic and a subtraction would lie to ``rate()``.
+        """
         if amount < 0:
             raise ValueError(f'{self.name}.inc() amount must be non-negative')
         key = self._key(label_values)
@@ -153,14 +161,17 @@ class Gauge(_Metric):
 
     TYPE = 'gauge'
 
-    def set(self, value, label_values=()):
+    def set(self, value: float, label_values: Iterable = ()) -> None:
+        """Overwrite the gauge series for ``label_values`` with ``value``."""
         self._values[self._key(label_values)] = float(value)
 
-    def inc(self, label_values=(), amount=1):
+    def inc(self, label_values: Iterable = (), amount: float = 1) -> None:
+        """Add ``amount`` to the gauge series for ``label_values``."""
         key = self._key(label_values)
         self._values[key] = self._values.get(key, 0) + amount
 
-    def dec(self, label_values=(), amount=1):
+    def dec(self, label_values: Iterable = (), amount: float = 1) -> None:
+        """Subtract ``amount`` from the gauge series for ``label_values``."""
         self.inc(label_values, -amount)
 
 
@@ -175,7 +186,14 @@ class Histogram(_Metric):
 
     TYPE = 'histogram'
 
-    def __init__(self, name, help_text, label_names=(), buckets=None):
+    def __init__(
+        self,
+        name: str,
+        help_text: str,
+        label_names: Iterable[str] = (),
+        buckets: Iterable[float] | None = None,
+    ) -> None:
+        """Build the histogram with its immutable sorted bucket ladder."""
         super().__init__(name, help_text, label_names)
         self.buckets = tuple(sorted(buckets or DEFAULT_DURATION_BUCKETS))
         # For histograms, _values holds buckets / sum / count keyed by
@@ -183,7 +201,8 @@ class Histogram(_Metric):
         # (float) or the string 'sum' / 'count'.
         self._values = {}
 
-    def observe(self, value, label_values=()):
+    def observe(self, value: float, label_values: Iterable = ()) -> None:
+        """Record ``value`` in the matching series — bumps all buckets >= value, plus ``_sum`` / ``_count``."""
         key = self._key(label_values)
         for ub in self.buckets:
             if value <= ub:
@@ -193,6 +212,7 @@ class Histogram(_Metric):
         self._values[(key, 'count')] = self._values.get((key, 'count'), 0) + 1
 
     def samples(self):
+        """Yield exposition triples: one bucket ladder + ``_sum`` + ``_count`` per series."""
         # Group samples per label_values so each histogram series gets
         # its bucket ladder + sum + count emitted together.
         seen_labels = {}
@@ -224,17 +244,31 @@ class MetricsRegistry:
     :meth:`render` to produce the exposition text.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Create an empty registry with its own lock."""
         self._metrics: dict[str, _Metric] = {}
         self._lock = threading.Lock()
 
-    def counter(self, name, help_text, label_names=()):
+    def counter(
+        self, name: str, help_text: str, label_names: Iterable[str] = ()
+    ) -> Counter:
+        """Declare or return the :class:`Counter` registered under ``name``."""
         return self._get_or_create(name, help_text, label_names, Counter)
 
-    def gauge(self, name, help_text, label_names=()):
+    def gauge(
+        self, name: str, help_text: str, label_names: Iterable[str] = ()
+    ) -> Gauge:
+        """Declare or return the :class:`Gauge` registered under ``name``."""
         return self._get_or_create(name, help_text, label_names, Gauge)
 
-    def histogram(self, name, help_text, label_names=(), buckets=None):
+    def histogram(
+        self,
+        name: str,
+        help_text: str,
+        label_names: Iterable[str] = (),
+        buckets: Iterable[float] | None = None,
+    ) -> Histogram:
+        """Declare or return the :class:`Histogram` registered under ``name``."""
         with self._lock:
             existing = self._metrics.get(name)
             if existing is not None:
@@ -256,12 +290,12 @@ class MetricsRegistry:
             self._metrics[name] = metric
             return metric
 
-    def reset(self):
+    def reset(self) -> None:
         """Drop all metrics. Test-only — production never calls this."""
         with self._lock:
             self._metrics.clear()
 
-    def render(self):
+    def render(self) -> str:
         """Return the exposition-format text for all registered metrics.
 
         Acquires the registry lock for the duration of the render so
@@ -289,12 +323,12 @@ _registry = MetricsRegistry()
 _process_start = time.monotonic()
 
 
-def get_registry():
+def get_registry() -> MetricsRegistry:
     """Return the process-wide :class:`MetricsRegistry`."""
     return _registry
 
 
-def process_uptime_seconds():
+def process_uptime_seconds() -> float:
     """Return seconds elapsed since this module was imported."""
     return time.monotonic() - _process_start
 
@@ -332,7 +366,9 @@ errors_total = _registry.counter(
 # ---------------------------------------------------------------------------
 
 
-def record_request(method, url_rule, status_code, duration_seconds):
+def record_request(
+    method: str, url_rule: str | None, status_code: int, duration_seconds: float
+) -> None:
     """Update request metrics for a single request.
 
     Args:
@@ -353,7 +389,7 @@ def record_request(method, url_rule, status_code, duration_seconds):
 # ---------------------------------------------------------------------------
 
 
-def client_ip_in_networks(client_ip_str, networks):
+def client_ip_in_networks(client_ip_str: str | None, networks: Iterable[str]) -> bool:
     """Return True if ``client_ip_str`` is inside any of ``networks``.
 
     Args:
@@ -377,7 +413,7 @@ def client_ip_in_networks(client_ip_str, networks):
     return False
 
 
-def parse_cidr_list(raw: str) -> Iterable[str]:
+def parse_cidr_list(raw: str) -> list[str]:
     """Split a comma-separated CIDR string from a settings value."""
     if not raw:
         return []

@@ -17,7 +17,7 @@ import contextlib
 from flask import request
 
 
-def track_page_view():
+def track_page_view() -> None:
     """Log a page view to the database. Runs before every request.
 
     Only tracks:

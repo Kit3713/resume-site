@@ -10,6 +10,10 @@ a strict allowlist of safe tags. This prevents XSS payloads stored via
 the Quill.js editor from being rendered to public visitors.
 """
 
+from __future__ import annotations
+
+import sqlite3
+
 try:
     import nh3
 
@@ -67,17 +71,23 @@ def sanitize_html(html: str) -> str:
     )
 
 
-def get_all_blocks(db):
+def get_all_blocks(db: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return all content blocks ordered by sort_order."""
     return db.execute('SELECT * FROM content_blocks ORDER BY sort_order').fetchall()
 
 
-def get_block_by_slug(db, slug):
+def get_block_by_slug(db: sqlite3.Connection, slug: str) -> sqlite3.Row | None:
     """Return a single content block by slug, or None."""
     return db.execute('SELECT * FROM content_blocks WHERE slug = ?', (slug,)).fetchone()
 
 
-def save_block(db, slug, title, content_html, create_if_missing=True):
+def save_block(
+    db: sqlite3.Connection,
+    slug: str,
+    title: str,
+    content_html: str,
+    create_if_missing: bool = True,
+) -> None:
     """Save (create or update) a content block.
 
     Sanitizes HTML before storage. If the slug already exists, the
@@ -109,7 +119,7 @@ def save_block(db, slug, title, content_html, create_if_missing=True):
     db.commit()
 
 
-def create_block(db, slug, title, content_html):
+def create_block(db: sqlite3.Connection, slug: str, title: str, content_html: str) -> str:
     """Create a new content block with a given slug.
 
     The slug is normalized: lowercased and spaces replaced with underscores.

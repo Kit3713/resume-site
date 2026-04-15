@@ -41,7 +41,9 @@ import functools
 import hashlib
 import re
 import secrets
+import sqlite3
 from collections import namedtuple
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 # A token with one of these values is valid; anything else is rejected
@@ -100,7 +102,8 @@ class AuthError(TokenError):
     revoked) or 403 (insufficient_scope).
     """
 
-    def __init__(self, reason, http_status):
+    def __init__(self, reason: str, http_status: int) -> None:
+        """Capture the tag and the HTTP status the decorator should map to."""
         super().__init__(reason)
         self.reason = reason
         self.http_status = http_status
@@ -157,7 +160,7 @@ def _scope_list(raw):
 _DURATION_RE = re.compile(r'^(\d+)\s*([hd])$', re.IGNORECASE)
 
 
-def parse_expires(raw, *, now=None):
+def parse_expires(raw: str | None, *, now: datetime | None = None) -> str | None:
     """Translate a CLI/form ``--expires`` value into an ISO-8601 UTC string.
 
     Accepts:
@@ -217,7 +220,14 @@ def _is_expired(expires_at, now_dt):
 # ---------------------------------------------------------------------------
 
 
-def generate_token(db, *, name, scope, expires_at=None, created_by='admin'):
+def generate_token(
+    db: sqlite3.Connection,
+    *,
+    name: str,
+    scope: str,
+    expires_at: str | None = None,
+    created_by: str = 'admin',
+) -> GeneratedToken:
     """Create a new API token. Return :class:`GeneratedToken` including the raw value.
 
     The raw value is returned ONCE — the caller is expected to display
@@ -259,7 +269,13 @@ def generate_token(db, *, name, scope, expires_at=None, created_by='admin'):
     )
 
 
-def verify_token(db, authorization_header, required_scope, *, now=None):
+def verify_token(
+    db: sqlite3.Connection,
+    authorization_header: str,
+    required_scope: str,
+    *,
+    now: datetime | None = None,
+) -> VerifiedToken:
     """Validate a ``Authorization: Bearer <token>`` header.
 
     On success, UPDATE ``last_used_at`` and return :class:`VerifiedToken`.
@@ -331,7 +347,13 @@ def verify_token(db, authorization_header, required_scope, *, now=None):
     return VerifiedToken(id=token_id, name=token_name, scope_list=scope_list)
 
 
-def rotate_token(db, *, name, created_by='admin', now=None):
+def rotate_token(
+    db: sqlite3.Connection,
+    *,
+    name: str,
+    created_by: str = 'admin',
+    now: datetime | None = None,
+) -> GeneratedToken:
     """Generate a fresh token inheriting scope + expires_at from the newest
     active match on ``name``, then mark the old row revoked.
 
@@ -374,7 +396,7 @@ def rotate_token(db, *, name, created_by='admin', now=None):
     )
 
 
-def revoke_token(db, token_id):
+def revoke_token(db: sqlite3.Connection, token_id: int) -> bool:
     """Mark ``token_id`` as revoked. Idempotent — returns True if a row changed."""
     cursor = db.execute(
         'UPDATE api_tokens SET revoked = 1 WHERE id = ? AND revoked = 0',
@@ -384,7 +406,7 @@ def revoke_token(db, token_id):
     return cursor.rowcount > 0
 
 
-def list_tokens(db, *, include_revoked=True):
+def list_tokens(db: sqlite3.Connection, *, include_revoked: bool = True) -> list[TokenRecord]:
     """Return all token records ordered by created_at DESC.
 
     The raw hashes are deliberately excluded — callers only ever need
@@ -418,7 +440,7 @@ def list_tokens(db, *, include_revoked=True):
     ]
 
 
-def get_token(db, token_id):
+def get_token(db: sqlite3.Connection, token_id: int) -> TokenRecord | None:
     """Return a single :class:`TokenRecord` by id, or ``None``."""
     row = db.execute(
         'SELECT id, name, scope, created_at, expires_at, last_used_at, '
@@ -439,7 +461,9 @@ def get_token(db, token_id):
     )
 
 
-def purge_expired(db, *, grace_days=30, now=None):
+def purge_expired(
+    db: sqlite3.Connection, *, grace_days: int = 30, now: datetime | None = None
+) -> int:
     """Delete revoked rows older than ``grace_days``, plus expired rows
     whose ``expires_at`` is older than ``grace_days``.
 
@@ -464,7 +488,7 @@ def purge_expired(db, *, grace_days=30, now=None):
 # ---------------------------------------------------------------------------
 
 
-def require_api_token(scope):
+def require_api_token(scope: str) -> Callable:
     """Decorator factory for API routes.
 
     Usage (Phase 16)::

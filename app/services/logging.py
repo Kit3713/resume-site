@@ -40,6 +40,7 @@ import logging
 import os
 import sys
 from datetime import UTC, datetime
+from typing import Any
 
 try:  # Flask is present in every runtime context that calls the filter,
     # but tests construct records outside an app context.
@@ -48,6 +49,7 @@ except ImportError:  # pragma: no cover — Flask is a hard dep
     g = None  # type: ignore[assignment]
 
     def has_request_context():  # type: ignore[misc]
+        """Fallback used when Flask is not importable; always returns False."""
         return False
 
 
@@ -112,7 +114,7 @@ _STDLIB_LOG_ATTRS = frozenset(
 # ---------------------------------------------------------------------------
 
 
-def hash_client_ip(ip, salt):
+def hash_client_ip(ip: str | None, salt: str | None) -> str:
     """Return a 16-character hex digest derived from ``salt + ip``.
 
     The hash is deliberately one-way so log files alone cannot be joined
@@ -141,6 +143,7 @@ class _RequestContextFilter(logging.Filter):
     """
 
     def filter(self, record):  # type: ignore[override]
+        """Stamp ``request_id`` / ``client_ip_hash`` onto ``record`` and return True."""
         if has_request_context() and g is not None:
             record.request_id = getattr(g, 'request_id', _NO_CONTEXT) or _NO_CONTEXT
             record.client_ip_hash = getattr(g, 'client_ip_hash', _NO_CONTEXT) or _NO_CONTEXT
@@ -166,6 +169,7 @@ class _JsonFormatter(logging.Formatter):
     """
 
     def format(self, record):  # type: ignore[override]
+        """Return one JSON line for ``record``, merging ``extra`` fields verbatim."""
         payload = {
             'timestamp': _iso_timestamp(record.created),
             'level': record.levelname,
@@ -206,6 +210,7 @@ class _HumanFormatter(logging.Formatter):
     """
 
     def format(self, record):  # type: ignore[override]
+        """Return a single compact text line for ``record`` (dev-mode formatter)."""
         ts = _iso_timestamp(record.created)
         level = record.levelname.ljust(5)
         req_id = getattr(record, 'request_id', _NO_CONTEXT)
@@ -227,7 +232,7 @@ def _iso_timestamp(created):
 # ---------------------------------------------------------------------------
 
 
-def configure_logging(app):
+def configure_logging(app: Any) -> None:
     """Install handlers + filter on the root logger and ``app.logger``.
 
     Idempotent — repeated calls replace the handler set rather than
@@ -272,6 +277,6 @@ def configure_logging(app):
     app.logger.propagate = True
 
 
-def get_logger(name):
+def get_logger(name: str) -> logging.Logger:
     """Return a logger. Thin wrapper so callers have a stable import."""
     return logging.getLogger(name)

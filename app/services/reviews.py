@@ -7,13 +7,17 @@ approval, rejection, display tier updates, and listing by status.
 Admin routes call these functions instead of writing SQL inline.
 """
 
+from __future__ import annotations
+
+import sqlite3
+
 from app.exceptions import ValidationError
 
 _VALID_STATUSES = ('pending', 'approved', 'rejected')
 _VALID_TIERS = ('featured', 'standard', 'hidden')
 
 
-def get_reviews_by_status(db, status):
+def get_reviews_by_status(db: sqlite3.Connection, status: str) -> list[sqlite3.Row]:
     """Return all reviews with a given status, newest first.
 
     Args:
@@ -31,7 +35,9 @@ def get_reviews_by_status(db, status):
     ).fetchall()
 
 
-def approve_review(db, review_id, display_tier='standard'):
+def approve_review(
+    db: sqlite3.Connection, review_id: int, display_tier: str = 'standard'
+) -> None:
     """Approve a review and set its display tier.
 
     Args:
@@ -49,7 +55,7 @@ def approve_review(db, review_id, display_tier='standard'):
     db.commit()
 
 
-def reject_review(db, review_id):
+def reject_review(db: sqlite3.Connection, review_id: int) -> None:
     """Reject a review. It will no longer appear on the public site."""
     db.execute(
         "UPDATE reviews SET status = 'rejected', "
@@ -59,7 +65,7 @@ def reject_review(db, review_id):
     db.commit()
 
 
-def update_review_tier(db, review_id, display_tier):
+def update_review_tier(db: sqlite3.Connection, review_id: int, display_tier: str) -> None:
     """Update the display tier of an already-approved review.
 
     Args:
@@ -76,7 +82,7 @@ def update_review_tier(db, review_id, display_tier):
     db.commit()
 
 
-def count_pending(db):
+def count_pending(db: sqlite3.Connection) -> int:
     """Return the number of reviews awaiting approval."""
     row = db.execute("SELECT COUNT(*) as cnt FROM reviews WHERE status = 'pending'").fetchone()
     return row['cnt'] if row else 0

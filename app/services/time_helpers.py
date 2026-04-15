@@ -73,7 +73,7 @@ def _parse_iso(value):
     return dt
 
 
-def time_ago(value, *, now=None):
+def time_ago(value: object, *, now: datetime | None = None) -> str:
     """Format an ISO-8601 timestamp (or datetime) as a relative string.
 
     Examples:

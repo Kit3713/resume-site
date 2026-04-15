@@ -31,6 +31,7 @@ the route handler and from tests without an application context.
 
 from __future__ import annotations
 
+import sqlite3
 from collections import namedtuple
 from datetime import UTC, datetime, timedelta
 
@@ -40,15 +41,17 @@ LockoutStatus = namedtuple(
 )
 
 
-def _now(now):
+def _now(now: datetime | None) -> datetime:
     return now if now is not None else datetime.now(UTC)
 
 
-def _iso(dt):
+def _iso(dt: datetime) -> str:
     return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
-def record_failed_login(db, ip_hash, *, now=None):
+def record_failed_login(
+    db: sqlite3.Connection, ip_hash: str, *, now: datetime | None = None
+) -> None:
     """Insert a failed-login row for ``ip_hash`` at ``now`` (UTC)."""
     db.execute(
         'INSERT INTO login_attempts (ip_hash, success, created_at) VALUES (?, 0, ?)',
@@ -57,7 +60,9 @@ def record_failed_login(db, ip_hash, *, now=None):
     db.commit()
 
 
-def record_successful_login(db, ip_hash, *, now=None):
+def record_successful_login(
+    db: sqlite3.Connection, ip_hash: str, *, now: datetime | None = None
+) -> None:
     """Insert a successful-login row.
 
     We keep the failure rows in place — a correct password after nine
@@ -73,14 +78,14 @@ def record_successful_login(db, ip_hash, *, now=None):
 
 
 def check_lockout(
-    db,
-    ip_hash,
+    db: sqlite3.Connection,
+    ip_hash: str,
     *,
-    threshold,
-    window_minutes,
-    lockout_minutes,
-    now=None,
-):
+    threshold: int,
+    window_minutes: int,
+    lockout_minutes: int,
+    now: datetime | None = None,
+) -> LockoutStatus:
     """Return the :class:`LockoutStatus` for ``ip_hash`` right now.
 
     Rules:
@@ -136,7 +141,7 @@ def check_lockout(
     )
 
 
-def purge_old_attempts(db, retention_days):
+def purge_old_attempts(db: sqlite3.Connection, retention_days: int) -> int:
     """Delete login_attempt rows older than ``retention_days``.
 
     Returns the number of rows removed. Intended for a future ``manage.py``

@@ -58,5 +58,6 @@ class DuplicateError(DomainError, ValueError):
     """
 
     def __init__(self, message: str, *, conflicting_value: object = None) -> None:
+        """Store ``conflicting_value`` alongside the message for caller diagnostics."""
         super().__init__(message)
         self.conflicting_value = conflicting_value

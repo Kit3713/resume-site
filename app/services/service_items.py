@@ -10,16 +10,26 @@ through sanitize_html() on every write as defense in depth against XSS
 (even though only the authenticated admin can write it).
 """
 
+from __future__ import annotations
+
+import sqlite3
+
 from app.exceptions import ValidationError
 from app.services.content import sanitize_html
 
 
-def get_all_services(db):
+def get_all_services(db: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return all service cards ordered by sort_order."""
     return db.execute('SELECT * FROM services ORDER BY sort_order').fetchall()
 
 
-def add_service(db, title, description='', icon='', sort_order=0):
+def add_service(
+    db: sqlite3.Connection,
+    title: str,
+    description: str = '',
+    icon: str = '',
+    sort_order: int = 0,
+) -> None:
     """Insert a new service card.
 
     Args:
@@ -38,7 +48,15 @@ def add_service(db, title, description='', icon='', sort_order=0):
     db.commit()
 
 
-def update_service(db, service_id, title, description='', icon='', sort_order=0, visible=True):
+def update_service(
+    db: sqlite3.Connection,
+    service_id: int,
+    title: str,
+    description: str = '',
+    icon: str = '',
+    sort_order: int = 0,
+    visible: bool = True,
+) -> None:
     """Update an existing service card.
 
     Args:
@@ -65,7 +83,7 @@ def update_service(db, service_id, title, description='', icon='', sort_order=0,
     db.commit()
 
 
-def delete_service(db, service_id):
+def delete_service(db: sqlite3.Connection, service_id: int) -> None:
     """Delete a service card by ID."""
     db.execute('DELETE FROM services WHERE id = ?', (service_id,))
     db.commit()

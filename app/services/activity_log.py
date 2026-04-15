@@ -7,8 +7,18 @@ brief detail string. The log is append-only and displayed on the admin
 dashboard as a recent activity feed.
 """
 
+from __future__ import annotations
 
-def log_action(db, action, category='', detail='', admin_user='admin'):
+import sqlite3
+
+
+def log_action(
+    db: sqlite3.Connection,
+    action: str,
+    category: str = '',
+    detail: str = '',
+    admin_user: str = 'admin',
+) -> None:
     """Record an admin action to the activity log.
 
     Args:
@@ -25,7 +35,7 @@ def log_action(db, action, category='', detail='', admin_user='admin'):
     db.commit()
 
 
-def get_recent_activity(db, limit=20):
+def get_recent_activity(db: sqlite3.Connection, limit: int = 20) -> list[sqlite3.Row]:
     """Return the most recent activity log entries for the dashboard."""
     return db.execute(
         'SELECT * FROM admin_activity_log ORDER BY created_at DESC LIMIT ?',
@@ -33,7 +43,7 @@ def get_recent_activity(db, limit=20):
     ).fetchall()
 
 
-def purge_old_entries(db, days=90):
+def purge_old_entries(db: sqlite3.Connection, days: int = 90) -> int:
     """Delete activity log entries older than the specified number of days.
 
     Returns:

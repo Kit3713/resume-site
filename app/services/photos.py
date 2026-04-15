@@ -24,11 +24,15 @@ Storage layout:
     <uuid>.webp      — WebP images optimized at 85% quality
 """
 
+from __future__ import annotations
+
 import os
 import uuid
+from typing import Any
 
-from flask import abort, current_app, send_from_directory
+from flask import Response, abort, current_app, send_from_directory
 from PIL import Image
+from werkzeug.datastructures import FileStorage
 
 # Magic byte signatures for each allowed image format.
 # These are the first N bytes of a valid file of that type.
@@ -100,7 +104,7 @@ def _check_file_size(file_storage):
     return size, None
 
 
-def process_upload(file_storage):
+def process_upload(file_storage: FileStorage) -> dict[str, Any] | str | None:
     """Process an uploaded photo: validate, save to disk, and optimize.
 
     The upload workflow:
@@ -218,7 +222,7 @@ def process_upload(file_storage):
     }
 
 
-def serve_photo(storage_name):
+def serve_photo(storage_name: str) -> Response:
     """Serve a photo file from the configured storage directory.
 
     Uses Flask's send_from_directory for proper Content-Type headers,
@@ -236,7 +240,7 @@ def serve_photo(storage_name):
     return send_from_directory(photo_dir, storage_name)
 
 
-def delete_photo_file(storage_name):
+def delete_photo_file(storage_name: str) -> None:
     """Delete a photo file from the storage directory.
 
     Called by the admin photo delete route after removing the database record.

@@ -24,8 +24,13 @@ Caching (Phase 12.1):
     instance, so memory pressure is negligible.
 """
 
+from __future__ import annotations
+
+import sqlite3
 import threading
 import time
+from collections.abc import Mapping
+from typing import Any
 
 from app.exceptions import NotFoundError
 
@@ -508,13 +513,15 @@ _settings_cache_lock = threading.Lock()
 DEFAULT_SETTINGS_TTL = 30.0  # seconds
 
 
-def get_all(db):
+def get_all(db: sqlite3.Connection) -> dict[str, str]:
     """Return all settings as a {key: value} dict."""
     rows = db.execute('SELECT key, value FROM settings').fetchall()
     return {row['key']: row['value'] for row in rows}
 
 
-def get_all_cached(db, db_path, ttl=DEFAULT_SETTINGS_TTL):
+def get_all_cached(
+    db: sqlite3.Connection, db_path: str, ttl: float = DEFAULT_SETTINGS_TTL
+) -> dict[str, str]:
     """Return all settings, served from a process-local TTL cache.
 
     Use this from hot paths (the request-time context processor) instead of
@@ -537,7 +544,7 @@ def get_all_cached(db, db_path, ttl=DEFAULT_SETTINGS_TTL):
     return dict(settings)
 
 
-def invalidate_cache(db_path=None):
+def invalidate_cache(db_path: str | None = None) -> None:
     """Drop cached settings.
 
     Pass a `db_path` to clear one app's cache; pass `None` to clear every
@@ -552,13 +559,13 @@ def invalidate_cache(db_path=None):
             _settings_cache.pop(db_path, None)
 
 
-def get(db, key, default=''):
+def get(db: sqlite3.Connection, key: str, default: str = '') -> str:
     """Return a single setting value by key, or default if not found."""
     row = db.execute('SELECT value FROM settings WHERE key = ?', (key,)).fetchone()
     return row['value'] if row else default
 
 
-def save_many(db, form_data):
+def save_many(db: sqlite3.Connection, form_data: Mapping[str, Any]) -> None:
     """Save multiple settings from a form submission dict.
 
     Only keys present in SETTINGS_REGISTRY are accepted. Unknown keys
@@ -583,7 +590,7 @@ def save_many(db, form_data):
     invalidate_cache()
 
 
-def set_one(db, key, value):
+def set_one(db: sqlite3.Connection, key: str, value: Any) -> None:
     """Set a single setting and commit immediately.
 
     Raises:
@@ -597,7 +604,7 @@ def set_one(db, key, value):
     invalidate_cache()
 
 
-def get_grouped_settings(db):
+def get_grouped_settings(db: sqlite3.Connection) -> list[tuple[str, list[dict[str, Any]]]]:
     """Return settings grouped by category for the admin UI.
 
     Returns a list of (category_name, settings_list) tuples where each

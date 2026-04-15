@@ -10,8 +10,12 @@ Markdown posts store raw markdown and are rendered to HTML on display
 via the mistune library.
 """
 
+from __future__ import annotations
+
 import math
 import re
+import sqlite3
+from collections.abc import Iterable
 
 import mistune
 
@@ -56,7 +60,7 @@ def _ensure_unique_slug(db, slug, exclude_id=None):
         slug = f'{base_slug}-{counter}'
 
 
-def render_post_content(post):
+def render_post_content(post: sqlite3.Row) -> str:
     """Render a post's content to HTML based on its content_format.
 
     Markdown posts are converted to HTML via mistune, then passed through
@@ -75,7 +79,9 @@ def render_post_content(post):
 # ============================================================
 
 
-def get_published_posts(db, page=1, per_page=10):
+def get_published_posts(
+    db: sqlite3.Connection, page: int = 1, per_page: int = 10
+) -> tuple[list[sqlite3.Row], int]:
     """Return published posts, newest first, with pagination.
 
     Returns:
@@ -94,7 +100,7 @@ def get_published_posts(db, page=1, per_page=10):
     return posts, total
 
 
-def get_post_by_slug(db, slug):
+def get_post_by_slug(db: sqlite3.Connection, slug: str) -> sqlite3.Row | None:
     """Return a single published post by slug, or None."""
     return db.execute(
         "SELECT * FROM blog_posts WHERE slug = ? AND status = 'published'",
@@ -102,12 +108,14 @@ def get_post_by_slug(db, slug):
     ).fetchone()
 
 
-def get_post_by_id(db, post_id):
+def get_post_by_id(db: sqlite3.Connection, post_id: int) -> sqlite3.Row | None:
     """Return a post by ID (any status — for admin use)."""
     return db.execute('SELECT * FROM blog_posts WHERE id = ?', (post_id,)).fetchone()
 
 
-def get_all_posts(db, status_filter=None):
+def get_all_posts(
+    db: sqlite3.Connection, status_filter: str | None = None
+) -> list[sqlite3.Row]:
     """Return all posts, optionally filtered by status (admin use).
 
     Args:
@@ -122,7 +130,9 @@ def get_all_posts(db, status_filter=None):
     return db.execute('SELECT * FROM blog_posts ORDER BY created_at DESC').fetchall()
 
 
-def get_posts_by_tag(db, tag_slug, page=1, per_page=10):
+def get_posts_by_tag(
+    db: sqlite3.Connection, tag_slug: str, page: int = 1, per_page: int = 10
+) -> tuple[list[sqlite3.Row], int]:
     """Return published posts matching a tag slug, with pagination."""
     total = db.execute(
         'SELECT COUNT(*) as cnt FROM blog_posts bp '
@@ -144,7 +154,7 @@ def get_posts_by_tag(db, tag_slug, page=1, per_page=10):
     return posts, total
 
 
-def get_recent_posts(db, n=5):
+def get_recent_posts(db: sqlite3.Connection, n: int = 5) -> list[sqlite3.Row]:
     """Return the N most recent published posts."""
     return db.execute(
         "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY published_at DESC LIMIT ?",
@@ -152,7 +162,7 @@ def get_recent_posts(db, n=5):
     ).fetchall()
 
 
-def get_featured_posts(db, n=3):
+def get_featured_posts(db: sqlite3.Connection, n: int = 3) -> list[sqlite3.Row]:
     """Return featured published posts for the landing page."""
     return db.execute(
         "SELECT * FROM blog_posts WHERE status = 'published' AND featured = 1 "
@@ -166,12 +176,12 @@ def get_featured_posts(db, n=3):
 # ============================================================
 
 
-def get_all_tags(db):
+def get_all_tags(db: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return all tags ordered by name."""
     return db.execute('SELECT * FROM blog_tags ORDER BY name').fetchall()
 
 
-def get_tags_for_post(db, post_id):
+def get_tags_for_post(db: sqlite3.Connection, post_id: int) -> list[sqlite3.Row]:
     """Return all tags attached to a specific post."""
     return db.execute(
         'SELECT bt.* FROM blog_tags bt '
@@ -181,7 +191,9 @@ def get_tags_for_post(db, post_id):
     ).fetchall()
 
 
-def get_tags_for_posts(db, post_ids):
+def get_tags_for_posts(
+    db: sqlite3.Connection, post_ids: Iterable[int]
+) -> dict[int, list[sqlite3.Row]]:
     """Return {post_id: [tag rows]} for a batch of posts in one query.
 
     Replaces the per-post call to `get_tags_for_post` on listing pages
@@ -208,7 +220,7 @@ def get_tags_for_posts(db, post_ids):
     return result
 
 
-def get_tag_by_slug(db, slug):
+def get_tag_by_slug(db: sqlite3.Connection, slug: str) -> sqlite3.Row | None:
     """Return a tag by its slug, or None."""
     return db.execute('SELECT * FROM blog_tags WHERE slug = ?', (slug,)).fetchone()
 
@@ -252,17 +264,17 @@ def _sync_tags(db, post_id, tag_string):
 
 
 def create_post(
-    db,
-    title,
-    summary='',
-    content='',
-    content_format='html',
-    cover_image='',
-    author='',
-    tags='',
-    meta_description='',
-    featured=False,
-):
+    db: sqlite3.Connection,
+    title: str,
+    summary: str = '',
+    content: str = '',
+    content_format: str = 'html',
+    cover_image: str = '',
+    author: str = '',
+    tags: str = '',
+    meta_description: str = '',
+    featured: bool = False,
+) -> int | None:
     """Create a new blog post as a draft.
 
     Auto-generates a slug from the title and calculates reading time.
@@ -304,19 +316,19 @@ def create_post(
 
 
 def update_post(
-    db,
-    post_id,
-    title,
-    summary='',
-    content='',
-    content_format='html',
-    cover_image='',
-    author='',
-    tags='',
-    meta_description='',
-    featured=False,
-    slug=None,
-):
+    db: sqlite3.Connection,
+    post_id: int,
+    title: str,
+    summary: str = '',
+    content: str = '',
+    content_format: str = 'html',
+    cover_image: str = '',
+    author: str = '',
+    tags: str = '',
+    meta_description: str = '',
+    featured: bool = False,
+    slug: str | None = None,
+) -> None:
     """Update an existing blog post.
 
     If slug is provided and different from auto-generated, uses the
@@ -355,7 +367,7 @@ def update_post(
     db.commit()
 
 
-def publish_post(db, post_id):
+def publish_post(db: sqlite3.Connection, post_id: int) -> None:
     """Set a post's status to 'published' and record the publish timestamp.
 
     If the post was previously published (has a published_at date), the
@@ -382,7 +394,7 @@ def publish_post(db, post_id):
     db.commit()
 
 
-def unpublish_post(db, post_id):
+def unpublish_post(db: sqlite3.Connection, post_id: int) -> None:
     """Revert a published post to draft status."""
     db.execute(
         "UPDATE blog_posts SET status='draft', "
@@ -392,7 +404,7 @@ def unpublish_post(db, post_id):
     db.commit()
 
 
-def archive_post(db, post_id):
+def archive_post(db: sqlite3.Connection, post_id: int) -> None:
     """Archive a post (removes from public view but preserves content)."""
     db.execute(
         "UPDATE blog_posts SET status='archived', "
@@ -402,7 +414,7 @@ def archive_post(db, post_id):
     db.commit()
 
 
-def delete_post(db, post_id):
+def delete_post(db: sqlite3.Connection, post_id: int) -> None:
     """Permanently delete a post and its tag associations."""
     db.execute('DELETE FROM blog_post_tags WHERE post_id = ?', (post_id,))
     db.execute('DELETE FROM blog_posts WHERE id = ?', (post_id,))

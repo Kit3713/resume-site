@@ -201,7 +201,7 @@ def _validate_secret_key(secret_key):
     return True
 
 
-def load_config(path):
+def load_config(path: str) -> dict:
     """Load and validate the configuration.
 
     Processing order:

@@ -25,7 +25,7 @@ from email.mime.text import MIMEText
 from flask import current_app
 
 
-def send_contact_email(name, email, message):
+def send_contact_email(name: str, email: str, message: str) -> bool:
     """Send a contact form submission to the admin via SMTP.
 
     Constructs a plain-text email with the submitter's details and sends

@@ -15,10 +15,15 @@ Token lifecycle:
 Tokens may optionally have an expiration date (expires_at field).
 """
 
+from __future__ import annotations
+
+import sqlite3
 from datetime import UTC, datetime
 
 
-def validate_token(db, token_string):
+def validate_token(
+    db: sqlite3.Connection, token_string: str
+) -> tuple[sqlite3.Row | None, str | None]:
     """Validate a review invitation token.
 
     Checks whether the token exists, hasn't been used, and hasn't expired.

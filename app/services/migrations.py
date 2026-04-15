@@ -26,9 +26,10 @@ Design contract:
 from __future__ import annotations
 
 import os
+import sqlite3
 
 
-def get_migrations_dir():
+def get_migrations_dir() -> str:
     """Return the absolute path to the project's ``migrations/`` directory.
 
     Resolved relative to this file so it works identically when called
@@ -40,7 +41,7 @@ def get_migrations_dir():
     return os.path.join(repo_root, 'migrations')
 
 
-def list_migration_files(migrations_dir=None):
+def list_migration_files(migrations_dir: str | None = None) -> list[tuple[int, str]]:
     """Return sorted ``(version_int, filename)`` pairs for every migration.
 
     A migration file qualifies when its name ends in ``.sql`` and starts
@@ -71,7 +72,7 @@ def list_migration_files(migrations_dir=None):
     return files
 
 
-def ensure_schema_version_table(conn):
+def ensure_schema_version_table(conn: sqlite3.Connection) -> None:
     """Create the ``schema_version`` tracking table when missing.
 
     Idempotent — wraps ``CREATE TABLE IF NOT EXISTS``. The CLI calls
@@ -88,7 +89,7 @@ def ensure_schema_version_table(conn):
     conn.commit()
 
 
-def get_applied_versions(conn):
+def get_applied_versions(conn: sqlite3.Connection) -> set[int]:
     """Return the set of version numbers recorded in ``schema_version``.
 
     Returns ``set()`` when the table doesn't exist, so a caller probing
@@ -104,7 +105,9 @@ def get_applied_versions(conn):
     return {row[0] for row in rows}
 
 
-def get_pending_migrations(conn, migrations_dir=None):
+def get_pending_migrations(
+    conn: sqlite3.Connection, migrations_dir: str | None = None
+) -> list[tuple[int, str]]:
     """Return ``(version, filename)`` pairs for every migration NOT yet applied.
 
     Convenience used by the readiness probe. The CLI doesn't call it —

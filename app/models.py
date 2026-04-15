@@ -14,6 +14,11 @@ Architecture:
 All write operations call db.commit() to ensure changes are persisted.
 """
 
+from __future__ import annotations
+
+import sqlite3
+from typing import Any
+
 from flask_login import UserMixin
 
 
@@ -29,7 +34,8 @@ class AdminUser(UserMixin):
     problem with database-stored credentials.
     """
 
-    def __init__(self, username):
+    def __init__(self, username: str) -> None:
+        """Flask-Login requires ``self.id``; use the username for both fields."""
         self.id = username
         self.username = username
 
@@ -39,7 +45,7 @@ class AdminUser(UserMixin):
 # ============================================================
 
 
-def get_setting(db, key, default=''):
+def get_setting(db: sqlite3.Connection, key: str, default: str = '') -> str:
     """Return a single setting value by key, or default if not found.
 
     All values are stored as text strings; callers must cast to
@@ -54,7 +60,7 @@ def get_setting(db, key, default=''):
 # ============================================================
 
 
-def get_content_block(db, slug):
+def get_content_block(db: sqlite3.Connection, slug: str) -> sqlite3.Row | None:
     """Return a single content block by its slug identifier, or None.
 
     Content blocks store HTML from the Quill.js editor. Templates reference
@@ -69,7 +75,7 @@ def get_content_block(db, slug):
 # ============================================================
 
 
-def get_visible_stats(db):
+def get_visible_stats(db: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return all visible stat counters ordered by sort_order.
 
     Stats display as animated number counters on the landing page
@@ -83,7 +89,7 @@ def get_visible_stats(db):
 # ============================================================
 
 
-def get_visible_services(db):
+def get_visible_services(db: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return all visible services ordered by sort_order."""
     return db.execute('SELECT * FROM services WHERE visible = 1 ORDER BY sort_order').fetchall()
 
@@ -93,7 +99,7 @@ def get_visible_services(db):
 # ============================================================
 
 
-def get_skill_domains_with_skills(db):
+def get_skill_domains_with_skills(db: sqlite3.Connection) -> list[dict[str, Any]]:
     """Return visible skill domains, each with a nested list of skills.
 
     Returns a list of dicts: [{'domain': Row, 'skills': [Row, ...]}, ...]
@@ -133,7 +139,7 @@ def get_skill_domains_with_skills(db):
 # ============================================================
 
 
-def get_photos_by_tier(db, tier='grid'):
+def get_photos_by_tier(db: sqlite3.Connection, tier: str = 'grid') -> list[sqlite3.Row]:
     """Return photos filtered by display tier ('featured', 'grid', or 'hidden').
 
     The three-tier system controls how photos appear:
@@ -147,14 +153,14 @@ def get_photos_by_tier(db, tier='grid'):
     ).fetchall()
 
 
-def get_all_visible_photos(db):
+def get_all_visible_photos(db: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return all non-hidden photos for the portfolio grid."""
     return db.execute(
         "SELECT * FROM photos WHERE display_tier != 'hidden' ORDER BY sort_order"
     ).fetchall()
 
 
-def get_photo_categories(db):
+def get_photo_categories(db: sqlite3.Connection) -> list[str]:
     """Return distinct category names for the portfolio filter bar.
 
     Only includes categories from visible (non-hidden) photos that have
@@ -171,7 +177,7 @@ def get_photo_categories(db):
 # ============================================================
 
 
-def get_case_study_by_slug(db, slug):
+def get_case_study_by_slug(db: sqlite3.Connection, slug: str) -> sqlite3.Row | None:
     """Return a published case study by its URL slug, or None.
 
     Only published case studies are returned to prevent draft leakage.
@@ -187,7 +193,9 @@ def get_case_study_by_slug(db, slug):
 # ============================================================
 
 
-def get_approved_reviews_by_tier(db, tier='featured'):
+def get_approved_reviews_by_tier(
+    db: sqlite3.Connection, tier: str = 'featured'
+) -> list[sqlite3.Row]:
     """Return approved reviews filtered by display tier.
 
     Display tiers control visibility on the testimonials page:
@@ -201,7 +209,7 @@ def get_approved_reviews_by_tier(db, tier='featured'):
     ).fetchall()
 
 
-def get_all_approved_reviews(db):
+def get_all_approved_reviews(db: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return all approved reviews, with featured reviews sorted first.
 
     Uses a CASE expression to sort by tier priority (featured=0, standard=1),
@@ -219,12 +227,12 @@ def get_all_approved_reviews(db):
 # ============================================================
 
 
-def get_visible_projects(db):
+def get_visible_projects(db: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return all visible projects ordered by sort_order."""
     return db.execute('SELECT * FROM projects WHERE visible = 1 ORDER BY sort_order').fetchall()
 
 
-def get_project_by_slug(db, slug):
+def get_project_by_slug(db: sqlite3.Connection, slug: str) -> sqlite3.Row | None:
     """Return a visible project with a detail page enabled, or None.
 
     Projects can optionally have a dedicated detail page (has_detail_page=1).
@@ -241,7 +249,7 @@ def get_project_by_slug(db, slug):
 # ============================================================
 
 
-def get_visible_certifications(db):
+def get_visible_certifications(db: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return all visible certifications ordered by sort_order."""
     return db.execute(
         'SELECT * FROM certifications WHERE visible = 1 ORDER BY sort_order'
@@ -253,7 +261,15 @@ def get_visible_certifications(db):
 # ============================================================
 
 
-def save_contact_submission(db, name, email, message, ip_address, user_agent, is_spam=False):
+def save_contact_submission(
+    db: sqlite3.Connection,
+    name: str,
+    email: str,
+    message: str,
+    ip_address: str,
+    user_agent: str,
+    is_spam: bool = False,
+) -> int | None:
     """Insert a contact form submission into the database.
 
     All submissions are saved regardless of spam status — honeypot-flagged
@@ -271,7 +287,7 @@ def save_contact_submission(db, name, email, message, ip_address, user_agent, is
     return cursor.lastrowid
 
 
-def count_recent_submissions(db, ip_address, minutes=60):
+def count_recent_submissions(db: sqlite3.Connection, ip_address: str, minutes: int = 60) -> int:
     """Count contact submissions from a specific IP in the last N minutes.
 
     Used for rate limiting — the contact route rejects submissions if
@@ -290,12 +306,12 @@ def count_recent_submissions(db, ip_address, minutes=60):
 # ============================================================
 
 
-def get_review_token(db, token_string):
+def get_review_token(db: sqlite3.Connection, token_string: str) -> sqlite3.Row | None:
     """Return a review token row by its URL-safe token string, or None."""
     return db.execute('SELECT * FROM review_tokens WHERE token = ?', (token_string,)).fetchone()
 
 
-def mark_token_used(db, token_id):
+def mark_token_used(db: sqlite3.Connection, token_id: int) -> None:
     """Mark a review token as used after a review is submitted.
 
     Each token is single-use — once a review is submitted through it,
@@ -314,8 +330,15 @@ def mark_token_used(db, token_id):
 
 
 def create_review(
-    db, token_id, reviewer_name, reviewer_title, relationship, message, rating, review_type
-):
+    db: sqlite3.Connection,
+    token_id: int,
+    reviewer_name: str,
+    reviewer_title: str | None,
+    relationship: str | None,
+    message: str,
+    rating: int | None,
+    review_type: str,
+) -> int | None:
     """Insert a new review with 'pending' status for admin approval.
 
     Reviews submitted via invite tokens are always pending — the admin
