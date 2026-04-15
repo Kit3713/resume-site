@@ -539,7 +539,24 @@ def create_app(config_path=None):
 
     app.jinja_env.filters['time_ago'] = time_ago
 
-    # --- 12. Ensure storage directories exist ---
+    # --- 12. Webhook bus subscribers (Phase 19.2) ---
+    # Subscribes one handler per Events.* constant so every emission
+    # fans out to enabled webhooks. The handler closure captures the
+    # database path so it works even when there's no Flask request
+    # context (e.g. CLI invocations of `manage.py backup` that fire
+    # backup.completed). The master `webhooks_enabled` toggle is read
+    # at dispatch time, so admin edits propagate within the settings
+    # cache TTL — no restart required.
+    #
+    # ``register_bus_handlers`` is idempotent: re-registering against
+    # the same db_path drops the previous closures first. This keeps
+    # the test suite from accumulating duplicates across the autouse
+    # ``clear()`` fixture in tests/test_events.py and tests/test_webhooks.py.
+    from app.services.webhooks import register_bus_handlers
+
+    register_bus_handlers(app.config['DATABASE_PATH'])
+
+    # --- 13. Ensure storage directories exist ---
     os.makedirs(os.path.dirname(app.config['DATABASE_PATH']) or '.', exist_ok=True)
     os.makedirs(app.config['PHOTO_STORAGE'], exist_ok=True)
 

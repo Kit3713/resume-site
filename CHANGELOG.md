@@ -7,6 +7,21 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.0
 
+### Added — Phase 19.2 (foundation): Webhook Dispatch Subsystem
+- `migrations/009_webhooks.sql` — `webhooks` (id, name, url, secret, events JSON, enabled, failure_count, created_at, last_triggered_at) and `webhook_deliveries` (per-attempt log; cascades on webhook delete) tables, with indexes on `webhooks(enabled)` and `webhook_deliveries(webhook_id, created_at DESC)`.
+- `app/services/webhooks.py` — full dispatch subsystem (~600 lines). Stdlib only (`urllib.request` + `hmac` + `hashlib` + `threading` + `sqlite3`); zero new runtime deps.
+  - `Webhook` / `DeliveryResult` namedtuples.
+  - CRUD: `create_webhook`, `get_webhook`, `list_webhooks`, `list_enabled_subscribers`, `update_webhook`, `delete_webhook`.
+  - Delivery log: `record_delivery`, `list_recent_deliveries`, `purge_old_deliveries(keep_days=30)`.
+  - Auto-disable: `increment_failures` flips `enabled=0` once consecutive failures cross the configured threshold; `reset_failures` zeros the counter on the next 2xx. `threshold=0` opts out entirely.
+  - Signing: `sign_payload(secret, body)` — HMAC-SHA256 hex digest, accepts str or bytes.
+  - Sync delivery: `deliver_now(webhook, event_name, payload, *, timeout=5)` — POSTs a `{event, timestamp, data}` envelope (sorted JSON for stable signatures), captures HTTP errors / network errors / timeouts in the returned `DeliveryResult` rather than raising.
+  - Async fan-out: `dispatch_event_async(db_path, event_name, payload, ...)` spawns one daemon `threading.Thread` per matching enabled subscriber. Each worker opens a fresh sqlite3 connection (Flask's request-scoped one lives on the wrong thread).
+  - Bus integration: `register_bus_handlers(db_path)` registers one closure per `Events.*` constant. Idempotent — re-registering the same db_path drops previous closures first so the test suite stays clean across the autouse `clear()` fixture.
+- `webhooks_enabled` (default `false`), `webhook_timeout_seconds` (default `5`, clamped to [1, 60]), and `webhook_failure_threshold` (default `10`, `0` disables auto-disable) added to `SETTINGS_REGISTRY` in a new "Webhooks" category. Master toggle is read at dispatch time so admin edits propagate within the 30 s settings cache TTL.
+- App factory wires `register_bus_handlers(app.config['DATABASE_PATH'])` at startup so every existing emission (Phase 19.1) automatically fans out to enabled webhooks once the master toggle is on.
+- 36 new tests in `tests/test_webhooks.py` (743 → 779 total): HMAC signing (4), CRUD + normalisation (10), delivery log truncation + purge (3), auto-disable thresholds (3), `deliver_now` happy + HTTPError + URLError + Timeout + sorted-envelope (5), async fan-out + worker daemon contract + cross-thread DB writes (6), bus integration short-circuit + dispatch + every-event coverage + bad-settings fallback (4), and the lookup-failure fail-open contract (1).
+
 ### Added — Phase 19.1 (completion): Event Bus Emissions From HTML / Admin Routes
 - `contact.submitted` now fires from the public HTML form (`app/routes/contact.py`) with `source='public_form'`. Mirrors the API-side emission so a webhook subscriber sees the same shape regardless of submission origin. Honeypot-flagged submissions still fire (with `is_spam: true`) so abuse dashboards stay accurate.
 - `review.submitted` now fires from the token URL (`app/routes/review.py`) with `source='public_token'` and the inherited review type / rating-presence flag.

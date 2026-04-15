@@ -778,17 +778,12 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 ### 19.2 — Webhook Delivery
 
-- [ ] **Webhook table:** `webhooks` table: `id`, `name`, `url`, `secret` (for HMAC signing), `events` (JSON array of event names, or `["*"]` for all), `enabled`, `created_at`, `last_triggered_at`, `failure_count`
-- [ ] Migration: `009_webhooks.sql`
-- [ ] **Delivery mechanism:** On event emit, for each matching webhook:
-  - Build JSON payload: `{"event": "blog.published", "timestamp": "...", "data": {...}}`
-  - Sign with HMAC-SHA256 using the webhook's secret → `X-Webhook-Signature` header
-  - POST to the webhook URL with a 5-second timeout
-  - Log success/failure in `webhook_deliveries` table (event, url, status_code, response_time_ms, error_message)
-  - On failure: increment `failure_count`. After 10 consecutive failures, auto-disable the webhook and log a warning
-- [ ] **Delivery is asynchronous:** Use a background thread (not blocking the request). For single-process deployments, use `threading.Thread(daemon=True)`. Document that high-volume webhook delivery should use an external queue (RabbitMQ, Redis) — not in scope for v0.3.0
-- [ ] **Admin UI:** Webhook management page — list webhooks, create, edit, delete, test (fires a `webhook.test` event), view delivery log (last 50 deliveries per webhook with status codes and timing)
-- [ ] **API endpoints:** CRUD for webhooks via the REST API (`/api/v1/admin/webhooks`)
+- [x] **Webhook table:** `webhooks` (id, name, url, secret, events JSON, enabled, failure_count, created_at, last_triggered_at) shipped in `migrations/009_webhooks.sql`. `["*"]` in the events column means "every event"; otherwise an exact-match list of `Events.*` strings.
+- [x] **Migration:** `migrations/009_webhooks.sql` ships both `webhooks` and `webhook_deliveries` (per-attempt log; cascades on webhook delete) with hot-path indexes on `webhooks(enabled)` and `webhook_deliveries(webhook_id, created_at DESC)`.
+- [x] **Delivery mechanism:** `app/services/webhooks.py:deliver_now` builds the canonical `{event, timestamp, data}` envelope (sorted JSON for stable signatures), HMAC-SHA256-signs it with the row's secret into `X-Webhook-Signature`, sets `X-Webhook-Event` + `Content-Type: application/json` + `User-Agent: resume-site-webhooks/1.0`, and POSTs with the configured timeout (default 5s, clamped to [1, 60]). HTTP errors / network errors / timeouts are captured in the returned `DeliveryResult` (status_code 0 for non-HTTP failures) rather than raised. `record_delivery` writes the result to `webhook_deliveries` and bumps `webhooks.last_triggered_at` in the same connection. `increment_failures` flips `enabled=0` once consecutive failures cross the configured threshold (default 10; 0 disables auto-disable); `reset_failures` zeros the counter on the next 2xx. WARNING-level log on auto-disable.
+- [x] **Asynchronous delivery:** `dispatch_event_async` spawns one daemon `threading.Thread` per matching enabled subscriber. Each worker opens a fresh `sqlite3.connect(db_path)` because Flask's request-scoped connection lives on the wrong thread. `register_bus_handlers(db_path)` is wired into `app/__init__.create_app` so every Phase 19.1 emission automatically fans out once the `webhooks_enabled` master toggle (Security/Webhooks category) is on. Idempotent — re-registering against the same db_path drops previous closures first. README for high-volume / external-queue deployments still pending (Phase 19.2 admin-UI commit will cover docs).
+- [ ] **Admin UI:** Webhook management page — list / create / edit / delete / test, view delivery log. Deferred to a follow-up commit.
+- [ ] **API endpoints:** CRUD via REST API (`/api/v1/admin/webhooks`) + OpenAPI spec entries. Deferred to a follow-up commit.
 
 ---
 

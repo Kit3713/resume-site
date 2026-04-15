@@ -397,6 +397,45 @@ SETTINGS_REGISTRY = {
             'allowed_networks list.'
         ),
     },
+    # --- Webhooks (Phase 19.2) ---
+    # Master enable for the outbound dispatch subsystem. When off, the
+    # bus handlers registered at app startup short-circuit before
+    # spawning delivery threads — so a misconfigured webhook can't fire
+    # accidentally even if the table has rows. The toggle reads through
+    # the 30 s settings cache, so changes take effect within ~30 s.
+    'webhooks_enabled': {
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Enable Outbound Webhook Delivery',
+        'category': 'Webhooks',
+        'description': (
+            'Master switch. When off, no webhooks fire even if rows exist '
+            'in the webhooks table. Off by default; turn on after creating '
+            'and validating at least one destination.'
+        ),
+    },
+    'webhook_timeout_seconds': {
+        'type': 'int',
+        'default': '5',
+        'label': 'Webhook Delivery Timeout (seconds)',
+        'category': 'Webhooks',
+        'description': (
+            'Per-request urlopen timeout for HMAC-signed POSTs. Caps how '
+            'long a slow downstream can stall a delivery thread. Clamped '
+            'to [1, 60] at dispatch time.'
+        ),
+    },
+    'webhook_failure_threshold': {
+        'type': 'int',
+        'default': '10',
+        'label': 'Webhook Auto-Disable Threshold',
+        'category': 'Webhooks',
+        'description': (
+            'Consecutive non-2xx responses before a webhook is auto-disabled. '
+            'Counter resets on the next successful 2xx delivery. Set to 0 to '
+            'disable the auto-disable behaviour entirely.'
+        ),
+    },
 }
 
 # Ordered list of categories for the admin settings page.
@@ -412,6 +451,7 @@ SETTINGS_CATEGORIES = [
     'Security',
     'Analytics',
     'Observability',
+    'Webhooks',
 ]
 
 # Color preset definitions: preset name → accent color hex value.
