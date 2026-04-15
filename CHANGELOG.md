@@ -7,6 +7,14 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.0
 
+### Added — Phase 17.2: Scheduled Backups (Container-Native)
+- `resume-site-backup.service` + `resume-site-backup.timer` — systemd units that wrap `podman exec resume-site python manage.py backup --prune --keep 7` on a daily schedule (02:00 with 30-min jitter, `Persistent=true` so missed windows still run on next boot). `RESUME_SITE_KEEP` overridable via `systemctl edit` without forking the unit files.
+- `resume-site-backups` named volume in `compose.yaml` and the Quadlet (`resume-site.container`), mounted at `/app/backups`. The container env carries `RESUME_SITE_BACKUP_DIR=/app/backups` so the CLI writes archives onto the volume by default.
+- Admin dashboard "Last Backup" card showing the most recent `backup_last_success` timestamp (rendered via the new `time_ago` Jinja filter), archive count, and total size. A "Recent Backups" table lists the five newest archives with size + relative mtime.
+- `app/services/time_helpers.py` — stdlib-only `time_ago(value, *, now=None)` accepts ISO-8601 strings, `datetime` objects, and Unix epoch numbers; renders "5 minutes ago" / "yesterday" / "in 2 hours" / "never". Registered as the `time_ago` Jinja filter at app startup.
+- README "Backup" section rewritten: covers the CLI, the systemd timer install (rootless + system-wide), an `OnCalendar`/retention override recipe, compose-only cron alternative, restore procedure, offsite mirroring example (rclone), and per-archive gpg encryption via an `ExecStartPost=` drop-in.
+- 27 new tests: `tests/test_time_helpers.py` (25 — bucket boundaries, future intervals, every input shape, Jinja registration) and 2 dashboard widget tests in `tests/test_admin.py` (404-state "never" rendering and populated-state archive listing).
+
 ### Added — Phase 16.5: OpenAPI 3.0 Documentation
 - `docs/openapi.yaml` — hand-authored OpenAPI 3.0 specification covering every `/api/v1/*` endpoint (34 operations across 27 paths). Includes a Bearer-auth security scheme, reusable schemas/responses/parameters, an in-spec error code catalog, and a pagination guide.
 - `GET /api/v1/openapi.yaml` and `GET /api/v1/openapi.json` — serve the spec with strong ETag + `If-None-Match` 304 handling. Bytes and parsed dict are cached in module scope.

@@ -90,6 +90,64 @@ def test_dashboard_shows_metrics(auth_client):
 
 
 # ============================================================
+# DASHBOARD — Phase 17.2 backup health card
+# ============================================================
+
+
+def test_dashboard_backup_card_renders_never_when_no_backups(
+    auth_client, app, monkeypatch, tmp_path
+):
+    """The Last Backup card shows 'never' before the first run."""
+    # Force the backup directory to an empty tmp path so list_backups
+    # returns []; the settings table also has no backup_last_success
+    # row on a fresh deployment.
+    monkeypatch.setenv('RESUME_SITE_BACKUP_DIR', str(tmp_path))
+
+    response = auth_client.get('/admin/')
+    assert response.status_code == 200
+    body = response.data.decode('utf-8')
+    assert 'Last Backup' in body
+    assert 'never' in body
+    assert '0 archives' in body
+
+
+def test_dashboard_backup_card_reflects_settings_and_listing(
+    auth_client, app, monkeypatch, tmp_path
+):
+    """A populated backup_last_success setting + an archive on disk
+    surface in the card and the Recent Backups table."""
+    import sqlite3
+
+    # Seed a recent backup_last_success timestamp.
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    conn.execute(
+        "INSERT OR REPLACE INTO settings(key, value) VALUES ('backup_last_success', ?)",
+        ('2026-04-15T11:55:00Z',),
+    )
+    conn.commit()
+    conn.close()
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
+    # Drop a sample archive into the backup dir so list_backups picks it up.
+    archive = tmp_path / 'resume-site-backup-20260415-115500.tar.gz'
+    archive.write_bytes(b'fake-but-correctly-named-archive' * 10)
+    monkeypatch.setenv('RESUME_SITE_BACKUP_DIR', str(tmp_path))
+
+    response = auth_client.get('/admin/')
+    assert response.status_code == 200
+    body = response.data.decode('utf-8')
+    # The card shows a non-'never' relative time and a count of 1 archive.
+    assert 'Last Backup' in body
+    assert 'never' not in body.split('Last Backup')[1].split('</div>')[0]
+    assert '1 archive' in body
+    # The Recent Backups table renders the archive filename.
+    assert 'Recent Backups' in body
+    assert 'resume-site-backup-20260415-115500.tar.gz' in body
+
+
+# ============================================================
 # CONTENT BLOCKS
 # ============================================================
 

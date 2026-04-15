@@ -25,6 +25,7 @@ Admin features:
 
 import contextlib
 import ipaddress
+import os
 import secrets
 from datetime import UTC, datetime
 from urllib.parse import urlparse
@@ -321,6 +322,31 @@ def dashboard():
     except Exception:
         activity = []  # Table may not exist until migration 003 is applied
 
+    # Backup health (Phase 17.2). `backup_last_success` is written by
+    # `app.services.backups.create_backup` on every successful run and
+    # is intentionally not in SETTINGS_REGISTRY (diagnostic, not user-
+    # editable), so we read it directly. Empty string means "no backup
+    # has ever run on this deployment" — the template renders 'never'.
+    last_row = db.execute("SELECT value FROM settings WHERE key = 'backup_last_success'").fetchone()
+    backup_last_success = last_row['value'] if last_row else None
+
+    backup_dir = os.path.abspath(
+        os.environ.get('RESUME_SITE_BACKUP_DIR')
+        or os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'backups')
+    )
+    try:
+        from app.services.backups import list_backups
+
+        backup_entries = list_backups(backup_dir)
+    except Exception:  # noqa: BLE001 — diagnostic widget, never break the dashboard
+        backup_entries = []
+
+    backup_count = len(backup_entries)
+    backup_total_bytes = sum(entry.size_bytes for entry in backup_entries)
+    # Show the five newest in the dashboard table; the full list lives
+    # behind the future /admin/backups page.
+    recent_backups = backup_entries[:5]
+
     return render_template(
         'admin/dashboard.html',
         total_views=total_views,
@@ -330,6 +356,11 @@ def dashboard():
         recent_contacts=recent_contacts,
         unread_contacts=unread_contacts,
         activity=activity,
+        backup_last_success=backup_last_success,
+        backup_count=backup_count,
+        backup_total_bytes=backup_total_bytes,
+        backup_dir=backup_dir,
+        recent_backups=recent_backups,
     )
 
 

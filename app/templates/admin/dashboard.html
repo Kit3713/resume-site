@@ -24,6 +24,16 @@
             <h3 class="admin-card__title">{{ _('Unread Messages') }}</h3>
             <p class="admin-card__value">{{ unread_contacts }}</p>
         </div>
+        <div class="admin-card">
+            {# Backup health (Phase 17.2). `time_ago` is registered in
+               app/__init__.py and renders 'never' for empty/None input. #}
+            <h3 class="admin-card__title">{{ _('Last Backup') }}</h3>
+            <p class="admin-card__value">{{ backup_last_success | time_ago }}</p>
+            <p class="admin-card__meta">
+                {{- backup_count }} {{ ngettext('archive', 'archives', backup_count) -}}
+                {%- if backup_total_bytes %} · {{ '%.1f'|format(backup_total_bytes / 1048576) }} MB{% endif -%}
+            </p>
+        </div>
     </div>
 
     {% if popular_pages %}
@@ -56,6 +66,34 @@
                     <td>{{ msg.email }}</td>
                     <td>{{ msg.message[:80] }}{{ '...' if msg.message|length > 80 else '' }}</td>
                     <td>{{ msg.created_at[:10] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if recent_backups %}
+    <div class="admin-section">
+        <h2 class="admin-section__title">{{ _('Recent Backups') }}</h2>
+        <p class="admin-section__caption">
+            {{ _('Stored at') }} <code>{{ backup_dir }}</code>.
+            {{ _('Scheduled by the resume-site-backup.timer systemd unit (see README).') }}
+        </p>
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>{{ _('Archive') }}</th>
+                    <th>{{ _('Size') }}</th>
+                    <th>{{ _('Created') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for backup in recent_backups %}
+                <tr>
+                    <td><code>{{ backup.name }}</code></td>
+                    <td>{{ '%.1f'|format(backup.size_bytes / 1048576) }} MB</td>
+                    <td>{{ backup.mtime | time_ago }}</td>
                 </tr>
                 {% endfor %}
             </tbody>

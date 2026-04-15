@@ -1,0 +1,34 @@
+# =============================================================
+# resume-site-backup.timer — Phase 17.2
+#
+# Drives resume-site-backup.service on a daily schedule.
+# See resume-site-backup.service for install instructions.
+#
+# Default schedule: every day at 02:00 local time, with a 30-minute
+# random jitter so a fleet of hosts doesn't stampede their backup
+# storage at the exact same instant. Persistent=true means a host that
+# was off at 02:00 will run the backup as soon as it boots back up.
+#
+# Override the schedule without editing this file:
+#   systemctl --user edit resume-site-backup.timer
+#   # then in the editor:
+#   #   [Timer]
+#   #   OnCalendar=
+#   #   OnCalendar=*-*-* 03:30:00
+#
+# Inspect upcoming + last runs:
+#   systemctl --user list-timers resume-site-backup.timer
+# =============================================================
+
+[Unit]
+Description=Daily resume-site backup
+Documentation=https://github.com/kit3713/resume-site
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+RandomizedDelaySec=30min
+Persistent=true
+Unit=resume-site-backup.service
+
+[Install]
+WantedBy=timers.target

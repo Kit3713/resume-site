@@ -492,7 +492,15 @@ def create_app(config_path=None):
             'current_locale': current_locale,
         }
 
-    # --- 11. Ensure storage directories exist ---
+    # --- 11. Template filters (Phase 17.2) ---
+    # ``time_ago`` renders ISO-8601 timestamps as "5 minutes ago" /
+    # "yesterday" / etc. First consumer is the admin dashboard backup
+    # health card; deliberately generic so future widgets can reuse it.
+    from app.services.time_helpers import time_ago
+
+    app.jinja_env.filters['time_ago'] = time_ago
+
+    # --- 12. Ensure storage directories exist ---
     os.makedirs(os.path.dirname(app.config['DATABASE_PATH']) or '.', exist_ok=True)
     os.makedirs(app.config['PHOTO_STORAGE'], exist_ok=True)
 

@@ -491,12 +491,12 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 ### 17.2 — Scheduled Backups (Container-Native)
 
-- [ ] **Systemd timer unit:** `resume-site-backup.timer` and `resume-site-backup.service` — runs `podman exec resume-site python manage.py backup --prune --keep 7` on a configurable schedule (daily at 2 AM by default)
-- [ ] **Quadlet integration:** Update `resume-site.container` Quadlet file to reference the backup volume mount
-- [ ] **Backup volume:** Add a `resume-site-backups` volume to `compose.yaml`. Document mount point and recommended host path
-- [ ] **Compose-based schedule:** Document using `podman compose exec` in a cron job or systemd timer for users not using Quadlets
-- [ ] **Backup health:** ~~Add a `backup_last_success` setting that `manage.py backup` updates on completion.~~ *(setting write shipped with 17.1 — the settings-table row is maintained by `create_backup` on every successful run, including `--db-only`. The admin-dashboard "Last backup: X ago" widget is still pending.)*
-- [ ] **Documentation:** Dedicated "Backups" section in README covering: automatic setup (Quadlet/timer), manual invocation, restore procedure, offsite backup strategies (rsync, rclone, S3-compatible), and backup encryption (gpg wrapper example)
+- [x] **Systemd timer unit:** `resume-site-backup.timer` + `resume-site-backup.service` ship at the repo root. The service runs `podman exec resume-site python manage.py backup --prune --keep ${RESUME_SITE_KEEP}` (default 7) and depends on `resume-site.service` so the timer can't fire while the container is starting. The timer fires daily at 02:00 local time with `RandomizedDelaySec=30min` to avoid storage stampedes across a fleet, and `Persistent=true` so a host that was off at 02:00 catches up on next boot. Both retention count and schedule are overridable via `systemctl --user edit` without forking the unit files.
+- [x] **Quadlet integration:** `resume-site.container` now mounts `resume-site-backups:/app/backups:Z` and sets `Environment=RESUME_SITE_BACKUP_DIR=/app/backups` so the CLI writes archives to the persistent volume by default.
+- [x] **Backup volume:** `resume-site-backups` declared in `compose.yaml`'s `volumes:` block and mounted at `/app/backups` on the service. README documents the host-side path discovery via `podman volume inspect`.
+- [x] **Compose-based schedule:** README ships an `OnCalendar`-equivalent cron snippet (`0 2 * * * podman compose ... exec -T ... manage.py backup --prune --keep 7`) for operators who don't use systemd / Quadlets.
+- [x] **Backup health:** Admin dashboard now carries a "Last Backup" card (rendered via the new `time_ago` Jinja filter at `app/services/time_helpers.py`) showing the most recent `backup_last_success` timestamp, the total archive count, and the total on-disk size. A "Recent Backups" table lists the five newest archives with size + relative mtime. Tested in `tests/test_admin.py::test_dashboard_backup_card_*` (no-backups → "never" / populated → counts and listing).
+- [x] **Documentation:** README "Backup" section rewritten: manual invocation (CLI + REST API), systemd timer install (rootless + system-wide) with `systemctl edit` recipes, compose-cron alternative, restore procedure, offsite mirroring example (rclone), per-archive gpg encryption via `ExecStartPost=` drop-in, and the original `podman volume export` left as a belt-and-suspenders option.
 
 ---
 
