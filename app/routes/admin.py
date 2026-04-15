@@ -26,6 +26,7 @@ Admin features:
 import contextlib
 import ipaddress
 import os
+import re
 import secrets
 from datetime import UTC, datetime
 from urllib.parse import urlparse
@@ -781,6 +782,268 @@ def api_tokens_revoke(token_id):
     else:
         flash(_('Token was already revoked or does not exist.'), 'info')
     return redirect(url_for('admin.api_tokens'))
+
+
+# ============================================================
+# WEBHOOKS (Phase 19.2 — outbound HMAC-signed event delivery)
+# ============================================================
+#
+# Operator surface for the Phase 19.2 dispatcher in
+# ``app/services/webhooks.py``. The service layer owns CRUD, signing,
+# and delivery; these routes are pure adapters that translate form
+# submissions into service calls and render the templates.
+#
+# The master ``webhooks_enabled`` toggle still lives on the Settings
+# page (Webhooks category). Disabling it short-circuits dispatch
+# without affecting anything visible here — operators can still create,
+# edit, and test rows while the master switch is off.
+
+
+def _normalise_webhook_events_form(raw):
+    """Translate the textarea/list form submission into a clean event list.
+
+    Accepts either a JSON-array string ("Use raw JSON" power-user mode)
+    or a comma / whitespace separated string of event names. Empty input
+    becomes ``["*"]`` so a row created without explicit events still
+    receives every event (matches the schema default).
+    """
+    text = (raw or '').strip()
+    if not text:
+        return ['*']
+    # JSON array form — preserve exact ordering.
+    if text.startswith('['):
+        try:
+            import json as _json
+
+            parsed = _json.loads(text)
+            if isinstance(parsed, list):
+                return [str(e).strip() for e in parsed if str(e).strip()] or ['*']
+        except ValueError:
+            pass
+    # Otherwise treat commas, semicolons, and whitespace as separators.
+    parts = re.split(r'[\s,;]+', text)
+    cleaned = [p.strip() for p in parts if p.strip()]
+    return cleaned or ['*']
+
+
+def _generate_webhook_secret():
+    """32-byte URL-safe random string for the HMAC secret default."""
+    return secrets.token_urlsafe(32)
+
+
+@admin_bp.route('/webhooks')
+@login_required
+def webhooks():
+    """List every webhook with delivery counts + last-status hints."""
+    from app.events import Events
+    from app.services.webhooks import list_recent_deliveries, list_webhooks
+
+    db = get_db()
+    rows = list_webhooks(db)
+    recent = list_recent_deliveries(db, limit=20)
+    return render_template(
+        'admin/webhooks.html',
+        webhooks=rows,
+        recent_deliveries=recent,
+        event_choices=sorted(Events.ALL),
+        new_secret=_generate_webhook_secret(),
+    )
+
+
+@admin_bp.route('/webhooks/create', methods=['POST'])
+@login_required
+def webhooks_create():
+    """Create a new webhook subscription."""
+    from app.services.webhooks import create_webhook
+
+    db = get_db()
+    name = (request.form.get('name') or '').strip()
+    url = (request.form.get('url') or '').strip()
+    secret = (request.form.get('secret') or '').strip() or _generate_webhook_secret()
+    enabled = bool(request.form.get('enabled'))
+    events_list = _normalise_webhook_events_form(request.form.get('events'))
+
+    if not name:
+        flash(_('Name is required.'), 'error')
+        return redirect(url_for('admin.webhooks'))
+    if not url:
+        flash(_('URL is required.'), 'error')
+        return redirect(url_for('admin.webhooks'))
+    parsed = urlparse(url)
+    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        flash(_('URL must be a valid http(s) address.'), 'error')
+        return redirect(url_for('admin.webhooks'))
+
+    wh_id = create_webhook(
+        db,
+        name=name,
+        url=url,
+        secret=secret,
+        events=events_list,
+        enabled=enabled,
+    )
+    log_action(
+        db,
+        action='Created webhook',
+        category='webhooks',
+        detail=f'id={wh_id} name={name} events={",".join(events_list)}',
+    )
+    flash(_('Webhook created.'), 'success')
+    return redirect(url_for('admin.webhooks'))
+
+
+@admin_bp.route('/webhooks/<int:webhook_id>/update', methods=['POST'])
+@login_required
+def webhooks_update(webhook_id):
+    """Edit fields on an existing webhook row.
+
+    Empty ``secret`` keeps the current value (the form deliberately
+    masks the existing secret so an operator can rotate it without
+    being able to read it back).
+    """
+    from app.services.webhooks import get_webhook, update_webhook
+
+    db = get_db()
+    existing = get_webhook(db, webhook_id)
+    if existing is None:
+        flash(_('Webhook not found.'), 'error')
+        return redirect(url_for('admin.webhooks'))
+
+    fields = {}
+    if 'name' in request.form:
+        fields['name'] = (request.form.get('name') or '').strip() or existing.name
+    if 'url' in request.form:
+        url = (request.form.get('url') or '').strip()
+        if url:
+            parsed = urlparse(url)
+            if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+                flash(_('URL must be a valid http(s) address.'), 'error')
+                return redirect(url_for('admin.webhooks'))
+            fields['url'] = url
+    if 'events' in request.form:
+        fields['events'] = _normalise_webhook_events_form(request.form.get('events'))
+    if 'enabled' in request.form:
+        fields['enabled'] = bool(request.form.get('enabled'))
+    new_secret = (request.form.get('secret') or '').strip()
+    if new_secret:
+        fields['secret'] = new_secret
+    # Manual reset of the auto-disable counter — handy after fixing a
+    # downstream and re-enabling the row.
+    if request.form.get('reset_failures'):
+        fields['failure_count'] = 0
+
+    update_webhook(db, webhook_id, **fields)
+    log_action(
+        db,
+        action='Updated webhook',
+        category='webhooks',
+        detail=f'id={webhook_id} fields={",".join(sorted(fields))}',
+    )
+    flash(_('Webhook updated.'), 'success')
+    return redirect(url_for('admin.webhooks'))
+
+
+@admin_bp.route('/webhooks/<int:webhook_id>/delete', methods=['POST'])
+@login_required
+def webhooks_delete(webhook_id):
+    """Hard-delete a webhook row (cascades its delivery log)."""
+    from app.services.webhooks import delete_webhook, get_webhook
+
+    db = get_db()
+    existing = get_webhook(db, webhook_id)
+    if existing is None:
+        flash(_('Webhook not found.'), 'error')
+        return redirect(url_for('admin.webhooks'))
+
+    delete_webhook(db, webhook_id)
+    log_action(
+        db,
+        action='Deleted webhook',
+        category='webhooks',
+        detail=f'id={webhook_id} name={existing.name}',
+    )
+    flash(_('Webhook deleted.'), 'success')
+    return redirect(url_for('admin.webhooks'))
+
+
+@admin_bp.route('/webhooks/<int:webhook_id>/test', methods=['POST'])
+@login_required
+def webhooks_test(webhook_id):
+    """Fire a synthetic test delivery so operators can verify endpoint wiring.
+
+    Uses :func:`deliver_now` synchronously — the operator sees the
+    response inline as a flash message rather than having to refresh
+    the deliveries panel after an async fan-out.
+    """
+    from app.services.webhooks import (
+        deliver_now,
+        get_webhook,
+        increment_failures,
+        record_delivery,
+        reset_failures,
+    )
+
+    db = get_db()
+    webhook = get_webhook(db, webhook_id)
+    if webhook is None:
+        flash(_('Webhook not found.'), 'error')
+        return redirect(url_for('admin.webhooks'))
+
+    payload = {
+        'test': True,
+        'message': 'resume-site test delivery',
+        'sent_at': datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ'),
+    }
+    result = deliver_now(webhook, 'webhook.test', payload, timeout=5)
+    record_delivery(db, result)
+    if 200 <= result.status_code < 300:
+        reset_failures(db, webhook_id)
+        flash(
+            _('Test delivery succeeded — HTTP %(status)d in %(ms)d ms.')
+            % {'status': result.status_code, 'ms': result.response_time_ms},
+            'success',
+        )
+    else:
+        # Read the configured threshold so the auto-disable contract
+        # mirrors the bus dispatcher.
+        from app.models import get_setting
+
+        try:
+            threshold = max(0, int(get_setting(db, 'webhook_failure_threshold', '10') or 10))
+        except (TypeError, ValueError):
+            threshold = 10
+        increment_failures(db, webhook_id, threshold=threshold)
+        flash(
+            _('Test delivery failed — HTTP %(status)d. %(error)s')
+            % {'status': result.status_code, 'error': result.error},
+            'error',
+        )
+    log_action(
+        db,
+        action='Tested webhook',
+        category='webhooks',
+        detail=f'id={webhook_id} status={result.status_code}',
+    )
+    return redirect(url_for('admin.webhooks'))
+
+
+@admin_bp.route('/webhooks/<int:webhook_id>/deliveries')
+@login_required
+def webhooks_deliveries(webhook_id):
+    """Per-webhook delivery log — last 100 attempts in newest-first order."""
+    from app.services.webhooks import get_webhook, list_recent_deliveries
+
+    db = get_db()
+    webhook = get_webhook(db, webhook_id)
+    if webhook is None:
+        flash(_('Webhook not found.'), 'error')
+        return redirect(url_for('admin.webhooks'))
+    deliveries = list_recent_deliveries(db, webhook_id=webhook_id, limit=100)
+    return render_template(
+        'admin/webhook_deliveries.html',
+        webhook=webhook,
+        deliveries=deliveries,
+    )
 
 
 # ============================================================

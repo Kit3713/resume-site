@@ -1,0 +1,58 @@
+{# Per-webhook delivery log — last 100 attempts, newest first. #}
+{% extends "admin/base_admin.html" %}
+
+{% block title %}{{ _('Webhook Deliveries — %(name)s', name=webhook.name) }}{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+    <div class="admin-page__header">
+        <h1 class="admin-page__title">{{ _('Deliveries') }} — {{ webhook.name }}</h1>
+        <a href="{{ url_for('admin.webhooks') }}" class="btn btn--sm">{{ _('Back to Webhooks') }}</a>
+    </div>
+
+    <p class="admin-help">
+        <strong>{{ _('URL:') }}</strong> <code>{{ webhook.url }}</code><br>
+        <strong>{{ _('Events:') }}</strong>
+        {% for evt in webhook.events %}<span class="tag tag--sm">{{ evt }}</span>{% endfor %}<br>
+        <strong>{{ _('Status:') }}</strong>
+        {% if webhook.enabled %}{{ _('enabled') }}{% else %}{{ _('disabled') }}{% endif %}
+        · {{ _('failure count:') }} {{ webhook.failure_count }}
+    </p>
+
+    {% if deliveries %}
+    <div class="admin-section">
+        <h2 class="admin-section__title">{{ _('Last %(n)d attempts', n=deliveries|length) }}</h2>
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>{{ _('Event') }}</th>
+                    <th>{{ _('Status') }}</th>
+                    <th>{{ _('Latency') }}</th>
+                    <th>{{ _('Error') }}</th>
+                    <th>{{ _('When') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for delivery in deliveries %}
+                <tr>
+                    <td><code>{{ delivery.event }}</code></td>
+                    <td>
+                        {% if 200 <= delivery.status_code < 300 %}
+                            <span class="tag tag--sm" style="background: rgba(48,209,88,0.2); color: #30d158;">{{ delivery.status_code }}</span>
+                        {% else %}
+                            <span class="tag tag--sm" style="background: rgba(255,69,58,0.2); color: #ff453a;">{{ delivery.status_code }}</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ delivery.response_time_ms }} ms</td>
+                    <td>{{ delivery.error_message }}</td>
+                    <td>{{ delivery.created_at[:19] | replace('T', ' ') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="admin-empty">{{ _('No deliveries recorded for this webhook yet.') }}</p>
+    {% endif %}
+</div>
+{% endblock %}

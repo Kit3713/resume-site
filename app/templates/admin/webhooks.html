@@ -1,0 +1,172 @@
+{# Webhooks — outbound HMAC-signed event delivery (Phase 19.2). #}
+{% extends "admin/base_admin.html" %}
+
+{% block title %}{{ _('Webhooks') }}{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+    <div class="admin-page__header">
+        <h1 class="admin-page__title">{{ _('Webhooks') }}</h1>
+    </div>
+
+    <p class="admin-help">
+        {{ _('Each webhook receives a JSON envelope POST for every matching event, signed with HMAC-SHA256 in the X-Webhook-Signature header. Delivery is asynchronous and fail-open: a slow or broken downstream never blocks the request that fired the event. The master toggle lives on the Settings page (Webhooks category) — when off, no rows fire even if listed below.') }}
+    </p>
+
+    <!-- Create new webhook -->
+    <div class="admin-section">
+        <h2 class="admin-section__title">{{ _('Add Webhook') }}</h2>
+        <form method="POST" action="{{ url_for('admin.webhooks_create') }}" class="admin-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group">
+                <label class="form-label" for="webhook-name">{{ _('Name') }}</label>
+                <input type="text" id="webhook-name" name="name" class="form-input" placeholder="Slack #releases" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="webhook-url">{{ _('Destination URL') }}</label>
+                <input type="url" id="webhook-url" name="url" class="form-input" placeholder="https://hooks.example.com/abc123" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="webhook-secret">{{ _('HMAC Secret') }}</label>
+                <input type="text" id="webhook-secret" name="secret" class="form-input" value="{{ new_secret }}">
+                <p class="form-help">{{ _('Pre-filled with a fresh 32-byte URL-safe random string. Replace if your downstream requires a specific value. Not displayed back after save — keep your own copy.') }}</p>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="webhook-events">{{ _('Events') }}</label>
+                <textarea id="webhook-events" name="events" class="form-input" rows="3" placeholder="*">*</textarea>
+                <p class="form-help">
+                    {{ _('Comma-, semicolon-, or whitespace-separated event names. A single asterisk (*) subscribes to every canonical event. Recognised event names:') }}
+                    <code>{{ event_choices | join(', ') }}</code>
+                </p>
+            </div>
+            <div class="form-group">
+                <label class="form-check"><input type="checkbox" name="enabled" checked> {{ _('Enabled') }}</label>
+            </div>
+            <button type="submit" class="btn btn--primary btn--sm">{{ _('Add Webhook') }}</button>
+        </form>
+    </div>
+
+    <!-- Existing webhooks -->
+    {% if webhooks %}
+    <div class="admin-section">
+        <h2 class="admin-section__title">{{ _('Configured Webhooks') }}</h2>
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>{{ _('Name') }}</th>
+                    <th>{{ _('URL') }}</th>
+                    <th>{{ _('Events') }}</th>
+                    <th>{{ _('Status') }}</th>
+                    <th>{{ _('Failures') }}</th>
+                    <th>{{ _('Last Delivery') }}</th>
+                    <th>{{ _('Actions') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for hook in webhooks %}
+                <tr>
+                    <td>{{ hook.name }}</td>
+                    <td><code style="font-size: 0.85em">{{ hook.url }}</code></td>
+                    <td>
+                        {% for evt in hook.events %}
+                            <span class="tag tag--sm">{{ evt }}</span>
+                        {% endfor %}
+                    </td>
+                    <td>
+                        {% if hook.enabled %}
+                            <span class="tag tag--sm" style="background: rgba(48,209,88,0.2); color: #30d158;">{{ _('Enabled') }}</span>
+                        {% else %}
+                            <span class="tag tag--sm" style="background: rgba(255,69,58,0.2); color: #ff453a;">{{ _('Disabled') }}</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ hook.failure_count }}</td>
+                    <td>{{ hook.last_triggered_at[:16] | replace('T', ' ') if hook.last_triggered_at else '—' }}</td>
+                    <td>
+                        <details>
+                            <summary class="btn btn--sm">{{ _('Edit') }}</summary>
+                            <form method="POST" action="{{ url_for('admin.webhooks_update', webhook_id=hook.id) }}" class="admin-form" style="margin-top: 0.5rem;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <div class="form-group">
+                                    <label class="form-label">{{ _('Name') }}</label>
+                                    <input type="text" name="name" class="form-input" value="{{ hook.name }}">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">{{ _('URL') }}</label>
+                                    <input type="url" name="url" class="form-input" value="{{ hook.url }}">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">{{ _('Events') }}</label>
+                                    <textarea name="events" class="form-input" rows="2">{{ hook.events | join(', ') }}</textarea>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">{{ _('Rotate Secret') }}</label>
+                                    <input type="text" name="secret" class="form-input" placeholder="{{ _('Leave blank to keep current') }}">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-check"><input type="checkbox" name="enabled" {% if hook.enabled %}checked{% endif %}> {{ _('Enabled') }}</label>
+                                </div>
+                                {% if hook.failure_count > 0 %}
+                                <div class="form-group">
+                                    <label class="form-check"><input type="checkbox" name="reset_failures" value="1"> {{ _('Reset failure counter') }}</label>
+                                </div>
+                                {% endif %}
+                                <button type="submit" class="btn btn--primary btn--sm">{{ _('Save') }}</button>
+                            </form>
+                        </details>
+                        <form method="POST" action="{{ url_for('admin.webhooks_test', webhook_id=hook.id) }}" style="display:inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn--sm">{{ _('Test') }}</button>
+                        </form>
+                        <a href="{{ url_for('admin.webhooks_deliveries', webhook_id=hook.id) }}" class="btn btn--sm">{{ _('Log') }}</a>
+                        <form method="POST" action="{{ url_for('admin.webhooks_delete', webhook_id=hook.id) }}" style="display:inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn--danger btn--sm" onclick="return confirm('{{ _('Delete this webhook? Its delivery log will also be removed.') }}')">{{ _('Delete') }}</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="admin-empty">{{ _('No webhooks configured.') }}</p>
+    {% endif %}
+
+    <!-- Recent deliveries (cross-webhook) -->
+    {% if recent_deliveries %}
+    <div class="admin-section">
+        <h2 class="admin-section__title">{{ _('Recent Deliveries (all webhooks)') }}</h2>
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>{{ _('Webhook ID') }}</th>
+                    <th>{{ _('Event') }}</th>
+                    <th>{{ _('Status') }}</th>
+                    <th>{{ _('Time') }}</th>
+                    <th>{{ _('Error') }}</th>
+                    <th>{{ _('When') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for delivery in recent_deliveries %}
+                <tr>
+                    <td>{{ delivery.webhook_id }}</td>
+                    <td><code>{{ delivery.event }}</code></td>
+                    <td>
+                        {% if 200 <= delivery.status_code < 300 %}
+                            <span class="tag tag--sm" style="background: rgba(48,209,88,0.2); color: #30d158;">{{ delivery.status_code }}</span>
+                        {% else %}
+                            <span class="tag tag--sm" style="background: rgba(255,69,58,0.2); color: #ff453a;">{{ delivery.status_code }}</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ delivery.response_time_ms }} ms</td>
+                    <td>{{ delivery.error_message[:80] }}{{ '…' if delivery.error_message and delivery.error_message|length > 80 else '' }}</td>
+                    <td>{{ delivery.created_at[:16] | replace('T', ' ') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

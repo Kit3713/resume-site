@@ -7,6 +7,22 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.0
 
+### Added — Phase 19.2 (admin surface): Webhook Management UI + REST API
+- `/admin/webhooks` — operator-facing list / create / edit / delete / test page. Each row shows name, URL, subscribed events (as tags), enabled/disabled badge, consecutive failure count, and last-delivery timestamp. The cross-webhook "Recent Deliveries" panel lists the last 20 attempts with status-coded chips. Inline `<details>` editor lets operators rotate the secret, change the event subscription, toggle enabled, and reset the failure counter without leaving the list view.
+- `/admin/webhooks/<id>/deliveries` — per-webhook attempt log (last 100, newest first) with event, status code, latency, error message, and timestamp.
+- Admin sidebar link added under the existing "API Tokens" entry so the new surface is discoverable.
+- Synchronous `Test` button on every row fires a `webhook.test` event with a small JSON payload through `deliver_now`, records the attempt in `webhook_deliveries`, and bumps `failure_count` (or resets it on 2xx) under the same auto-disable contract as the bus dispatcher. The result surfaces as an inline flash so the operator sees the HTTP status and latency without polling the deliveries log.
+- `/api/v1/admin/webhooks` (Bearer `admin` scope) — full CRUD over the `webhooks` table:
+  - `GET /admin/webhooks` — list every subscription. Secrets are intentionally OMITTED from the response payload.
+  - `POST /admin/webhooks` — create a new subscription. Body accepts `name`, `url`, optional `secret` (auto-generated 32-byte URL-safe value when omitted), `events` (list or comma-separated string; defaults to `["*"]`), and `enabled` (default true). The response payload is the standard webhook record PLUS the `secret` field echoed exactly once — the only endpoint that ever returns it.
+  - `GET /admin/webhooks/<id>` — fetch one row (no secret).
+  - `PUT /admin/webhooks/<id>` — partial update. All fields optional; `reset_failures: true` zeros the consecutive-failure counter for manual recovery after fixing a downstream. The rotated secret, if supplied, is NOT echoed back.
+  - `DELETE /admin/webhooks/<id>` — hard delete (cascades the delivery log).
+  - `POST /admin/webhooks/<id>/test` — fires a synchronous test delivery; returns `{ok, status_code, response_time_ms, error}` so a CLI can trigger a verifier from a deploy script.
+  - `GET /admin/webhooks/<id>/deliveries?limit=N` — per-webhook delivery log, newest first (limit clamped to [1, 500], default 50).
+- OpenAPI 3.0 spec extended (`docs/openapi.yaml`) with five new `/admin/webhooks*` operations and four schemas: `Webhook`, `WebhookCreate`, `WebhookUpdate`, `WebhookCreateResult` (the create-only secret echo), `WebhookTestResult`, `WebhookDelivery`. The Phase 16.5 drift guard catches any future divergence between the spec and the live URL map.
+- 42 new tests in `tests/test_webhooks_admin.py` (779 → 821 total): admin auth + IP gates (7 routes × auth + IP), CRUD round-trip and validation (URL scheme rejection, missing name, default `["*"]` events), partial update (secret-keep-when-blank, rotate, reset_failures, 404 paths), the synchronous `/test` button success + `URLError` failure paths (with `failure_count` increment), per-webhook delivery log rendering, REST API auth gating (admin scope required, write scope rejected), one-time secret echo contract (verified by asserting the secret bytes never appear in any GET response), CSV/list `events` coercion, partial PUT semantics, ETag/If-None-Match contract on the list endpoint, and admin activity log instrumentation.
+
 ### Added — Phase 19.2 (foundation): Webhook Dispatch Subsystem
 - `migrations/009_webhooks.sql` — `webhooks` (id, name, url, secret, events JSON, enabled, failure_count, created_at, last_triggered_at) and `webhook_deliveries` (per-attempt log; cascades on webhook delete) tables, with indexes on `webhooks(enabled)` and `webhook_deliveries(webhook_id, created_at DESC)`.
 - `app/services/webhooks.py` — full dispatch subsystem (~600 lines). Stdlib only (`urllib.request` + `hmac` + `hashlib` + `threading` + `sqlite3`); zero new runtime deps.

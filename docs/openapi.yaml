@@ -596,6 +596,106 @@ components:
           type: boolean
           default: false
 
+    # ---- Webhooks (Phase 19.2) ------------------------------------------
+    Webhook:
+      type: object
+      description: |
+        One webhook subscription. The HMAC `secret` is intentionally
+        omitted from list/get/update responses — it is echoed exactly
+        once in the create response and otherwise opaque server-side.
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        url: { type: string, format: uri }
+        events:
+          type: array
+          items: { type: string }
+          description: Canonical event names. `["*"]` means every event.
+        enabled: { type: boolean }
+        failure_count:
+          type: integer
+          description: Consecutive non-2xx responses since the last success.
+        created_at: { type: string, format: date-time }
+        last_triggered_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    WebhookCreate:
+      type: object
+      required: [name, url]
+      properties:
+        name: { type: string, minLength: 1 }
+        url:
+          type: string
+          format: uri
+          description: HTTP(S) destination. Validated with urlparse.
+        secret:
+          type: string
+          description: HMAC-SHA256 secret. Auto-generated (32-byte URL-safe) when omitted.
+        events:
+          oneOf:
+            - type: array
+              items: { type: string }
+            - type: string
+              description: Comma-separated alternative form for curl friendliness.
+          default: ['*']
+        enabled:
+          type: boolean
+          default: true
+
+    WebhookUpdate:
+      type: object
+      description: |
+        All fields optional; omitted fields keep their current value.
+        Setting `reset_failures` to `true` zeros the consecutive-failure
+        counter (manual recovery after fixing a downstream).
+      properties:
+        name: { type: string }
+        url: { type: string, format: uri }
+        secret: { type: string }
+        events:
+          oneOf:
+            - type: array
+              items: { type: string }
+            - type: string
+        enabled: { type: boolean }
+        reset_failures: { type: boolean }
+
+    WebhookCreateResult:
+      allOf:
+        - $ref: '#/components/schemas/Webhook'
+        - type: object
+          properties:
+            secret:
+              type: string
+              description: Echoed once on creation. Store immediately.
+
+    WebhookTestResult:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          description: True when the response status is in [200, 300).
+        status_code:
+          type: integer
+          description: HTTP status from the downstream. `0` for a network error / timeout.
+        response_time_ms: { type: integer }
+        error:
+          type: string
+          description: Empty on success. Truncated to 500 chars otherwise.
+
+    WebhookDelivery:
+      type: object
+      properties:
+        id: { type: integer }
+        webhook_id: { type: integer }
+        event: { type: string }
+        status_code: { type: integer }
+        response_time_ms: { type: integer }
+        error_message: { type: string }
+        created_at: { type: string, format: date-time }
+
   # ---- Shared responses -----------------------------------------------
   responses:
     NotFound:
@@ -1575,3 +1675,204 @@ paths:
               example:
                 error: 'I/O failure during backup: No space left on device'
                 code: BACKUP_FAILED
+
+  /admin/webhooks:
+    get:
+      tags: [Admin]
+      operationId: listWebhooks
+      summary: List every webhook subscription.
+      description: |
+        Returns every row in the `webhooks` table, newest first. The
+        HMAC `secret` field is intentionally omitted from each entry —
+        secrets are echoed once on create and otherwise opaque.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Webhook' }
+        '304': { description: Not modified. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    post:
+      tags: [Admin]
+      operationId: createWebhook
+      summary: Register a new webhook subscription.
+      description: |
+        Creates a row in the `webhooks` table. The response payload is
+        the standard webhook record PLUS the `secret` field echoed
+        once — the secret is never returned by any other endpoint, so
+        store it immediately.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookCreate' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/WebhookCreateResult' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/webhooks/{webhook_id}:
+    get:
+      tags: [Admin]
+      operationId: getWebhook
+      summary: Fetch one webhook by id.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: webhook_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Webhook' }
+        '304': { description: Not modified. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    put:
+      tags: [Admin]
+      operationId: updateWebhook
+      summary: Update fields on an existing webhook.
+      description: |
+        All fields optional; omitted fields keep their current value.
+        `reset_failures: true` zeros the consecutive-failure counter —
+        useful after fixing a downstream and re-enabling the row. The
+        rotated `secret`, if supplied, is NOT echoed in the response.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: webhook_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookUpdate' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Webhook' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    delete:
+      tags: [Admin]
+      operationId: deleteWebhook
+      summary: Hard-delete a webhook (cascades its delivery log).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: webhook_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/webhooks/{webhook_id}/test:
+    post:
+      tags: [Admin]
+      operationId: testWebhook
+      summary: Fire a synthetic test delivery (synchronous).
+      description: |
+        Sends a `webhook.test` event with a small JSON payload and
+        returns the result inline. Updates `failure_count` and the
+        delivery log under the same contract as the bus dispatcher:
+        2xx → reset; non-2xx → increment, auto-disable on threshold.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: webhook_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: OK (the test ran; check `ok` for the downstream verdict).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/WebhookTestResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/webhooks/{webhook_id}/deliveries:
+    get:
+      tags: [Admin]
+      operationId: listWebhookDeliveries
+      summary: Per-webhook delivery log (newest first).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: webhook_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/WebhookDelivery' }
+        '304': { description: Not modified. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
