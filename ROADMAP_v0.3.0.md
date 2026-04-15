@@ -386,31 +386,31 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 16.1 — API Blueprint and Middleware
 
-- [ ] Create `app/routes/api.py` blueprint mounted at `/api/v1/`
-- [ ] CSRF exemption on all API routes (token auth replaces CSRF for non-browser clients)
-- [ ] JSON request/response only — `Content-Type: application/json` enforced on POST/PUT/PATCH
-- [ ] Versioned URL prefix (`/api/v1/`) so future breaking changes can coexist
-- [ ] Standard error response format: `{"error": "message", "code": "ERROR_CODE", "details": {...}}`
-- [ ] Standard pagination format: `{"data": [...], "pagination": {"page": 1, "per_page": 20, "total": 142, "pages": 8}}`
-- [ ] `Accept-Language` header respected for multilingual content responses
-- [ ] `ETag` and `If-None-Match` on read endpoints for conditional requests (304 Not Modified)
+- [x] **Blueprint:** `app/routes/api.py` mounted at `/api/v1/`. Registered and CSRF-exempted in `app/__init__.py` (CSRF is a browser-form mitigation; the API uses Bearer tokens on writes and public reads).
+- [x] **CSRF exemption:** `csrf.exempt(api_bp)` in the factory. Covered by a regression test (`test_csrf_does_not_apply_to_api`) that POSTs to a read endpoint on a CSRF-enabled fixture and expects 405 rather than 400.
+- [x] **Versioned URL prefix:** `url_prefix='/api/v1'`. Future `/api/v2/` can coexist without route-name collisions.
+- [x] **Uniform error envelope:** `{"error": "<human message>", "code": "<STABLE_TAG>"}` with optional `details` dict. App-level `errorhandler(404)` and `errorhandler(405)` match on `request.path.startswith('/api/')` and return the JSON envelope (the blueprint's own errorhandlers don't fire for unmatched paths, which is why the handler lives at app level).
+- [x] **Uniform pagination envelope:** `{"data": [...], "pagination": {"page", "per_page", "total", "pages"}}`. Built on `app.services.pagination.paginate`. `per_page` is clamped to `[1, 100]` via `_parse_per_page`; malformed inputs fall back to the endpoint default.
+- [x] **ETag + If-None-Match:** `_conditional_response` computes a strong ETag (`"<sha256[:32]>"`) from the canonicalised JSON body (`sort_keys=True`, `separators=(',', ':')`), returns 304 on a matching `If-None-Match`, echoes the ETag and sets `Cache-Control: no-cache` on both 200 and 304 responses.
+- [ ] **JSON Content-Type enforcement on POST/PUT/PATCH:** deferred to Phase 16.3 (write endpoints land then; no POST body on any current route, so the check would be no-op).
+- [ ] **`Accept-Language` respected for multilingual content:** deferred to Phase 15 (user-content translation junction tables) — the query layer there will accept a `locale` argument which the API will pull from `Accept-Language`.
 
 ### 16.2 — Public Read Endpoints (No Auth Required)
 
-- [ ] `GET /api/v1/site` — site metadata (title, tagline, availability status, available locales)
-- [ ] `GET /api/v1/content/:slug` — single content block
-- [ ] `GET /api/v1/services` — visible services list
-- [ ] `GET /api/v1/stats` — visible stats
-- [ ] `GET /api/v1/portfolio` — visible photos with pagination, optional `?category=` filter
-- [ ] `GET /api/v1/portfolio/:id` — single photo with metadata
-- [ ] `GET /api/v1/case-studies/:slug` — single case study
-- [ ] `GET /api/v1/projects` — visible projects
-- [ ] `GET /api/v1/projects/:slug` — single project detail
-- [ ] `GET /api/v1/testimonials` — approved reviews with pagination, optional `?tier=featured` filter
-- [ ] `GET /api/v1/certifications` — visible certifications
-- [ ] `GET /api/v1/blog` — published posts with pagination, optional `?tag=` filter
-- [ ] `GET /api/v1/blog/:slug` — single blog post with rendered content
-- [ ] `GET /api/v1/blog/tags` — all tags with post counts
+- [x] `GET /api/v1/site` — site metadata (title, tagline, availability_status, hero strings, feature toggles for blog / case studies / contact form, available_locales, api_version, server_time).
+- [x] `GET /api/v1/content/:slug` — single content block (id, slug, title, content, plain_text, updated_at). 404 with `NOT_FOUND` code when absent.
+- [x] `GET /api/v1/services` — list via `get_visible_services`.
+- [x] `GET /api/v1/stats` — list via `get_visible_stats`.
+- [x] `GET /api/v1/portfolio` — paginated photos (hidden tier excluded), optional `?category=` exact-match filter. Pagination envelope on every response.
+- [x] `GET /api/v1/portfolio/:id` — single visible photo. Hidden photos return 404 (not 403) so the endpoint doesn't reveal their existence.
+- [x] `GET /api/v1/portfolio/categories` — distinct category names across visible photos (convenience for UI filter bars; not in the original roadmap bullet but falls out naturally).
+- [x] `GET /api/v1/testimonials` — paginated approved reviews, optional `?tier=featured|standard` filter. Defaults to the featured-first ordering from `get_all_approved_reviews`.
+- [x] `GET /api/v1/certifications` — list via `get_visible_certifications`.
+- [ ] `GET /api/v1/case-studies/:slug` — deferred to Phase 16.2b (case study write-ups touch `get_case_study_by_slug` and need a case-study toggle check).
+- [ ] `GET /api/v1/projects` / `GET /api/v1/projects/:slug` — deferred to Phase 16.2b.
+- [ ] `GET /api/v1/blog` / `GET /api/v1/blog/:slug` / `GET /api/v1/blog/tags` — deferred to Phase 16.2c (blog engine has its own query layer in `app.services.blog` that needs a thin API wrapper; also gated by the `blog_enabled` setting surfaced in `/site`).
+
+**Tests:** 29 tests in `tests/test_api.py` covering every shipped endpoint, the ETag/304 contract, pagination math at boundaries, `per_page` clamping, `?page=` malformed-input handling, hidden-row 404 leak prevention, empty-category exclusion in `/portfolio/categories`, visible-only filtering for services/stats/certifications, the `{error, code}` envelope on 404/405, and the CSRF-exemption regression test.
 
 ### 16.3 — Authenticated Write Endpoints (Token Required — `write` scope)
 

@@ -211,6 +211,7 @@ def create_app(config_path=None):
 
     # --- 6. Blueprints ---
     from app.routes.admin import admin_bp
+    from app.routes.api import api_bp
     from app.routes.blog import blog_bp
     from app.routes.blog_admin import blog_admin_bp
     from app.routes.contact import contact_bp
@@ -227,6 +228,12 @@ def create_app(config_path=None):
     app.register_blueprint(review_bp)
     app.register_blueprint(locale_bp)
     app.register_blueprint(metrics_bp)
+    app.register_blueprint(api_bp)
+    # The REST API uses Bearer-token auth (Phase 13.4) on write/admin
+    # routes and public access on reads. CSRF is a browser-form
+    # mitigation that doesn't apply to a JSON API consumed by
+    # non-browser clients, so the entire blueprint opts out.
+    csrf.exempt(api_bp)
 
     # --- 7. Request ID propagation (Phase 18.1) ---
     # Assigned before analytics so any future request-scoped logging can
@@ -379,6 +386,34 @@ def create_app(config_path=None):
             'Please quote the request ID when reporting this problem.\n'
         )
         return body, 500, {'Content-Type': 'text/plain; charset=utf-8'}
+
+    # --- 8d. JSON 404/405 for /api/ paths (Phase 16.1) ---
+    # Flask's routing dispatches unmatched URLs to an app-level 404
+    # BEFORE any blueprint gets a chance to handle it, so the API
+    # blueprint's own errorhandler(404) cannot fire for an unknown
+    # /api/v1/... path. Register app-level handlers that return the
+    # uniform JSON envelope for every /api/ request and fall back to
+    # Flask's default HTML for non-API paths.
+
+    @app.errorhandler(404)
+    def _handle_404(exc):
+        if request.path.startswith('/api/'):
+            return (
+                {'error': 'Not found', 'code': 'NOT_FOUND'},
+                404,
+                {'Content-Type': 'application/json'},
+            )
+        return exc
+
+    @app.errorhandler(405)
+    def _handle_405(exc):
+        if request.path.startswith('/api/'):
+            return (
+                {'error': 'Method not allowed', 'code': 'METHOD_NOT_ALLOWED'},
+                405,
+                {'Content-Type': 'application/json'},
+            )
+        return exc
 
     # --- 9. Security response headers ---
     @app.after_request
