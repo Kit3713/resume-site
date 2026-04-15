@@ -20,8 +20,10 @@ Usage:
 """
 
 import contextlib
+import logging
 import os
 import re
+import time
 import uuid
 
 from flask import Flask, g, request
@@ -131,6 +133,15 @@ def create_app(config_path=None):
     app.config['SITE_CONFIG'] = site_config  # Full config dict available to services
     app.config['WTF_CSRF_TIME_LIMIT'] = 3600  # CSRF token expires after 1 hour
 
+    # --- 1b. Structured logging (Phase 18.1) ---
+    # Must run after config load so the secret_key is available as a salt
+    # for client-IP hashing. Idempotent — safe in test fixtures that
+    # build multiple apps in one process.
+    from app.services.logging import configure_logging, get_logger
+
+    configure_logging(app)
+    request_logger = get_logger('app.request')
+
     # Session cookie hardening. SECURE defaults to True in production; a
     # `session_cookie_secure: false` entry in config.yaml disables it for
     # plain-HTTP local development. SAMESITE=Lax blocks CSRF-style cross-site
@@ -220,10 +231,54 @@ def create_app(config_path=None):
     # correlate with the ID a reverse proxy already sent us.
     app.before_request(_assign_request_id)
 
+    # --- 7b. Request-timing + client-IP hashing (Phase 18.1) ---
+    # Runs after _assign_request_id so g.request_id is available to the
+    # _RequestContextFilter installed by configure_logging().
+    from app.services.logging import hash_client_ip
+
+    def _start_request_timer():
+        g.request_start = time.monotonic()
+        g.client_ip_hash = hash_client_ip(request.remote_addr or '', app.secret_key or '')
+
+    app.before_request(_start_request_timer)
+
     # --- 8. Analytics middleware ---
     from app.services.analytics import track_page_view
 
     app.before_request(track_page_view)
+
+    # --- 8b. Structured request log (Phase 18.1) ---
+    # Registered BEFORE set_security_headers below. Flask invokes
+    # after_request callbacks in reverse registration order, so this
+    # hook runs LAST — it sees the finalised status code and headers.
+    @app.after_request
+    def _log_request(response):
+        start = g.get('request_start')
+        duration_ms = int((time.monotonic() - start) * 1000) if start is not None else 0
+        status = response.status_code
+        if status >= 500:
+            level = logging.ERROR
+        elif status >= 400:
+            level = logging.WARNING
+        else:
+            level = logging.INFO
+
+        request_logger.log(
+            level,
+            '%s %s %d %dms',
+            request.method,
+            request.path,
+            status,
+            duration_ms,
+            extra={
+                'method': request.method,
+                'path': request.path,
+                'status_code': status,
+                'duration_ms': duration_ms,
+                'user_agent': (request.headers.get('User-Agent', '') or '')[:200],
+            },
+        )
+        return response
 
     # --- 9. Security response headers ---
     @app.after_request
