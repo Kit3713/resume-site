@@ -34,12 +34,42 @@ services:
     # Uncomment to use Podman secrets for SMTP password:
     # secrets:
     #   - smtp_password
+    # Liveness probe: /healthz is intentionally lightweight (no I/O,
+    # no DB) so a transient SQLite write lock or slow disk can't make
+    # the orchestrator kill the container. Use /readyz (Phase 21.2) for
+    # a real "can it serve requests right now?" check — see the
+    # commented Kubernetes readiness probe block below.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+
+    # --- Kubernetes-style probes (uncomment when running under K8s/Nomad) ---
+    # Compose itself only supports a single healthcheck (the liveness one
+    # above). The block below documents the readiness contract the
+    # ``/readyz`` endpoint exposes — k8s manifests should mirror it
+    # verbatim so the orchestrator pulls the pod from the LB rotation when
+    # the database is unreachable, migrations are pending, the photos
+    # directory is unwritable, or disk space is critically low.
+    #
+    # readinessProbe:
+    #   httpGet:
+    #     path: /readyz
+    #     port: 8080
+    #   initialDelaySeconds: 5
+    #   periodSeconds: 10
+    #   timeoutSeconds: 3
+    #   failureThreshold: 3
+    # livenessProbe:
+    #   httpGet:
+    #     path: /healthz
+    #     port: 8080
+    #   initialDelaySeconds: 10
+    #   periodSeconds: 30
+    #   timeoutSeconds: 5
+    #   failureThreshold: 3
 
   # --- Optional: Caddy reverse proxy for automatic HTTPS ---
   # Uncomment and create a Caddyfile with your domain:

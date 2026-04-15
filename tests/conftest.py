@@ -50,12 +50,36 @@ def _write_test_config(tmp_path):
 
 
 def _init_test_db(db_path):
-    """Initialize a test database from schema.sql + all migrations."""
+    """Initialize a test database from schema.sql + all migrations.
+
+    Mirrors the production ``manage.py migrate`` flow closely enough
+    that the readiness probe (Phase 21.2) sees a fully-migrated DB:
+    every migration applied gets a ``schema_version`` row, and the
+    baseline migration is recorded as version 1 because ``schema.sql``
+    already contains its tables.
+    """
     schema_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'schema.sql')
     with open(schema_path) as f:
         schema = f.read()
     conn = sqlite3.connect(db_path)
     conn.executescript(schema)
+
+    # Materialise schema_version up front so the loop below can record
+    # every applied migration. The CREATE TABLE matches manage.py's
+    # _ensure_schema_version_table() exactly.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version     INTEGER PRIMARY KEY,
+            name        TEXT NOT NULL,
+            applied_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        )
+    """)
+    # The baseline ships in schema.sql; record it as applied so the
+    # readiness probe doesn't flag it as pending.
+    conn.execute(
+        'INSERT OR IGNORE INTO schema_version (version, name) VALUES (1, ?)',
+        ('001_baseline.sql',),
+    )
 
     # Apply any additional migrations beyond the baseline schema
     migrations_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'migrations')
@@ -68,7 +92,11 @@ def _init_test_db(db_path):
                 migration_path = os.path.join(migrations_dir, fname)
                 with open(migration_path) as f:
                     conn.executescript(f.read())
-
+                conn.execute(
+                    'INSERT OR IGNORE INTO schema_version (version, name) VALUES (?, ?)',
+                    (version, fname),
+                )
+    conn.commit()
     conn.close()
 
 

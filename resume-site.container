@@ -31,6 +31,13 @@ Volume=resume-site-backups:/app/backups:Z
 # (resume-site-backup.timer) reads from the same path on the host.
 Environment=RESUME_SITE_BACKUP_DIR=/app/backups
 
+# Liveness probe: /healthz is intentionally lightweight (no I/O, no DB)
+# so a transient SQLite write lock or slow disk can't make systemd kill
+# the container. The richer ``/readyz`` endpoint (Phase 21.2) checks
+# DB connectivity, migration freshness, photo dir writability, and
+# disk headroom — appropriate for orchestrator readiness probes
+# (Kubernetes / Nomad), but too aggressive for a Podman healthcheck
+# whose only response to failure is to mark the container unhealthy.
 HealthCmd=curl -f http://localhost:8080/healthz || exit 1
 HealthInterval=30s
 HealthTimeout=5s

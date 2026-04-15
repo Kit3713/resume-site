@@ -70,26 +70,24 @@ def _get_db_path():
     return app.config['DATABASE_PATH']
 
 
-def _get_migrations_dir():
-    """Return the path to the migrations/ directory."""
-    return os.path.join(os.path.dirname(__file__), 'migrations')
-
-
-def _ensure_schema_version_table(conn):
-    """Create the schema_version tracking table if it doesn't exist."""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS schema_version (
-            version     INTEGER PRIMARY KEY,
-            name        TEXT NOT NULL,
-            applied_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-        )
-    """)
-    conn.commit()
-
-
-def _get_applied_versions(conn):
-    """Return a set of migration version numbers that have been applied."""
-    return {row[0] for row in conn.execute('SELECT version FROM schema_version').fetchall()}
+# Phase 21.2 extraction: the migration helpers moved to
+# ``app.services.migrations`` so the readiness route can import them
+# without dragging argparse + every CLI subcommand. The thin wrappers
+# below preserve the old underscore-prefixed names so this module's
+# internal call sites (and any external tooling that imported them)
+# keep working with zero behaviour change.
+from app.services.migrations import (  # noqa: E402 — top-of-file imports already loaded
+    ensure_schema_version_table as _ensure_schema_version_table,
+)
+from app.services.migrations import (
+    get_applied_versions as _get_applied_versions,
+)
+from app.services.migrations import (
+    get_migrations_dir as _get_migrations_dir,
+)
+from app.services.migrations import (
+    list_migration_files as _list_migration_files,
+)
 
 
 def _detect_existing_db(conn):
@@ -99,21 +97,6 @@ def _detect_existing_db(conn):
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     }
     return 'settings' in tables
-
-
-def _list_migration_files(migrations_dir):
-    """Return sorted (version, filename) pairs from the migrations directory."""
-    if not os.path.isdir(migrations_dir):
-        return []
-    files = []
-    for fname in sorted(os.listdir(migrations_dir)):
-        if fname.endswith('.sql') and fname[0].isdigit():
-            try:
-                version = int(fname.split('_')[0])
-                files.append((version, fname))
-            except ValueError:
-                pass
-    return files
 
 
 def _get_seeds_dir():
