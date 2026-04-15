@@ -160,7 +160,7 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
   - `trailing-whitespace` / `end-of-file-fixer` / `mixed-line-ending`
   - Document pre-commit setup in `CONTRIBUTING.md`
 - [ ] **CI quality gate:** Add a CI job that runs `ruff check`, `ruff format --check`, `bandit`, and `pip-audit` on every push. Failures block merge. This is non-negotiable — no code lands without passing static analysis
-- [ ] **Complexity tracking:** Configure `ruff` to enforce maximum cyclomatic complexity per function (threshold: 15). Functions exceeding this are flagged for refactoring. Add a `manage.py complexity-report` command that prints the top 20 most complex functions in the codebase
+- [ ] **Complexity tracking:** Configure `ruff` to enforce maximum cyclomatic complexity per function (threshold: 15). Functions exceeding this are flagged for refactoring. ~~Add a `manage.py complexity-report` command that prints the top 20 most complex functions in the codebase~~ (`complexity-report` shipped; ruff C901 gate still pending)
 - [ ] **Dead code detection:** Run `vulture` across the codebase to find unused functions, variables, and imports. Fix or document (some apparent dead code is used by Jinja2 templates or Flask's import machinery). Add `vulture` to CI as a warning (not blocking), ratchet to blocking in v0.4.0
 
 ---
