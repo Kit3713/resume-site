@@ -11,6 +11,10 @@ Commands:
     hash-password        Generate a pbkdf2:sha256 password hash for config.yaml.
     generate-secret      Generate a cryptographically secure secret_key value.
     generate-token       Create a review invitation token for a trusted contact.
+    generate-api-token   Create an API token for programmatic access (Phase 13.4).
+    rotate-api-token     Rotate a named API token (revokes the old one).
+    revoke-api-token     Revoke an API token by id.
+    list-api-tokens      List API tokens with status and metadata.
     list-reviews         Display reviews filtered by status (pending/approved/rejected).
     purge-analytics      Delete page view records older than N days.
     query-audit          Run EXPLAIN QUERY PLAN on documented hot queries.
@@ -27,6 +31,10 @@ Usage:
     python manage.py hash-password
     python manage.py generate-secret
     python manage.py generate-token --name "John Doe" --type recommendation
+    python manage.py generate-api-token --name "CI Bot" --scope read,write --expires 90d
+    python manage.py rotate-api-token --name "CI Bot"
+    python manage.py revoke-api-token --id 3
+    python manage.py list-api-tokens
     python manage.py list-reviews --status pending
     python manage.py purge-analytics --days 90
     python manage.py query-audit
@@ -1096,6 +1104,173 @@ def restore(args):
     print(f'Previous state saved to {sidecar}')
 
 
+# ---------------------------------------------------------------------------
+# API Token CLI commands (Phase 13.4)
+# ---------------------------------------------------------------------------
+
+
+def _print_api_token_banner(token):
+    """Print the one-time reveal banner for a freshly-generated API token.
+
+    The raw value is surfaced here and ONLY here — it is never persisted
+    and never reappears on subsequent CLI invocations, so the banner is
+    deliberately loud so a user piping to logs sees the warning.
+    """
+    banner = '=' * 64
+    print(banner)
+    print('API TOKEN — save this value now, it will not be shown again.')
+    print(banner)
+    print(f'ID:      {token.id}')
+    print(f'Name:    {token.name}')
+    print(f'Scope:   {token.scope}')
+    print(f'Expires: {token.expires_at or "never"}')
+    print(f'Token:   {token.raw}')
+    print(banner)
+
+
+def generate_api_token(args):
+    """Create an API token with scoped access.
+
+    The raw value is printed once to stdout; only its SHA-256 hash is
+    stored. After this command exits, the raw token cannot be recovered
+    from the database — rotate or generate a new one if lost.
+    """
+    from app import create_app
+    from app.events import Events, emit
+    from app.services.api_tokens import (
+        InvalidScopeError,
+        generate_token,
+        parse_expires,
+    )
+
+    try:
+        expires_at = parse_expires(args.expires)
+    except ValueError as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        sys.exit(2)
+
+    app = create_app()
+    db_path = app.config['DATABASE_PATH']
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        result = generate_token(
+            conn,
+            name=args.name,
+            scope=args.scope,
+            expires_at=expires_at,
+            created_by='admin',
+        )
+    except InvalidScopeError as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        sys.exit(2)
+    except ValueError as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        sys.exit(2)
+    finally:
+        conn.close()
+
+    emit(
+        Events.API_TOKEN_CREATED,
+        name=result.name,
+        scope=result.scope,
+        created_by='admin',
+        expires_at=result.expires_at or '',
+        token_id=result.id,
+    )
+    _print_api_token_banner(result)
+
+
+def rotate_api_token(args):
+    """Rotate an existing named API token.
+
+    Generates a fresh token inheriting scope + expiry from the newest
+    active row matching ``--name``, then marks the old row revoked.
+    The new raw value is printed once.
+    """
+    from app import create_app
+    from app.events import Events, emit
+    from app.services.api_tokens import TokenNotFoundError, rotate_token
+
+    app = create_app()
+    db_path = app.config['DATABASE_PATH']
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        result = rotate_token(conn, name=args.name, created_by='admin')
+    except TokenNotFoundError as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        sys.exit(2)
+    finally:
+        conn.close()
+
+    emit(
+        Events.API_TOKEN_CREATED,
+        name=result.name,
+        scope=result.scope,
+        created_by='admin',
+        expires_at=result.expires_at or '',
+        token_id=result.id,
+    )
+    _print_api_token_banner(result)
+
+
+def revoke_api_token(args):
+    """Revoke an API token by id (soft delete — row retained for audit)."""
+    from app import create_app
+    from app.services.api_tokens import revoke_token
+
+    app = create_app()
+    db_path = app.config['DATABASE_PATH']
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        changed = revoke_token(conn, args.id)
+    finally:
+        conn.close()
+
+    if not changed:
+        print(
+            f'ERROR: no active token with id {args.id} (already revoked or missing)',
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    print(f'Revoked token id={args.id}')
+
+
+def list_api_tokens(args):  # noqa: ARG001 — argparse passes args even when unused
+    """List API tokens with their status and metadata."""
+    from app import create_app
+    from app.services.api_tokens import list_tokens
+
+    app = create_app()
+    db_path = app.config['DATABASE_PATH']
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        records = list_tokens(conn, include_revoked=True)
+    finally:
+        conn.close()
+
+    if not records:
+        print('No API tokens.')
+        return
+
+    header = f'{"ID":>4} {"NAME":<24} {"SCOPE":<16} {"STATUS":<9} {"EXPIRES":<20} LAST USED'
+    print(header)
+    print('-' * len(header))
+    for r in records:
+        status = 'revoked' if r.revoked else 'active'
+        print(
+            f'{r.id:>4} {r.name[:24]:<24} {r.scope[:16]:<16} '
+            f'{status:<9} {(r.expires_at or "never")[:20]:<20} {r.last_used_at or "—"}'
+        )
+
+
 def main():
     """Parse command-line arguments and dispatch to the appropriate handler."""
     parser = argparse.ArgumentParser(description='resume-site management CLI')
@@ -1129,6 +1304,32 @@ def main():
         choices=['recommendation', 'client_review'],
         help='Token type',
     )
+
+    # API token management (Phase 13.4)
+    gat_parser = subparsers.add_parser(
+        'generate-api-token', help='Generate an API token for programmatic access'
+    )
+    gat_parser.add_argument('--name', required=True, help='Human label for the token')
+    gat_parser.add_argument(
+        '--scope',
+        required=True,
+        help='Comma-separated subset of read,write,admin (e.g. "read,write")',
+    )
+    gat_parser.add_argument(
+        '--expires',
+        default=None,
+        help='Expiry: Nd (days) / Nh (hours) / never / ISO date (YYYY-MM-DD). Default: never',
+    )
+
+    rat_parser = subparsers.add_parser(
+        'rotate-api-token', help='Rotate a named API token (revokes the old one)'
+    )
+    rat_parser.add_argument('--name', required=True, help='Name of the token to rotate')
+
+    rev_parser = subparsers.add_parser('revoke-api-token', help='Revoke an API token by id')
+    rev_parser.add_argument('--id', type=int, required=True, help='Token id to revoke')
+
+    subparsers.add_parser('list-api-tokens', help='List API tokens with status and metadata')
 
     # Review listing
     reviews_parser = subparsers.add_parser('list-reviews', help='List reviews by status')
@@ -1212,6 +1413,10 @@ def main():
         'generate-secret': generate_secret,
         'hash-password': hash_password,
         'generate-token': generate_token,
+        'generate-api-token': generate_api_token,
+        'rotate-api-token': rotate_api_token,
+        'revoke-api-token': revoke_api_token,
+        'list-api-tokens': list_api_tokens,
         'list-reviews': list_reviews,
         'purge-analytics': purge_analytics,
         'query-audit': query_audit,

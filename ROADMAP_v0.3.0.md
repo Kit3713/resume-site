@@ -188,13 +188,15 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 *This phase establishes the auth model that Phase 16 (REST API) builds on.*
 
-- [ ] **Token model:** `api_tokens` table with columns: `id`, `token_hash` (SHA-256 of the raw token), `name` (human label), `scope` (comma-separated: `read`, `write`, `admin`), `created_at`, `expires_at` (nullable — null = no expiry), `last_used_at`, `revoked` (boolean), `created_by` (admin username for future multi-user)
-- [ ] Migration: `006_api_tokens.sql`
-- [ ] **Token generation:** `manage.py generate-api-token --name "My Integration" --scope read,write --expires 90d` — prints the raw token once (never stored), stores the hash
-- [ ] **Admin UI:** Token management page — list active tokens (name, scope, last used, created), revoke, generate new. Token value shown once on creation, then hidden forever
-- [ ] **Auth middleware:** Decorator `@require_api_token(scope='read')` that checks `Authorization: Bearer <token>` header, validates hash against DB, checks scope, checks expiry, updates `last_used_at`. Returns 401 on missing/invalid, 403 on insufficient scope
-- [ ] **Rate limiting:** API routes get separate rate limits from browser routes (configurable, default 60/min for read, 30/min for write, 10/min for admin)
-- [ ] **Token rotation:** `manage.py rotate-api-token --name "My Integration"` — generates a new token, revokes the old one, prints the new value
+- [x] **Token model:** `api_tokens` table in `migrations/007_api_tokens.sql` — `id`, `token_hash` (SHA-256 UNIQUE), `name`, `scope` (comma-separated), `created_at`, `expires_at` (nullable), `last_used_at`, `revoked`, `created_by`. Three indexes: `idx_api_tokens_hash` (auth hot path), `idx_api_tokens_name` (rotate-by-name), `idx_api_tokens_created_at` (admin list). Note: `006` was already taken by `login_attempts`, so this is `007`.
+- [x] **Service layer:** `app/services/api_tokens.py` — `generate_token`, `verify_token`, `rotate_token`, `revoke_token`, `list_tokens`, `get_token`, `purge_expired`, `parse_expires`. Stdlib-only (secrets + hashlib). Scope semantics are EXPLICIT — `write` does NOT imply `read`; a `@require_api_token('read')` route rejects a write-only token. Constant-time hash comparison via `secrets.compare_digest` after the index equality lookup.
+- [x] **Token generation CLI:** `manage.py generate-api-token --name ... --scope ... [--expires 90d|7d|24h|never|ISO-date]`. Prints a loud one-time reveal banner; only the hash hits disk. Emits `Events.API_TOKEN_CREATED` with a redacted payload (no raw, no hash).
+- [x] **Token rotation CLI:** `manage.py rotate-api-token --name ...` — generates a fresh token inheriting scope + expires_at from the newest active match, marks the old row revoked, prints the new raw value once.
+- [x] **Revoke / list CLI:** `manage.py revoke-api-token --id N` and `manage.py list-api-tokens` (table view with name / scope / status / expires / last used).
+- [x] **Admin UI:** `/admin/api-tokens` lists every token (active + revoked). `POST /admin/api-tokens/generate` + `GET /admin/api-tokens/reveal` implement the one-time reveal via session-held-and-popped raw value — refresh / back-button cannot re-show. `POST /admin/api-tokens/<id>/revoke` flips the soft-delete bit. All actions land in the activity log under category `api_tokens`. Nav link added; the existing review-tokens active-state collision (`'tokens' in request.endpoint`) was fixed to `startswith('admin.tokens')` so both pages highlight correctly.
+- [x] **Auth middleware:** `@require_api_token(scope='read')` decorator in `app/services/api_tokens.py`. Returns 401 (`missing` / `malformed` / `invalid` / `revoked` / `expired`) or 403 (`insufficient_scope`), with `WWW-Authenticate: Bearer` on 401s. On success, populates `flask.g.api_token` with a `VerifiedToken` namedtuple and updates `last_used_at`. Refuses tokens presented as query strings to avoid leakage through access logs.
+- [x] **Rate limiting primitives:** `rate_limit_read` / `rate_limit_write` / `rate_limit_admin` callables exported from `app/services/api_tokens.py` read through the 30 s settings cache and return Flask-Limiter-compatible strings. Settings registry entries `api_rate_limit_read` (default 60), `api_rate_limit_write` (default 30), `api_rate_limit_admin` (default 10) land in the `Security` category. Phase 16 API routes will wire these in alongside `@require_api_token`.
+- [x] **Tests:** 44 service unit tests (`tests/test_api_tokens.py`), 14 CLI tests (`tests/test_api_tokens_cli.py`), 14 admin UI tests (`tests/test_api_tokens_admin.py`). Covers generation / verification / rotation / revocation / expiry parsing / purge / decorator status codes + `WWW-Authenticate` header / session-pop one-time reveal / event payload redaction / activity-log writes.
 
 ### 13.5 — Secret Rotation and Audit
 
@@ -962,11 +964,12 @@ Streams A and B can run concurrently after Phase 12's query optimization and Pha
 | Migration | Tables/Changes | Phase |
 |-----------|---------------|-------|
 | `005_indexes.sql` | Add indexes on page_views, blog_posts, reviews, photos, contacts, activity_log | 12 |
-| `006_api_tokens.sql` | `api_tokens` table | 13 |
-| `007_fts5.sql` | FTS5 virtual table for admin search | 14 |
-| `008_content_translations.sql` | Translation junction tables for all content types | 15 |
-| `009_webhooks.sql` | `webhooks` and `webhook_deliveries` tables | 19 |
-| `010_plugins.sql` | `plugins` table (name, version, enabled, installed_at) | 20 |
+| `006_login_attempts.sql` | `login_attempts` table for Phase 13.6 admin login lockout | 13 |
+| `007_api_tokens.sql` | `api_tokens` table | 13 |
+| `008_fts5.sql` | FTS5 virtual table for admin search | 14 |
+| `009_content_translations.sql` | Translation junction tables for all content types | 15 |
+| `010_webhooks.sql` | `webhooks` and `webhook_deliveries` tables | 19 |
+| `011_plugins.sql` | `plugins` table (name, version, enabled, installed_at) | 20 |
 
 ---
 

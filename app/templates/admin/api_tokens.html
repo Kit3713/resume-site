@@ -1,0 +1,99 @@
+{# API Tokens — generate/rotate/revoke bearer tokens for the REST API. #}
+{% extends "admin/base_admin.html" %}
+
+{% block title %}{{ _('API Tokens') }}{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+    <div class="admin-page__header">
+        <h1 class="admin-page__title">{{ _('API Tokens') }}</h1>
+    </div>
+
+    <p class="admin-help">
+        {{ _('Tokens are bearer credentials for the programmatic REST API. The raw value is shown exactly once at generation time — store it immediately, it cannot be recovered later. Only the SHA-256 hash is kept on the server.') }}
+    </p>
+
+    <!-- Generate New API Token -->
+    <div class="admin-section">
+        <h2 class="admin-section__title">{{ _('Generate New Token') }}</h2>
+        <form method="POST" action="{{ url_for('admin.api_tokens_generate') }}" class="admin-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group">
+                <label class="form-label" for="api-token-name">{{ _('Name') }}</label>
+                <input type="text" id="api-token-name" name="name" class="form-input" placeholder="CI Bot" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">{{ _('Scope') }}</label>
+                <label class="form-check"><input type="checkbox" name="scope" value="read" checked> {{ _('read') }}</label>
+                <label class="form-check"><input type="checkbox" name="scope" value="write"> {{ _('write') }}</label>
+                <label class="form-check"><input type="checkbox" name="scope" value="admin"> {{ _('admin') }}</label>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="api-token-expires">{{ _('Expiry') }}</label>
+                <select id="api-token-expires" name="expires" class="form-input">
+                    <option value="never">{{ _('Never') }}</option>
+                    <option value="7d">7 {{ _('days') }}</option>
+                    <option value="30d">30 {{ _('days') }}</option>
+                    <option value="90d" selected>90 {{ _('days') }}</option>
+                    <option value="365d">365 {{ _('days') }}</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn--primary btn--sm">{{ _('Generate Token') }}</button>
+        </form>
+    </div>
+
+    <!-- Token List -->
+    {% if tokens %}
+    <div class="admin-section">
+        <h2 class="admin-section__title">{{ _('All Tokens') }}</h2>
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>{{ _('Name') }}</th>
+                    <th>{{ _('Scope') }}</th>
+                    <th>{{ _('Status') }}</th>
+                    <th>{{ _('Created') }}</th>
+                    <th>{{ _('Expires') }}</th>
+                    <th>{{ _('Last Used') }}</th>
+                    <th>{{ _('Actions') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for token in tokens %}
+                <tr>
+                    <td>{{ token.name }}</td>
+                    <td>
+                        {% for part in token.scope.split(',') %}
+                            <span class="tag tag--sm">{{ part }}</span>
+                        {% endfor %}
+                    </td>
+                    <td>
+                        {% if token.revoked %}
+                            <span class="tag tag--sm" style="background: rgba(255,69,58,0.2); color: #ff453a;">{{ _('Revoked') }}</span>
+                        {% else %}
+                            <span class="tag tag--sm" style="background: rgba(48,209,88,0.2); color: #30d158;">{{ _('Active') }}</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ token.created_at[:10] }}</td>
+                    <td>{{ token.expires_at[:10] if token.expires_at else _('never') }}</td>
+                    <td>{{ token.last_used_at[:16] | replace('T', ' ') if token.last_used_at else '—' }}</td>
+                    <td>
+                        {% if not token.revoked %}
+                        <form method="POST" action="{{ url_for('admin.api_tokens_revoke', token_id=token.id) }}" style="display:inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn--danger btn--sm" onclick="return confirm('{{ _('Revoke this token? This cannot be undone.') }}')">{{ _('Revoke') }}</button>
+                        </form>
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="admin-empty">{{ _('No API tokens generated yet.') }}</p>
+    {% endif %}
+</div>
+{% endblock %}

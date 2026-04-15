@@ -1,0 +1,71 @@
+{# API Token Reveal — one-time display of a freshly-generated token value. #}
+{% extends "admin/base_admin.html" %}
+
+{% block title %}{{ _('API Token Generated') }}{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+    <div class="admin-page__header">
+        <h1 class="admin-page__title">{{ _('API Token Generated') }}</h1>
+    </div>
+
+    <div class="admin-section admin-section--warning">
+        <p>
+            <strong>{{ _('Save this token now.') }}</strong>
+            {{ _('This value is shown exactly once. If you lose it, rotate or generate a new token — the raw value cannot be recovered from the server.') }}
+        </p>
+    </div>
+
+    <div class="admin-section">
+        <h2 class="admin-section__title">{{ _('Token Details') }}</h2>
+        <dl class="admin-dl">
+            <dt>{{ _('Name') }}</dt><dd>{{ token.name }}</dd>
+            <dt>{{ _('Scope') }}</dt><dd>
+                {% for part in token.scope.split(',') %}
+                    <span class="tag tag--sm">{{ part }}</span>
+                {% endfor %}
+            </dd>
+            <dt>{{ _('Expires') }}</dt><dd>{{ token.expires_at or _('never') }}</dd>
+        </dl>
+
+        <label class="form-label" for="api-token-reveal">{{ _('Bearer Token') }}</label>
+        <div class="admin-token-reveal">
+            <code id="api-token-reveal" class="admin-token-value" data-token="{{ token.raw }}">{{ token.raw }}</code>
+            <button type="button" class="btn btn--sm" id="api-token-copy">{{ _('Copy') }}</button>
+        </div>
+
+        <p class="admin-help" style="margin-top: 1rem;">
+            {{ _('Use it as:') }}
+            <code>Authorization: Bearer {{ token.raw }}</code>
+        </p>
+    </div>
+
+    <div class="admin-section">
+        <a href="{{ url_for('admin.api_tokens') }}" class="btn btn--primary btn--sm">{{ _('Back to API Tokens') }}</a>
+    </div>
+</div>
+
+<script>
+(function () {
+    var btn = document.getElementById('api-token-copy');
+    var code = document.getElementById('api-token-reveal');
+    if (!btn || !code) return;
+    btn.addEventListener('click', function () {
+        var raw = code.getAttribute('data-token') || code.textContent;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(raw).then(function () {
+                var original = btn.textContent;
+                btn.textContent = '{{ _('Copied') }}';
+                setTimeout(function () { btn.textContent = original; }, 1500);
+            });
+        } else {
+            var range = document.createRange();
+            range.selectNodeContents(code);
+            var sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+        }
+    });
+})();
+</script>
+{% endblock %}
