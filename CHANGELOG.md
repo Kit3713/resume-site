@@ -7,6 +7,16 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.0
 
+### Added — Phase 19.1 (completion): Event Bus Emissions From HTML / Admin Routes
+- `contact.submitted` now fires from the public HTML form (`app/routes/contact.py`) with `source='public_form'`. Mirrors the API-side emission so a webhook subscriber sees the same shape regardless of submission origin. Honeypot-flagged submissions still fire (with `is_spam: true`) so abuse dashboards stay accurate.
+- `review.submitted` now fires from the token URL (`app/routes/review.py`) with `source='public_token'` and the inherited review type / rating-presence flag.
+- `review.approved` now fires from the admin UI (`app/routes/admin.py:reviews_update`) on the approve action only — reject / update_tier remain admin housekeeping.
+- `blog.published` / `blog.updated` now fire from `app/routes/blog_admin.py` on every new/edit/delete path (publish → published, save / unpublish / archive / delete → updated). Payloads built via a new `_blog_event_payload` helper so all five paths emit the same shape. `blog.updated` carries `status='deleted'` when the row is removed (mirrors `api.blog_delete`).
+- `photo.uploaded` now fires from `app/routes/admin.py:photos_upload` after the row commits, mirroring `api.portfolio_create`.
+- `settings.changed` now fires from `app/routes/admin.py:settings` with `keys` = the sorted submitted form keys (csrf_token excluded so subscribers see no noise).
+- `security.rate_limited` now fires from a new `errorhandler(429)` in `app/__init__.py`. Observability-only — re-raises so Flask's default 429 response (and Flask-Limiter's `Retry-After` header) is unchanged. Payload carries `request_id`, `ip_hash`, `method`, `endpoint` (the URL rule template, not the rendered path, so cardinality stays bounded), and the `limit` description from the exception.
+- 12 new integration tests in `tests/test_events.py` (21 → 33) covering every new emission path: legitimate + honeypot contact submissions, review submission with token inheritance, admin approve-vs-reject distinction, blog publish-vs-save-vs-delete, photo upload (real PNG via Pillow), settings save with csrf_token exclusion, and 429 emission with body / status untouched.
+
 ### Added — Phase 17.2: Scheduled Backups (Container-Native)
 - `resume-site-backup.service` + `resume-site-backup.timer` — systemd units that wrap `podman exec resume-site python manage.py backup --prune --keep 7` on a daily schedule (02:00 with 30-min jitter, `Persistent=true` so missed windows still run on next boot). `RESUME_SITE_KEEP` overridable via `systemctl edit` without forking the unit files.
 - `resume-site-backups` named volume in `compose.yaml` and the Quadlet (`resume-site.container`), mounted at `/app/backups`. The container env carries `RESUME_SITE_BACKUP_DIR=/app/backups` so the CLI writes archives onto the volume by default.

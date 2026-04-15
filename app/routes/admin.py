@@ -464,7 +464,7 @@ def photos_upload():
     category = request.form.get('category', '')
     display_tier = request.form.get('display_tier', 'grid')
 
-    db.execute(
+    cursor = db.execute(
         'INSERT INTO photos '
         '(filename, storage_name, mime_type, width, height, file_size, title, description, category, display_tier) '
         'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -484,6 +484,24 @@ def photos_upload():
     db.commit()
     with contextlib.suppress(Exception):
         log_action(db, 'Uploaded photo', 'photos', title or result['filename'])
+
+    # Phase 19.1 event bus — fire `photo.uploaded` so subscribers can
+    # react (e.g. webhook to a CDN purge, image-recognition pipeline).
+    # Mirrors the API-side emission in app.routes.api.portfolio_create.
+    from app.events import Events as _Events
+    from app.events import emit as _emit
+
+    _emit(
+        _Events.PHOTO_UPLOADED,
+        photo_id=cursor.lastrowid,
+        title=title,
+        category=category,
+        display_tier=display_tier,
+        storage_name=result['storage_name'],
+        file_size=result['file_size'],
+        source='admin_ui',
+    )
+
     flash(_('Photo uploaded successfully.'), 'success')
     return redirect(url_for('admin.photos'))
 
@@ -548,6 +566,9 @@ def reviews():
 @login_required
 def reviews_update(review_id):
     """Update a review's status or display tier."""
+    from app.events import Events as _Events
+    from app.events import emit as _emit
+
     db = get_db()
     action = request.form.get('action', '')
     display_tier = request.form.get('display_tier', 'standard')
@@ -561,6 +582,19 @@ def reviews_update(review_id):
 
     with contextlib.suppress(Exception):
         log_action(db, f'{action.capitalize()}d review', 'reviews', f'ID {review_id}')
+
+    # Phase 19.1 event bus — only the approve action fires
+    # `review.approved` (mirrors the API-side emission). reject /
+    # update_tier are admin housekeeping that webhook subscribers don't
+    # typically care about; they remain visible via the activity log.
+    if action == 'approve':
+        _emit(
+            _Events.REVIEW_APPROVED,
+            review_id=review_id,
+            display_tier=display_tier,
+            source='admin_ui',
+        )
+
     flash(_('Review updated.'), 'success')
     return redirect(url_for('admin.reviews'))
 
@@ -764,6 +798,21 @@ def settings():
         save_settings(db, request.form)
         with contextlib.suppress(Exception):
             log_action(db, 'Updated settings', 'settings')
+
+        # Phase 19.1 event bus — fire `settings.changed` with the sorted
+        # list of submitted form keys (excluding csrf_token). Mirrors
+        # the API-side emission in app.routes.api.admin_settings_update;
+        # subscribers see one event per save, payload size bounded by
+        # the registry size (~30 keys).
+        from app.events import Events as _Events
+        from app.events import emit as _emit
+
+        _emit(
+            _Events.SETTINGS_CHANGED,
+            keys=sorted(k for k in request.form if k != 'csrf_token'),
+            source='admin_ui',
+        )
+
         flash(_('Settings saved.'), 'success')
         return redirect(url_for('admin.settings'))
 

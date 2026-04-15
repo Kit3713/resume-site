@@ -18,6 +18,7 @@ from flask_babel import gettext as _
 from flask_login import login_required
 
 from app.db import get_db
+from app.events import Events, emit
 from app.routes.admin import (
     check_session_timeout,
     restrict_to_allowed_networks,
@@ -35,6 +36,23 @@ from app.services.blog import (
     unpublish_post,
     update_post,
 )
+
+
+def _blog_event_payload(post_row, *, source):
+    """Build the canonical payload for a blog.* event.
+
+    Centralised so the new / edit / delete / publish / unpublish paths
+    all emit the same shape — keeps webhook subscribers from having to
+    branch on source.
+    """
+    return {
+        'post_id': post_row['id'],
+        'slug': post_row['slug'],
+        'title': post_row['title'],
+        'status': post_row['status'],
+        'source': source,
+    }
+
 
 blog_admin_bp = Blueprint('blog_admin', __name__, template_folder='../templates')
 
@@ -91,6 +109,16 @@ def blog_new():
             with contextlib.suppress(Exception):
                 log_action(db, 'Created draft', 'blog', title)
 
+        # Phase 19.1 event bus — re-read the post so the payload reflects
+        # the post-publish status. blog.published fires on the publish
+        # path, blog.updated on save-as-draft. Mirrors api.blog_create.
+        post_row = get_post_by_id(db, post_id)
+        if post_row is not None:
+            emit(
+                Events.BLOG_PUBLISHED if action == 'publish' else Events.BLOG_UPDATED,
+                **_blog_event_payload(post_row, source='admin_ui'),
+            )
+
         return redirect(url_for('blog_admin.blog_edit', post_id=post_id))
 
     return render_template('admin/blog_edit.html', post=None, tags_str='')
@@ -142,6 +170,16 @@ def blog_edit(post_id):
         else:
             flash(_('Post saved.'), 'success')
 
+        # Phase 19.1 event bus — re-read so the status field is current.
+        # publish → blog.published; everything else (including archive)
+        # → blog.updated. Mirrors api.blog_update / api.blog_publish.
+        post_row = get_post_by_id(db, post_id)
+        if post_row is not None:
+            emit(
+                Events.BLOG_PUBLISHED if action == 'publish' else Events.BLOG_UPDATED,
+                **_blog_event_payload(post_row, source='admin_ui'),
+            )
+
         return redirect(url_for('blog_admin.blog_edit', post_id=post_id))
 
     tags = get_tags_for_post(db, post_id)
@@ -156,8 +194,29 @@ def blog_delete(post_id):
     db = get_db()
     post = get_post_by_id(db, post_id)
     detail = post['title'] if post else f'ID {post_id}'
+    # Snapshot identifying fields BEFORE the delete so the event payload
+    # can carry them — the row will be gone by the time we emit.
+    payload = (
+        {
+            'post_id': post['id'],
+            'slug': post['slug'],
+            'title': post['title'],
+            'status': 'deleted',
+            'source': 'admin_ui',
+        }
+        if post is not None
+        else None
+    )
+
     delete_post(db, post_id)
     with contextlib.suppress(Exception):
         log_action(db, 'Deleted post', 'blog', detail)
+
+    # Phase 19.1 event bus — fire `blog.updated` with status='deleted'
+    # (mirrors api.blog_delete) so subscribers can distinguish a real
+    # deletion from any other update.
+    if payload is not None:
+        emit(Events.BLOG_UPDATED, **payload)
+
     flash(_('Post deleted.'), 'success')
     return redirect(url_for('blog_admin.blog_list'))

@@ -415,6 +415,45 @@ def create_app(config_path=None):
             )
         return exc
 
+    # --- 8e. security.rate_limited event emission (Phase 19.1) ---
+    # Catches every 429 response (Flask-Limiter and any other source)
+    # and emits the canonical event so subscribers (alerts, abuse
+    # dashboards, future webhook delivery) see a uniform shape. We
+    # deliberately re-raise the original exception so Flask still uses
+    # its normal 429 response — this handler is observability only,
+    # not control flow.
+    @app.errorhandler(429)
+    def _handle_429(exc):
+        from app.events import Events as _Events
+        from app.events import emit as _emit
+
+        # Best-effort payload: the URL rule (template, not the rendered
+        # path with values) keeps cardinality bounded for any subscriber
+        # that aggregates by endpoint. Fallback to '<unmatched>' for
+        # paths that didn't match any route (rate-limited at a global
+        # limit before dispatch).
+        try:
+            endpoint = request.url_rule.rule if request.url_rule else '<unmatched>'
+        except RuntimeError:
+            # No request context — exotic, but defend against it so the
+            # observability hook can never blow up the response.
+            endpoint = '<no-request-context>'
+
+        with contextlib.suppress(Exception):
+            _emit(
+                _Events.SECURITY_RATE_LIMITED,
+                request_id=g.get('request_id', '-') if g else '-',
+                ip_hash=g.get('client_ip_hash', '-') if g else '-',
+                method=request.method if request else '-',
+                endpoint=endpoint,
+                # Flask-Limiter sets exc.description to the limit string
+                # (e.g. '5 per 1 minute'); other sources may not.
+                limit=getattr(exc, 'description', None) or '',
+            )
+        # Hand the exception back to Flask so the original 429 response
+        # (and any Retry-After header set by Flask-Limiter) is still served.
+        return exc
+
     # --- 9. Security response headers ---
     @app.after_request
     def set_security_headers(response):

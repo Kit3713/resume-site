@@ -764,7 +764,16 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 - [x] **Initial emissions wired:**
   - `security.internal_error` fires from the `errorhandler(Exception)` in `app/__init__.py`. Payload: `request_id`, `method`, `path`, `exception_type`, `category`. Payloads carry no traceback / exception message so third-party subscribers can't leak internals. Never fires for `HTTPException` subclasses (404/403 are not bugs).
   - `backup.completed` fires from `app/services/backups.create_backup` after a successful archive. Payload: `archive_path`, `db_only`, `size_bytes`. Event failures are swallowed so a misbehaving subscriber never breaks a backup.
-- [ ] **Remaining emissions** (`contact.submitted`, `review.submitted`, `review.approved`, `blog.published`, `blog.updated`, `settings.changed`, `photo.uploaded`, `api.token_created`, `security.login_failed`, `security.rate_limited`) — wiring up deferred to per-domain commits; the bus is the only foundational bit.
+- [x] **Remaining emissions wired:** all ten remaining canonical events now fire from their natural call sites:
+  - `contact.submitted` — `app/routes/contact.py` (HTML form) + `app/routes/api.py` (REST). Mirrors API shape with `source='public_form'`. Honeypot path still fires with `is_spam=true`.
+  - `review.submitted` — `app/routes/review.py` (token URL). Carries `review_type` (inherited from token) and `has_rating`.
+  - `review.approved` — `app/routes/admin.py:reviews_update` (admin UI) + `app/routes/api.py` (REST). Approve only; reject / update_tier remain admin housekeeping.
+  - `blog.published` / `blog.updated` — `app/routes/blog_admin.py` for every new/edit/delete path via the centralised `_blog_event_payload` helper. Delete fires `blog.updated` with `status='deleted'` (matches `api.blog_delete`).
+  - `photo.uploaded` — `app/routes/admin.py:photos_upload` (admin UI) + `app/routes/api.py` (REST).
+  - `settings.changed` — `app/routes/admin.py:settings` (admin UI, csrf_token excluded from keys list) + `app/routes/api.py` (REST).
+  - `api.token_created` — `app/routes/admin.py:api_tokens_generate` (admin UI) + `manage.py generate-api-token` / `rotate-api-token` (CLI).
+  - `security.login_failed` — `app/routes/admin.py:login` for both invalid-credentials and IP-locked branches.
+  - `security.rate_limited` — new `errorhandler(429)` in `app/__init__.py`. Observability-only: re-raises so Flask's default 429 response (and Flask-Limiter's `Retry-After`) reaches the client unchanged. Endpoint label uses the URL rule template, not the rendered path, to bound cardinality.
 - [ ] **Register analytics / activity log / metrics as event handlers** — deferred. Current code calls those subsystems directly from route handlers, which still works. The bus is now available whenever a specific migration becomes valuable (e.g. moving photo upload to emit + subscriber in one commit).
 
 ### 19.2 — Webhook Delivery
