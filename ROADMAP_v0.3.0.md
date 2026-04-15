@@ -188,13 +188,15 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 *This phase establishes the auth model that Phase 16 (REST API) builds on.*
 
-- [ ] **Token model:** `api_tokens` table with columns: `id`, `token_hash` (SHA-256 of the raw token), `name` (human label), `scope` (comma-separated: `read`, `write`, `admin`), `created_at`, `expires_at` (nullable — null = no expiry), `last_used_at`, `revoked` (boolean), `created_by` (admin username for future multi-user)
-- [ ] Migration: `006_api_tokens.sql`
-- [ ] **Token generation:** `manage.py generate-api-token --name "My Integration" --scope read,write --expires 90d` — prints the raw token once (never stored), stores the hash
-- [ ] **Admin UI:** Token management page — list active tokens (name, scope, last used, created), revoke, generate new. Token value shown once on creation, then hidden forever
-- [ ] **Auth middleware:** Decorator `@require_api_token(scope='read')` that checks `Authorization: Bearer <token>` header, validates hash against DB, checks scope, checks expiry, updates `last_used_at`. Returns 401 on missing/invalid, 403 on insufficient scope
-- [ ] **Rate limiting:** API routes get separate rate limits from browser routes (configurable, default 60/min for read, 30/min for write, 10/min for admin)
-- [ ] **Token rotation:** `manage.py rotate-api-token --name "My Integration"` — generates a new token, revokes the old one, prints the new value
+- [x] **Token model:** `api_tokens` table in `migrations/007_api_tokens.sql` — `id`, `token_hash` (SHA-256 UNIQUE), `name`, `scope` (comma-separated), `created_at`, `expires_at` (nullable), `last_used_at`, `revoked`, `created_by`. Three indexes: `idx_api_tokens_hash` (auth hot path), `idx_api_tokens_name` (rotate-by-name), `idx_api_tokens_created_at` (admin list). Note: `006` was already taken by `login_attempts`, so this is `007`.
+- [x] **Service layer:** `app/services/api_tokens.py` — `generate_token`, `verify_token`, `rotate_token`, `revoke_token`, `list_tokens`, `get_token`, `purge_expired`, `parse_expires`. Stdlib-only (secrets + hashlib). Scope semantics are EXPLICIT — `write` does NOT imply `read`; a `@require_api_token('read')` route rejects a write-only token. Constant-time hash comparison via `secrets.compare_digest` after the index equality lookup.
+- [x] **Token generation CLI:** `manage.py generate-api-token --name ... --scope ... [--expires 90d|7d|24h|never|ISO-date]`. Prints a loud one-time reveal banner; only the hash hits disk. Emits `Events.API_TOKEN_CREATED` with a redacted payload (no raw, no hash).
+- [x] **Token rotation CLI:** `manage.py rotate-api-token --name ...` — generates a fresh token inheriting scope + expires_at from the newest active match, marks the old row revoked, prints the new raw value once.
+- [x] **Revoke / list CLI:** `manage.py revoke-api-token --id N` and `manage.py list-api-tokens` (table view with name / scope / status / expires / last used).
+- [x] **Admin UI:** `/admin/api-tokens` lists every token (active + revoked). `POST /admin/api-tokens/generate` + `GET /admin/api-tokens/reveal` implement the one-time reveal via session-held-and-popped raw value — refresh / back-button cannot re-show. `POST /admin/api-tokens/<id>/revoke` flips the soft-delete bit. All actions land in the activity log under category `api_tokens`. Nav link added; the existing review-tokens active-state collision (`'tokens' in request.endpoint`) was fixed to `startswith('admin.tokens')` so both pages highlight correctly.
+- [x] **Auth middleware:** `@require_api_token(scope='read')` decorator in `app/services/api_tokens.py`. Returns 401 (`missing` / `malformed` / `invalid` / `revoked` / `expired`) or 403 (`insufficient_scope`), with `WWW-Authenticate: Bearer` on 401s. On success, populates `flask.g.api_token` with a `VerifiedToken` namedtuple and updates `last_used_at`. Refuses tokens presented as query strings to avoid leakage through access logs.
+- [x] **Rate limiting primitives:** `rate_limit_read` / `rate_limit_write` / `rate_limit_admin` callables exported from `app/services/api_tokens.py` read through the 30 s settings cache and return Flask-Limiter-compatible strings. Settings registry entries `api_rate_limit_read` (default 60), `api_rate_limit_write` (default 30), `api_rate_limit_admin` (default 10) land in the `Security` category. Phase 16 API routes will wire these in alongside `@require_api_token`.
+- [x] **Tests:** 44 service unit tests (`tests/test_api_tokens.py`), 14 CLI tests (`tests/test_api_tokens_cli.py`), 14 admin UI tests (`tests/test_api_tokens_admin.py`). Covers generation / verification / rotation / revocation / expiry parsing / purge / decorator status codes + `WWW-Authenticate` header / session-pop one-time reveal / event payload redaction / activity-log writes.
 
 ### 13.5 — Secret Rotation and Audit
 
@@ -384,56 +386,78 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 16.1 — API Blueprint and Middleware
 
-- [ ] Create `app/routes/api.py` blueprint mounted at `/api/v1/`
-- [ ] CSRF exemption on all API routes (token auth replaces CSRF for non-browser clients)
-- [ ] JSON request/response only — `Content-Type: application/json` enforced on POST/PUT/PATCH
-- [ ] Versioned URL prefix (`/api/v1/`) so future breaking changes can coexist
-- [ ] Standard error response format: `{"error": "message", "code": "ERROR_CODE", "details": {...}}`
-- [ ] Standard pagination format: `{"data": [...], "pagination": {"page": 1, "per_page": 20, "total": 142, "pages": 8}}`
-- [ ] `Accept-Language` header respected for multilingual content responses
-- [ ] `ETag` and `If-None-Match` on read endpoints for conditional requests (304 Not Modified)
+- [x] **Blueprint:** `app/routes/api.py` mounted at `/api/v1/`. Registered and CSRF-exempted in `app/__init__.py` (CSRF is a browser-form mitigation; the API uses Bearer tokens on writes and public reads).
+- [x] **CSRF exemption:** `csrf.exempt(api_bp)` in the factory. Covered by a regression test (`test_csrf_does_not_apply_to_api`) that POSTs to a read endpoint on a CSRF-enabled fixture and expects 405 rather than 400.
+- [x] **Versioned URL prefix:** `url_prefix='/api/v1'`. Future `/api/v2/` can coexist without route-name collisions.
+- [x] **Uniform error envelope:** `{"error": "<human message>", "code": "<STABLE_TAG>"}` with optional `details` dict. App-level `errorhandler(404)` and `errorhandler(405)` match on `request.path.startswith('/api/')` and return the JSON envelope (the blueprint's own errorhandlers don't fire for unmatched paths, which is why the handler lives at app level).
+- [x] **Uniform pagination envelope:** `{"data": [...], "pagination": {"page", "per_page", "total", "pages"}}`. Built on `app.services.pagination.paginate`. `per_page` is clamped to `[1, 100]` via `_parse_per_page`; malformed inputs fall back to the endpoint default.
+- [x] **ETag + If-None-Match:** `_conditional_response` computes a strong ETag (`"<sha256[:32]>"`) from the canonicalised JSON body (`sort_keys=True`, `separators=(',', ':')`), returns 304 on a matching `If-None-Match`, echoes the ETag and sets `Cache-Control: no-cache` on both 200 and 304 responses.
+- [ ] **JSON Content-Type enforcement on POST/PUT/PATCH:** deferred to Phase 16.3 (write endpoints land then; no POST body on any current route, so the check would be no-op).
+- [ ] **`Accept-Language` respected for multilingual content:** deferred to Phase 15 (user-content translation junction tables) — the query layer there will accept a `locale` argument which the API will pull from `Accept-Language`.
 
 ### 16.2 — Public Read Endpoints (No Auth Required)
 
-- [ ] `GET /api/v1/site` — site metadata (title, tagline, availability status, available locales)
-- [ ] `GET /api/v1/content/:slug` — single content block
-- [ ] `GET /api/v1/services` — visible services list
-- [ ] `GET /api/v1/stats` — visible stats
-- [ ] `GET /api/v1/portfolio` — visible photos with pagination, optional `?category=` filter
-- [ ] `GET /api/v1/portfolio/:id` — single photo with metadata
-- [ ] `GET /api/v1/case-studies/:slug` — single case study
-- [ ] `GET /api/v1/projects` — visible projects
-- [ ] `GET /api/v1/projects/:slug` — single project detail
-- [ ] `GET /api/v1/testimonials` — approved reviews with pagination, optional `?tier=featured` filter
-- [ ] `GET /api/v1/certifications` — visible certifications
-- [ ] `GET /api/v1/blog` — published posts with pagination, optional `?tag=` filter
-- [ ] `GET /api/v1/blog/:slug` — single blog post with rendered content
-- [ ] `GET /api/v1/blog/tags` — all tags with post counts
+- [x] `GET /api/v1/site` — site metadata (title, tagline, availability_status, hero strings, feature toggles for blog / case studies / contact form, available_locales, api_version, server_time).
+- [x] `GET /api/v1/content/:slug` — single content block (id, slug, title, content, plain_text, updated_at). 404 with `NOT_FOUND` code when absent.
+- [x] `GET /api/v1/services` — list via `get_visible_services`.
+- [x] `GET /api/v1/stats` — list via `get_visible_stats`.
+- [x] `GET /api/v1/portfolio` — paginated photos (hidden tier excluded), optional `?category=` exact-match filter. Pagination envelope on every response.
+- [x] `GET /api/v1/portfolio/:id` — single visible photo. Hidden photos return 404 (not 403) so the endpoint doesn't reveal their existence.
+- [x] `GET /api/v1/portfolio/categories` — distinct category names across visible photos (convenience for UI filter bars; not in the original roadmap bullet but falls out naturally).
+- [x] `GET /api/v1/testimonials` — paginated approved reviews, optional `?tier=featured|standard` filter. Defaults to the featured-first ordering from `get_all_approved_reviews`.
+- [x] `GET /api/v1/certifications` — list via `get_visible_certifications`.
+- [x] `GET /api/v1/case-studies/:slug` — single published case study. Two gates: `case_studies_enabled` setting must be `true` AND `published = 1`. Both miss paths return 404 (not 403) so existence isn't leaked. No list endpoint — consumers discover case-study slugs via the `case_study_slug` column on `/portfolio/<id>`.
+- [x] `GET /api/v1/projects` and `GET /api/v1/projects/:slug` — list uses `get_visible_projects`; detail uses `get_project_by_slug`, which requires `visible = 1 AND has_detail_page = 1`. Hidden or link-only (GitHub-URL-only) projects 404 on the detail route but still show up on the list.
+- [x] `GET /api/v1/blog`, `GET /api/v1/blog/:slug`, `GET /api/v1/blog/tags` — every blog route checks `blog_enabled` first and 404s when off. List is paginated (default 10 per page, max 100) with optional `?tag=<slug>` filter via `get_posts_by_tag`. Detail includes both raw `content` and `rendered_html` (markdown rendered + sanitized via the existing `render_post_content`) plus a `tags` array. Tags endpoint counts only published posts, including tags with zero published posts (count = 0). Flask's dispatcher is verified to prefer `/blog/tags` over `/blog/<slug>` by a regression test that seeds a post with slug `tags`.
+
+**Tests:** 46 tests in `tests/test_api.py` (29 from the initial commit + 17 for the new endpoints). The new tests cover: case-study feature-toggle gating, unpublished-case-study 404, projects visible-only filtering, project detail 404 for link-only projects, blog endpoint 404-when-disabled on all three routes, blog list default + tag-filtered, embedded tags on list items, draft 404, `render_post_content` pass-through for HTML, tag counts excluding drafts, and the `/blog/tags` vs `/blog/<slug>` dispatcher precedence.
 
 ### 16.3 — Authenticated Write Endpoints (Token Required — `write` scope)
 
-- [ ] `POST /api/v1/blog` — create blog post (draft by default)
-- [ ] `PUT /api/v1/blog/:slug` — update blog post
-- [ ] `DELETE /api/v1/blog/:slug` — delete blog post
-- [ ] `POST /api/v1/blog/:slug/publish` — publish a draft
-- [ ] `POST /api/v1/blog/:slug/unpublish` — unpublish
-- [ ] `POST /api/v1/portfolio` — upload photo (multipart/form-data)
-- [ ] `PUT /api/v1/portfolio/:id` — update photo metadata
-- [ ] `DELETE /api/v1/portfolio/:id` — delete photo (with file cleanup)
-- [ ] `POST /api/v1/contact` — submit a contact form entry (rate limited, honeypot enforced)
+**Infrastructure shipped with this phase (closes the 16.1 deferrals):**
+
+- [x] **JSON Content-Type enforcement on POST/PUT/PATCH.** `before_request` middleware on the API blueprint rejects non-JSON bodies with 415 + `UNSUPPORTED_MEDIA_TYPE` code (details dict echoes the received Content-Type). Multipart routes are allow-listed via `_MULTIPART_ENDPOINTS` (reserved for 16.3b photo upload).
+- [x] **Rate limiting via `rate_limit_write` callable** (60/30/10-per-minute read/write/admin, configurable through the Security-category settings shipped in Phase 13.4). Every blog write route wears `@limiter.limit(rate_limit_write, methods=[...])`.
+
+**Endpoints shipped:**
+
+- [x] `POST /api/v1/blog` — create blog post. Body `{title, summary?, content?, content_format?, cover_image?, author?, tags?, meta_description?, featured?, publish?}`. Draft by default; `"publish": true` publishes immediately (mirrors the admin "Publish" action). Returns 201 with full detail including server-generated slug + tags. Emits `BLOG_PUBLISHED` (when publish=true) or `BLOG_UPDATED` (draft save).
+- [x] `PUT /api/v1/blog/<slug>` — update a post. Every field optional; omitted fields keep current value. Supports slug renames via `{"slug": "new-slug"}`. Rejects empty/whitespace-only title. Emits `BLOG_UPDATED`.
+- [x] `DELETE /api/v1/blog/<slug>` — deletes the post + tag associations (via `delete_post` which cascades `blog_post_tags`). Returns 204 No Content on success. Emits `BLOG_UPDATED` with `status='deleted'` so subscribers can distinguish.
+- [x] `POST /api/v1/blog/<slug>/publish` — publishes a draft (preserves original `published_at` if previously published). Emits `BLOG_PUBLISHED`.
+- [x] `POST /api/v1/blog/<slug>/unpublish` — reverts to draft. Emits `BLOG_UPDATED`.
+- [x] `POST /api/v1/contact` — public (no token required) submission endpoint. Body `{name, email, message, website?}` where `website` is the honeypot. Honors `contact_form_enabled` toggle (404 if off), validates required fields + email format, per-IP hourly cap of 5 non-spam submissions (spam bypasses the cap so bots can't probe 429s), and fire-and-forget SMTP relay (mirrors the HTML form). Emits `CONTACT_SUBMITTED` with `{submission_id, is_spam, source}`. Flask-Limiter applies a 10/min burst cap on top.
+- [x] `POST /api/v1/portfolio` — multipart upload. Path name `api.portfolio_create` is allow-listed in `_MULTIPART_ENDPOINTS` so the JSON Content-Type middleware skips it. Reuses the existing `app.services.photos.process_upload` pipeline (magic-byte validation, size check, EXIF stripping, 2000-px downscale). Metadata fields come from the form body: title, description, category, tech_used, display_tier (default `grid`, validated against `{featured, grid, hidden}`). A bad `display_tier` cleans up the uploaded file before returning 400 so rejection isn't silent data retention. Emits `PHOTO_UPLOADED` with `{photo_id, title, category, display_tier, storage_name, file_size, source}`.
+- [x] `PUT /api/v1/portfolio/<id>` — JSON metadata update (title / description / category / tech_used / display_tier / sort_order). All fields optional; omitted fields keep current value. Validates `display_tier` and coerces `sort_order` to int with 400 on failure.
+- [x] `DELETE /api/v1/portfolio/<id>` — deletes the row, then the file on disk. File-cleanup OSError is logged but doesn't fail the request — the DB row is gone either way so the site never serves a broken reference. Returns 204 on success, 404 if id unknown.
+
+**Portfolio write tests:** 17 additional tests in `tests/test_api.py` (18 in the file for this phase total, counting the scope-gate tests that apply to all three). Coverage: happy-path multipart upload with Pillow-generated PNG bytes, missing file part, invalid extension, magic-byte mismatch (png extension + non-PNG bytes), rejected `display_tier` value with file cleanup verified, auth gate (401 without token, 403 with read-only scope) on all three routes, metadata partial update preserves unchanged fields, invalid tier / non-int sort_order on PUT, end-to-end upload → delete → row gone → file gone verified.
+
+**Auth + scope semantics:** every blog write route sits behind `@require_api_token('write')`. A `read`-only token returns 403 `insufficient_scope`; a revoked token returns 401 `revoked`; a missing / malformed header returns 401 with `WWW-Authenticate: Bearer`. Verified in tests.
+
+**Events wired in this phase (Phase 19.1 progress):**
+- `blog.published`, `blog.updated`, `contact.submitted` now fire from API routes. Equivalent admin-UI emissions are still TODO — every API-side subscriber will already see the payload when the admin routes catch up.
+
+**Tests:** 28 new tests in `tests/test_api.py` (total 74). Coverage includes: JSON Content-Type 415 on form-encoded / no-content-type / GETs-are-fine; 401/403/401 for missing/wrong-scope/revoked tokens on the blog create path; create flow (draft default, publish flag, slug generation, tags sync, title validation, whitespace-only title); update flow (partial updates preserve fields, 404 on unknown slug, empty-title rejection); delete flow (204 + row actually gone, 404 on missing); publish/unpublish status transitions + event emission; contact flow (valid submission, honeypot flagging, required-field validation, malformed email, disabled-form 404, per-IP 429 after 5 prior submissions, event emission). A `no_rate_limits` fixture isolates write tests from Flask-Limiter's shared in-memory bucket.
 
 ### 16.4 — Admin Endpoints (Token Required — `admin` scope)
 
-- [ ] `GET /api/v1/admin/settings` — all settings (grouped by category)
-- [ ] `PUT /api/v1/admin/settings` — bulk update settings
-- [ ] `GET /api/v1/admin/analytics` — page view summary (total, per-page, time series)
-- [ ] `GET /api/v1/admin/activity` — recent activity log
-- [ ] `GET /api/v1/admin/reviews` — all reviews with status filter
-- [ ] `PUT /api/v1/admin/reviews/:id` — update review (approve, reject, change tier)
-- [ ] `POST /api/v1/admin/tokens` — generate review invite token
-- [ ] `DELETE /api/v1/admin/tokens/:id` — revoke review token
-- [ ] `GET /api/v1/admin/contacts` — contact submissions with pagination
-- [ ] `POST /api/v1/admin/backup` — trigger an on-demand backup (returns backup file path)
+All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_admin` bucket (default 10/min). Every mutation writes to the admin activity log with category-tagged detail so the API and the HTML admin UI share a single audit trail.
+
+- [x] `GET /api/v1/admin/settings` — returns `{data: {categories: [{name, settings: [...]}], flat: {key: value}}}`. Each setting carries its registry metadata (type, default, label, options) so a headless admin panel can render the form without hard-coding the schema.
+- [x] `PUT /api/v1/admin/settings` — bulk update from a flat JSON object. Unknown keys silently dropped (matches HTML form contract), booleans normalised to `'true'`/`'false'`, `None` coerced to empty string. Emits `Events.SETTINGS_CHANGED` with the sorted list of updated keys. Does NOT flip unset booleans to false (that's an HTML-form quirk; API clients may send partial updates).
+- [x] `GET /api/v1/admin/analytics` — total views / recent window / popular paths / daily time series. `?days=N` (1–90, default 7) and `?popular_limit=N` (1–50, default 10). All SQL parameters are bound; the `-N days` modifier is built from the clamped int so adversarial query strings can't reach the driver.
+- [x] `GET /api/v1/admin/activity` — recent activity log entries. `?limit=N` (1–200, default 20).
+- [x] `GET /api/v1/admin/reviews` — all reviews or filter by `?status=pending|approved|rejected`. Invalid status → 400 `VALIDATION_ERROR`. No status = pending/approved/rejected concatenated in that order (matches admin UI).
+- [x] `PUT /api/v1/admin/reviews/<id>` — body `{action: "approve"|"reject"|"set_tier", display_tier: "..."}`. Unknown action → 400; unknown id → 404. Emits `Events.REVIEW_APPROVED` on approve; every action writes to activity log.
+- [x] `POST /api/v1/admin/tokens` — generate a review invite token (single-use, shared verbatim with a contact — different from API tokens which are hashed). Body `{name, type: "recommendation"|"client_review"}`. Returns 201 with the raw token string.
+- [x] `DELETE /api/v1/admin/tokens/<id>` — hard-delete a review token. 204 on success, 404 if missing.
+- [x] `GET /api/v1/admin/contacts` — paginated submissions. `?per_page=N` (1–100, default 20), `?page=N`, `?include_spam=true` (default false). The dynamic WHERE clause uses only two hardcoded literals (`''` and `'WHERE is_spam = 0'`) — never user input — documented with inline `# noqa: S608 # nosec B608` on the f-string.
+- [x] `POST /api/v1/admin/backup` — on-demand backup via `app.services.backups.create_backup`. Body `{db_only: bool}` (optional, default false). Returns 201 with `{archive_path, archive_name, size_bytes, db_only}`. `create_backup` emits `Events.BACKUP_COMPLETED` itself so the route doesn't double-emit. Output directory resolves via `RESUME_SITE_BACKUP_DIR` env var > `<repo>/backups`.
+
+**Tests:** 27 new tests in `tests/test_api.py` (total 118 API, 678 project-wide). Coverage includes: auth gating (write scope → 403 on admin routes; missing token → 401), settings list envelope + registry metadata, settings update filtering unknown keys + event emission, analytics total/popular/series/clamping, activity log round-trip, reviews filter-by-status + invalid-status 400, review approve/reject/set_tier transitions + 404 + event, review-token create with type validation + delete 204 + 404, contacts pagination with include_spam toggle, backup create via tmp_path + env override + event verification.
+
+**Ruff + bandit clean.** Two S608/B608 false positives (dynamic WHERE in /admin/contacts with two hardcoded literal alternatives) are suppressed inline with rationale.
 
 ### 16.5 — API Documentation
 
@@ -962,11 +986,12 @@ Streams A and B can run concurrently after Phase 12's query optimization and Pha
 | Migration | Tables/Changes | Phase |
 |-----------|---------------|-------|
 | `005_indexes.sql` | Add indexes on page_views, blog_posts, reviews, photos, contacts, activity_log | 12 |
-| `006_api_tokens.sql` | `api_tokens` table | 13 |
-| `007_fts5.sql` | FTS5 virtual table for admin search | 14 |
-| `008_content_translations.sql` | Translation junction tables for all content types | 15 |
-| `009_webhooks.sql` | `webhooks` and `webhook_deliveries` tables | 19 |
-| `010_plugins.sql` | `plugins` table (name, version, enabled, installed_at) | 20 |
+| `006_login_attempts.sql` | `login_attempts` table for Phase 13.6 admin login lockout | 13 |
+| `007_api_tokens.sql` | `api_tokens` table | 13 |
+| `008_fts5.sql` | FTS5 virtual table for admin search | 14 |
+| `009_content_translations.sql` | Translation junction tables for all content types | 15 |
+| `010_webhooks.sql` | `webhooks` and `webhook_deliveries` tables | 19 |
+| `011_plugins.sql` | `plugins` table (name, version, enabled, installed_at) | 20 |
 
 ---
 

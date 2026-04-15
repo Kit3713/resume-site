@@ -586,6 +586,139 @@ def tokens_delete(token_id):
 
 
 # ============================================================
+# API TOKENS (Phase 13.4 — programmatic access for the REST API)
+# ============================================================
+
+
+@admin_bp.route('/api-tokens')
+@login_required
+def api_tokens():
+    """List all API tokens with their status and metadata."""
+    from app.services.api_tokens import list_tokens
+
+    db = get_db()
+    records = list_tokens(db, include_revoked=True)
+    return render_template('admin/api_tokens.html', tokens=records)
+
+
+@admin_bp.route('/api-tokens/generate', methods=['POST'])
+@login_required
+def api_tokens_generate():
+    """Generate a new API token.
+
+    The raw value is stashed in the session and displayed exactly once
+    via :func:`api_tokens_reveal`; after that GET the session slot is
+    popped, so refreshing the reveal page or coming back later yields
+    no token.
+    """
+    from app.events import Events as _Events
+    from app.events import emit as _emit
+    from app.services.api_tokens import (
+        InvalidScopeError,
+        generate_token,
+        parse_expires,
+    )
+
+    db = get_db()
+    name = (request.form.get('name') or '').strip()
+    scope_items = request.form.getlist('scope')
+    expires_raw = (request.form.get('expires') or '').strip()
+
+    if not name:
+        flash(_('Name is required.'), 'error')
+        return redirect(url_for('admin.api_tokens'))
+    if not scope_items:
+        flash(_('Select at least one scope.'), 'error')
+        return redirect(url_for('admin.api_tokens'))
+    scope_str = ','.join(scope_items)
+
+    try:
+        expires_at = parse_expires(expires_raw)
+    except ValueError as e:
+        flash(_('Invalid expiry: %(err)s', err=str(e)), 'error')
+        return redirect(url_for('admin.api_tokens'))
+
+    try:
+        result = generate_token(
+            db,
+            name=name,
+            scope=scope_str,
+            expires_at=expires_at,
+            created_by=current_user.id if current_user.is_authenticated else 'admin',
+        )
+    except InvalidScopeError as e:
+        flash(_('Invalid scope: %(err)s', err=str(e)), 'error')
+        return redirect(url_for('admin.api_tokens'))
+
+    log_action(
+        db,
+        action='Generated API token',
+        category='api_tokens',
+        detail=f'{name} ({result.scope})',
+    )
+    _emit(
+        _Events.API_TOKEN_CREATED,
+        name=result.name,
+        scope=result.scope,
+        created_by=current_user.id if current_user.is_authenticated else 'admin',
+        expires_at=result.expires_at or '',
+        token_id=result.id,
+    )
+
+    # Stash the raw value for a one-time reveal on the next GET. The
+    # session cookie is signed + same-origin, and we pop the key on
+    # read, so refresh / back-button do not re-show the token.
+    session['_api_token_reveal'] = {
+        'id': result.id,
+        'raw': result.raw,
+        'name': result.name,
+        'scope': result.scope,
+        'expires_at': result.expires_at or '',
+    }
+    return redirect(url_for('admin.api_tokens_reveal'))
+
+
+@admin_bp.route('/api-tokens/reveal')
+@login_required
+def api_tokens_reveal():
+    """Display a freshly-generated token exactly once.
+
+    The session slot populated by :func:`api_tokens_generate` is popped
+    on read — a refresh or back-button returns to the token list with
+    no token shown.
+    """
+    data = session.pop('_api_token_reveal', None)
+    if not data:
+        flash(
+            _('No token to reveal. Generate a new one from the API Tokens page.'),
+            'info',
+        )
+        return redirect(url_for('admin.api_tokens'))
+    return render_template('admin/api_tokens_reveal.html', token=data)
+
+
+@admin_bp.route('/api-tokens/<int:token_id>/revoke', methods=['POST'])
+@login_required
+def api_tokens_revoke(token_id):
+    """Revoke an API token (soft delete — row retained for audit)."""
+    from app.services.api_tokens import revoke_token
+
+    db = get_db()
+    changed = revoke_token(db, token_id)
+    if changed:
+        log_action(
+            db,
+            action='Revoked API token',
+            category='api_tokens',
+            detail=f'id={token_id}',
+        )
+        flash(_('API token revoked.'), 'success')
+    else:
+        flash(_('Token was already revoked or does not exist.'), 'info')
+    return redirect(url_for('admin.api_tokens'))
+
+
+# ============================================================
 # SETTINGS (all site-wide toggles and configuration)
 # ============================================================
 

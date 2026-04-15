@@ -327,6 +327,36 @@ SETTINGS_REGISTRY = {
             'Timer resets on any further failed attempt during the lockout.'
         ),
     },
+    # --- API token rate limits (Phase 13.4) ---
+    # Consumed by the rate-limit callables in app.services.api_tokens.
+    # Flask-Limiter reads the callable on every request; the callable
+    # reads through the 30 s settings cache, so admin edits propagate
+    # within ~30 s.
+    'api_rate_limit_read': {
+        'type': 'int',
+        'default': '60',
+        'label': 'API Rate Limit — Read (per minute)',
+        'category': 'Security',
+        'description': (
+            'Maximum read-scope API requests per minute per client IP. Applies '
+            'to API routes only; browser routes keep their own limits. Admin '
+            'edits take effect within ~30 seconds (settings cache TTL).'
+        ),
+    },
+    'api_rate_limit_write': {
+        'type': 'int',
+        'default': '30',
+        'label': 'API Rate Limit — Write (per minute)',
+        'category': 'Security',
+        'description': ('Maximum write-scope API requests per minute per client IP.'),
+    },
+    'api_rate_limit_admin': {
+        'type': 'int',
+        'default': '10',
+        'label': 'API Rate Limit — Admin (per minute)',
+        'category': 'Security',
+        'description': ('Maximum admin-scope API requests per minute per client IP.'),
+    },
     # --- Observability (Phase 18.2) ---
     'metrics_enabled': {
         'type': 'bool',
