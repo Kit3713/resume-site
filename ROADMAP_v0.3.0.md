@@ -512,7 +512,7 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
   - `app/logging.py` — configures Python's `logging` module with a JSON formatter for production and a human-readable formatter for development
   - Every log entry includes: `timestamp`, `level`, `message`, `module`, `request_id` (generated per-request via a `before_request` handler), `method`, `path`, `status_code` (on response), `duration_ms`, `client_ip`
   - Log levels used consistently: DEBUG (detailed internals), INFO (request lifecycle, admin actions), WARNING (rate limits hit, validation failures, startup concerns), ERROR (unhandled exceptions, SMTP failures, file system errors)
-- [ ] **Request ID propagation:** Generate a UUID4 per request, store in `g.request_id`, include in all log entries and response headers (`X-Request-ID`). If an incoming `X-Request-ID` header exists (from the reverse proxy), use it instead
+- [ ] **Request ID propagation:** ~~Generate a UUID4 per request, store in `g.request_id`, ... and response headers (`X-Request-ID`). If an incoming `X-Request-ID` header exists (from the reverse proxy), use it instead~~ *(propagation + response header + allowlist-validated inbound header shipped; "include in all log entries" still pending on the structured-logging subsystem above.)*
 - [ ] **Sensitive data scrubbing:** Log entries never include: passwords, API tokens, SMTP credentials, session cookie values, email addresses from contact form, or full IP addresses (truncate to /24 in logs, or hash)
 - [ ] **Log rotation:** Document Gunicorn's `--access-logfile` and `--error-logfile` integration with container log drivers. For file-based logging (non-container), add `RotatingFileHandler` configuration
 

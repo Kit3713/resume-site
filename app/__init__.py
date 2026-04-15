@@ -21,6 +21,8 @@ Usage:
 
 import contextlib
 import os
+import re
+import uuid
 
 from flask import Flask, g, request
 from flask_babel import Babel
@@ -41,6 +43,32 @@ limiter = Limiter(
     default_limits=[],  # No global limit — applied per-route
     storage_uri='memory://',  # In-memory for single-process deployments
 )
+
+
+# Format of an inbound X-Request-ID we're willing to echo back. Anchored
+# match of 8–128 characters from a restricted alphabet (alphanumerics plus
+# `.`, `_`, `-`) rules out log-injection payloads (CRLF, quotes, spaces,
+# control characters) while still accepting UUIDs, ULIDs, short hashes, and
+# the `trace-id` values common reverse proxies emit.
+_REQUEST_ID_PATTERN = re.compile(r'^[A-Za-z0-9._-]{8,128}$')
+
+
+def _assign_request_id():
+    """Populate ``flask.g.request_id`` for the current request.
+
+    If the incoming request carries an ``X-Request-ID`` header that matches
+    ``_REQUEST_ID_PATTERN``, propagate it verbatim so correlation with an
+    upstream reverse proxy works. Otherwise generate a fresh UUID4 hex so
+    every request is uniquely identifiable.
+
+    This runs before analytics (and future structured logging) so downstream
+    handlers can tag their records with the same ID.
+    """
+    incoming = request.headers.get('X-Request-ID', '')
+    if incoming and _REQUEST_ID_PATTERN.match(incoming):
+        g.request_id = incoming
+    else:
+        g.request_id = uuid.uuid4().hex
 
 
 def _get_available_locales(app):
@@ -187,12 +215,17 @@ def create_app(config_path=None):
     app.register_blueprint(review_bp)
     app.register_blueprint(locale_bp)
 
-    # --- 7. Analytics middleware ---
+    # --- 7. Request ID propagation (Phase 18.1) ---
+    # Assigned before analytics so any future request-scoped logging can
+    # correlate with the ID a reverse proxy already sent us.
+    app.before_request(_assign_request_id)
+
+    # --- 8. Analytics middleware ---
     from app.services.analytics import track_page_view
 
     app.before_request(track_page_view)
 
-    # --- 8. Security response headers ---
+    # --- 9. Security response headers ---
     @app.after_request
     def set_security_headers(response):
         """Add security headers to every response.
@@ -232,9 +265,15 @@ def create_app(config_path=None):
         elif request.path.startswith('/static/'):
             response.headers['Cache-Control'] = 'public, max-age=2592000, immutable'
 
+        # Request ID correlation header — echo the ID assigned in _assign_request_id
+        # so clients and downstream log aggregators can match response to request.
+        request_id = g.get('request_id')
+        if request_id:
+            response.headers['X-Request-ID'] = request_id
+
         return response
 
-    # --- 9. Template context processor ---
+    # --- 10. Template context processor ---
     @app.context_processor
     def inject_settings():
         """Make site settings and config available in all templates.
@@ -263,7 +302,7 @@ def create_app(config_path=None):
             'current_locale': current_locale,
         }
 
-    # --- 10. Ensure storage directories exist ---
+    # --- 11. Ensure storage directories exist ---
     os.makedirs(os.path.dirname(app.config['DATABASE_PATH']) or '.', exist_ok=True)
     os.makedirs(app.config['PHOTO_STORAGE'], exist_ok=True)
 
