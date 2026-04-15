@@ -296,6 +296,30 @@ SETTINGS_REGISTRY = {
         'label': 'Retention Days',
         'category': 'Analytics',
     },
+    # --- Observability (Phase 18.2) ---
+    'metrics_enabled': {
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Enable Prometheus /metrics Endpoint',
+        'category': 'Observability',
+        'description': (
+            'Expose a /metrics endpoint in Prometheus text format. When on, the '
+            'endpoint is further restricted to the admin allowed_networks (from '
+            'config.yaml) unless a comma-separated override is set in '
+            'metrics_allowed_networks below. When off, /metrics returns 404.'
+        ),
+    },
+    'metrics_allowed_networks': {
+        'type': 'text',
+        'default': '',
+        'label': 'Metrics Allowed Networks',
+        'category': 'Observability',
+        'description': (
+            'Comma-separated CIDR ranges permitted to scrape /metrics (e.g. '
+            '"10.0.0.0/8, 192.168.0.0/16"). Leave blank to reuse the admin '
+            'allowed_networks list.'
+        ),
+    },
 }
 
 # Ordered list of categories for the admin settings page.
@@ -309,6 +333,7 @@ SETTINGS_CATEGORIES = [
     'Blog',
     'Internationalization',
     'Analytics',
+    'Observability',
 ]
 
 # Color preset definitions: preset name → accent color hex value.

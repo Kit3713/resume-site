@@ -215,6 +215,7 @@ def create_app(config_path=None):
     from app.routes.blog_admin import blog_admin_bp
     from app.routes.contact import contact_bp
     from app.routes.locale import locale_bp
+    from app.routes.metrics import metrics_bp
     from app.routes.public import public_bp
     from app.routes.review import review_bp
 
@@ -225,6 +226,7 @@ def create_app(config_path=None):
     app.register_blueprint(contact_bp)
     app.register_blueprint(review_bp)
     app.register_blueprint(locale_bp)
+    app.register_blueprint(metrics_bp)
 
     # --- 7. Request ID propagation (Phase 18.1) ---
     # Assigned before analytics so any future request-scoped logging can
@@ -247,14 +249,17 @@ def create_app(config_path=None):
 
     app.before_request(track_page_view)
 
-    # --- 8b. Structured request log (Phase 18.1) ---
+    # --- 8b. Structured request log + Prometheus metrics (Phase 18.1/18.2) ---
     # Registered BEFORE set_security_headers below. Flask invokes
     # after_request callbacks in reverse registration order, so this
     # hook runs LAST — it sees the finalised status code and headers.
+    from app.services.metrics import record_request
+
     @app.after_request
     def _log_request(response):
         start = g.get('request_start')
-        duration_ms = int((time.monotonic() - start) * 1000) if start is not None else 0
+        duration_s = (time.monotonic() - start) if start is not None else 0.0
+        duration_ms = int(duration_s * 1000)
         status = response.status_code
         if status >= 500:
             level = logging.ERROR
@@ -262,6 +267,17 @@ def create_app(config_path=None):
             level = logging.WARNING
         else:
             level = logging.INFO
+
+        # url_rule.rule is the bound template (e.g. "/blog/<slug>") — use
+        # it as the metric "path" label to keep cardinality bounded.
+        # Unmatched requests (404 probes) produce url_rule=None which
+        # record_request() normalises to a constant sentinel.
+        rule = request.url_rule.rule if request.url_rule else None
+
+        # Never double-count /metrics scrapes — a high scrape rate would
+        # otherwise drown out real traffic in rate() queries.
+        if rule != '/metrics':
+            record_request(request.method, rule, status, duration_s)
 
         request_logger.log(
             level,
