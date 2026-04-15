@@ -63,11 +63,23 @@ from app.models import (
     get_all_approved_reviews,
     get_all_visible_photos,
     get_approved_reviews_by_tier,
+    get_case_study_by_slug,
     get_content_block,
     get_photo_categories,
+    get_project_by_slug,
+    get_setting,
     get_visible_certifications,
+    get_visible_projects,
     get_visible_services,
     get_visible_stats,
+)
+from app.services.blog import (
+    get_all_tags,
+    get_post_by_slug,
+    get_posts_by_tag,
+    get_published_posts,
+    get_tags_for_post,
+    render_post_content,
 )
 from app.services.pagination import clamp_page, offset_for, paginate
 from app.services.settings_svc import get_all_cached
@@ -178,6 +190,55 @@ _CONTENT_BLOCK_PUBLIC_FIELDS = (
     'plain_text',
     'updated_at',
 )
+
+_CASE_STUDY_PUBLIC_FIELDS = (
+    'id',
+    'slug',
+    'title',
+    'summary',
+    'problem',
+    'solution',
+    'result',
+    'photo_id',
+    'created_at',
+    'updated_at',
+)
+
+_PROJECT_PUBLIC_FIELDS = (
+    'id',
+    'slug',
+    'title',
+    'summary',
+    'description',
+    'github_url',
+    'has_detail_page',
+    'screenshot',
+    'tech_stack',
+    'sort_order',
+)
+
+# Blog posts expose `content` in two places: raw (original Markdown/HTML
+# as stored) and `rendered_html` (the HTML actually shown on the site,
+# via :func:`app.services.blog.render_post_content`). Clients that
+# re-render Markdown themselves can use `content`; simple viewers use
+# `rendered_html` directly.
+_BLOG_POST_LIST_FIELDS = (
+    'id',
+    'slug',
+    'title',
+    'summary',
+    'author',
+    'cover_image',
+    'featured',
+    'reading_time',
+    'meta_description',
+    'content_format',
+    'published_at',
+    'created_at',
+    'updated_at',
+)
+
+_BLOG_POST_DETAIL_FIELDS = _BLOG_POST_LIST_FIELDS + ('content',)
 
 
 def _row_to_dict(row, fields):
@@ -445,6 +506,192 @@ def certifications_list():
 
 
 # ---------------------------------------------------------------------------
+# /api/v1/case-studies/<slug>
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/case-studies/<slug>')
+def case_study_detail(slug):
+    """Return a single published case study by slug.
+
+    Two gates apply:
+
+    1. ``case_studies_enabled`` setting must be ``true``. When the admin
+       has turned case studies off site-wide, we return 404 rather than
+       200-with-empty so the API mirrors the public-site behaviour.
+    2. The row must have ``published = 1`` (enforced by
+       :func:`get_case_study_by_slug`). Unpublished / draft case studies
+       return 404 so their existence isn't leaked.
+
+    There's no ``/api/v1/case-studies`` list endpoint — case studies are
+    linked from ``/portfolio/<id>`` via ``has_case_study`` +
+    ``case_study_slug`` on the photo row, so a client already knows the
+    slug when it needs the detail.
+    """
+    db = get_db()
+    if get_setting(db, 'case_studies_enabled', 'false') != 'true':
+        return _error('Case studies are not enabled on this site', 'NOT_FOUND', 404)
+    row = get_case_study_by_slug(db, slug)
+    if row is None:
+        return _error(f'No case study with slug {slug!r}', 'NOT_FOUND', 404)
+    return _conditional_response({'data': _row_to_dict(row, _CASE_STUDY_PUBLIC_FIELDS)})
+
+
+# ---------------------------------------------------------------------------
+# /api/v1/projects
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/projects')
+def projects_list():
+    """Return every visible project in sort order."""
+    rows = get_visible_projects(get_db())
+    items = [_row_to_dict(r, _PROJECT_PUBLIC_FIELDS) for r in rows]
+    return _conditional_response({'data': items})
+
+
+@api_bp.route('/projects/<slug>')
+def project_detail(slug):
+    """Return a single visible project by slug.
+
+    Only projects with ``has_detail_page = 1`` have a detail surface —
+    the rest are GitHub-link cards only. A slug that doesn't match a
+    detail-page project returns 404 rather than a redirect to the
+    GitHub URL, which keeps the API path-stable and lets clients decide
+    how to handle external links.
+    """
+    row = get_project_by_slug(get_db(), slug)
+    if row is None:
+        return _error(f'No project with slug {slug!r}', 'NOT_FOUND', 404)
+    return _conditional_response({'data': _row_to_dict(row, _PROJECT_PUBLIC_FIELDS)})
+
+
+# ---------------------------------------------------------------------------
+# /api/v1/blog
+# ---------------------------------------------------------------------------
+
+
+def _require_blog_enabled(db):
+    """Return ``None`` when the blog is enabled, or a 404 response otherwise.
+
+    Mirrors ``app.routes.blog._check_blog_enabled`` so the API and the
+    HTML site agree on visibility in lockstep.
+    """
+    if get_setting(db, 'blog_enabled', 'false') != 'true':
+        return _error('Blog is not enabled on this site', 'NOT_FOUND', 404)
+    return None
+
+
+def _blog_post_to_dict(row, *, fields, include_tags=False, include_rendered=False, db=None):
+    """Serialize a blog post row with optional tag + rendered-HTML inclusion."""
+    data = _row_to_dict(row, fields)
+    if data is None:
+        return None
+    if include_tags and db is not None:
+        tag_rows = get_tags_for_post(db, row['id'])
+        data['tags'] = [{'name': t['name'], 'slug': t['slug']} for t in tag_rows]
+    if include_rendered:
+        data['rendered_html'] = render_post_content(row)
+    return data
+
+
+@api_bp.route('/blog')
+def blog_list():
+    """Return paginated published blog posts.
+
+    Query parameters:
+        page (int, default 1)
+        per_page (int, default 10, max 100) — lower default than
+            /portfolio because blog posts carry more text per row.
+        tag (str, optional): filter to a single tag slug.
+
+    ``blog_enabled`` must be ``true`` or every blog endpoint 404s.
+    """
+    db = get_db()
+    gate = _require_blog_enabled(db)
+    if gate is not None:
+        return gate
+
+    page = clamp_page(request.args.get('page'))
+    per_page = _parse_per_page(request.args.get('per_page'), default=10)
+    tag = (request.args.get('tag') or '').strip()
+
+    if tag:
+        posts, total = get_posts_by_tag(db, tag, page=page, per_page=per_page)
+    else:
+        posts, total = get_published_posts(db, page=page, per_page=per_page)
+
+    items = [
+        _blog_post_to_dict(p, fields=_BLOG_POST_LIST_FIELDS, include_tags=True, db=db)
+        for p in posts
+    ]
+    return _paginated_response(items, page=page, per_page=per_page, total=total)
+
+
+@api_bp.route('/blog/tags')
+def blog_tags():
+    """Return every tag with a count of published posts using that tag.
+
+    Registered BEFORE ``/blog/<slug>`` in source order so Flask's URL
+    dispatcher prefers the static ``tags`` path over the slug matcher.
+    """
+    db = get_db()
+    gate = _require_blog_enabled(db)
+    if gate is not None:
+        return gate
+
+    # Counts only published posts — a draft with a tag shouldn't inflate
+    # the public count. Left join so tags with zero published posts
+    # still appear (count = 0), which matches admin expectations.
+    rows = db.execute(
+        'SELECT bt.id, bt.name, bt.slug, '
+        "       COUNT(CASE WHEN bp.status = 'published' THEN 1 END) AS post_count "
+        'FROM blog_tags bt '
+        'LEFT JOIN blog_post_tags bpt ON bpt.tag_id = bt.id '
+        'LEFT JOIN blog_posts bp ON bp.id = bpt.post_id '
+        'GROUP BY bt.id, bt.name, bt.slug '
+        'ORDER BY bt.name'
+    ).fetchall()
+    items = [
+        {
+            'id': r['id'],
+            'name': r['name'],
+            'slug': r['slug'],
+            'post_count': r['post_count'],
+        }
+        for r in rows
+    ]
+    _ = get_all_tags  # kept imported for future admin list parity
+    return _conditional_response({'data': items})
+
+
+@api_bp.route('/blog/<slug>')
+def blog_detail(slug):
+    """Return a single published blog post with its tags + rendered HTML.
+
+    Draft / archived posts return 404 (not 403) to avoid leaking their
+    existence.
+    """
+    db = get_db()
+    gate = _require_blog_enabled(db)
+    if gate is not None:
+        return gate
+
+    row = get_post_by_slug(db, slug)
+    if row is None:
+        return _error(f'No published blog post with slug {slug!r}', 'NOT_FOUND', 404)
+
+    data = _blog_post_to_dict(
+        row,
+        fields=_BLOG_POST_DETAIL_FIELDS,
+        include_tags=True,
+        include_rendered=True,
+        db=db,
+    )
+    return _conditional_response({'data': data})
+
+
+# ---------------------------------------------------------------------------
 # Housekeeping
 # ---------------------------------------------------------------------------
 
@@ -465,4 +712,8 @@ def _unused():  # pragma: no cover
         _REVIEW_PUBLIC_FIELDS,
         _CERT_PUBLIC_FIELDS,
         _CONTENT_BLOCK_PUBLIC_FIELDS,
+        _CASE_STUDY_PUBLIC_FIELDS,
+        _PROJECT_PUBLIC_FIELDS,
+        _BLOG_POST_LIST_FIELDS,
+        _BLOG_POST_DETAIL_FIELDS,
     )

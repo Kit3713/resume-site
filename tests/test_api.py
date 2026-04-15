@@ -428,6 +428,279 @@ def test_csrf_does_not_apply_to_api(csrf_client):
 
 
 # ---------------------------------------------------------------------------
+# /api/v1/case-studies/<slug>
+# ---------------------------------------------------------------------------
+
+
+def test_case_study_detail_returns_published(client, app):
+    _seed(
+        app,
+        "INSERT OR REPLACE INTO settings(key, value) VALUES ('case_studies_enabled', 'true')",
+    )
+    _seed(
+        app,
+        'INSERT INTO case_studies (slug, title, summary, problem, solution, result, published) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?)',
+        ('rack-build', 'Rack Build', 'Summary', 'P', 'S', 'R', 1),
+    )
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
+    body = _json(client.get('/api/v1/case-studies/rack-build'))
+    assert body['data']['slug'] == 'rack-build'
+    assert body['data']['title'] == 'Rack Build'
+    assert body['data']['problem'] == 'P'
+
+
+def test_case_study_detail_404_when_feature_disabled(client, app):
+    _seed(
+        app,
+        "INSERT OR REPLACE INTO settings(key, value) VALUES ('case_studies_enabled', 'false')",
+    )
+    _seed(
+        app,
+        'INSERT INTO case_studies (slug, title, published) VALUES (?, ?, ?)',
+        ('exists', 'Exists', 1),
+    )
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
+    response = client.get('/api/v1/case-studies/exists')
+    assert response.status_code == 404
+    assert _json(response)['code'] == 'NOT_FOUND'
+
+
+def test_case_study_detail_404_when_unpublished(client, app):
+    _seed(
+        app,
+        "INSERT OR REPLACE INTO settings(key, value) VALUES ('case_studies_enabled', 'true')",
+    )
+    _seed(
+        app,
+        'INSERT INTO case_studies (slug, title, published) VALUES (?, ?, ?)',
+        ('draft', 'Draft', 0),
+    )
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
+    response = client.get('/api/v1/case-studies/draft')
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# /api/v1/projects (+ /<slug>)
+# ---------------------------------------------------------------------------
+
+
+def _seed_project(app, slug, title, *, visible=1, has_detail_page=1):
+    _seed(
+        app,
+        'INSERT INTO projects (slug, title, summary, description, github_url, '
+        'has_detail_page, sort_order, visible) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        (
+            slug,
+            title,
+            'Summary',
+            'Description',
+            'https://github.com/x/y',
+            has_detail_page,
+            1,
+            visible,
+        ),
+    )
+
+
+def test_projects_list_visible_only(client, app):
+    _seed_project(app, 'ironclad', 'Ironclad')
+    _seed_project(app, 'hidden', 'Hidden', visible=0)
+
+    body = _json(client.get('/api/v1/projects'))
+    slugs = [p['slug'] for p in body['data']]
+    assert slugs == ['ironclad']
+
+
+def test_project_detail_returns_row(client, app):
+    _seed_project(app, 'ironclad', 'Ironclad')
+    body = _json(client.get('/api/v1/projects/ironclad'))
+    assert body['data']['slug'] == 'ironclad'
+    assert body['data']['title'] == 'Ironclad'
+    assert body['data']['has_detail_page'] == 1
+
+
+def test_project_detail_404_without_detail_page(client, app):
+    _seed_project(app, 'github-only', 'Github Only', has_detail_page=0)
+    # List endpoint still surfaces it (has_detail_page is only a detail-route gate).
+    body = _json(client.get('/api/v1/projects'))
+    assert [p['slug'] for p in body['data']] == ['github-only']
+    # But the detail endpoint 404s — nothing to show.
+    response = client.get('/api/v1/projects/github-only')
+    assert response.status_code == 404
+
+
+def test_project_detail_404_when_hidden(client, app):
+    _seed_project(app, 'secret', 'Secret', visible=0)
+    response = client.get('/api/v1/projects/secret')
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# /api/v1/blog  (+ /<slug>, /tags)
+# ---------------------------------------------------------------------------
+
+
+def _enable_blog(app, enabled=True):
+    _seed(
+        app,
+        "INSERT OR REPLACE INTO settings(key, value) VALUES ('blog_enabled', ?)",
+        ('true' if enabled else 'false',),
+    )
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
+
+def _seed_blog_post(
+    app, slug, title, *, status='published', featured=0, published_at='2026-01-01T00:00:00Z'
+):
+    _seed(
+        app,
+        'INSERT INTO blog_posts (slug, title, summary, content, author, status, '
+        'featured, reading_time, meta_description, published_at) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        (slug, title, 'Sum', '<p>Body</p>', 'Author', status, featured, 3, 'meta', published_at),
+    )
+
+
+def _tag_post(app, post_slug, *tags):
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    conn.execute('PRAGMA foreign_keys=ON')
+    post_id = conn.execute('SELECT id FROM blog_posts WHERE slug = ?', (post_slug,)).fetchone()[0]
+    for name in tags:
+        slug = name.lower().replace(' ', '-')
+        conn.execute(
+            'INSERT OR IGNORE INTO blog_tags (name, slug) VALUES (?, ?)',
+            (name, slug),
+        )
+        tag_id = conn.execute('SELECT id FROM blog_tags WHERE slug = ?', (slug,)).fetchone()[0]
+        conn.execute(
+            'INSERT OR IGNORE INTO blog_post_tags (post_id, tag_id) VALUES (?, ?)',
+            (post_id, tag_id),
+        )
+    conn.commit()
+    conn.close()
+
+
+def test_blog_list_404_when_disabled(client, app):
+    _enable_blog(app, False)
+    response = client.get('/api/v1/blog')
+    assert response.status_code == 404
+    assert _json(response)['code'] == 'NOT_FOUND'
+
+
+def test_blog_list_returns_published_posts(client, app):
+    _enable_blog(app)
+    _seed_blog_post(app, 'first', 'First Post', published_at='2026-01-01T00:00:00Z')
+    _seed_blog_post(app, 'second', 'Second Post', published_at='2026-02-01T00:00:00Z')
+    _seed_blog_post(app, 'draft', 'Draft', status='draft')
+
+    body = _json(client.get('/api/v1/blog'))
+    slugs = [p['slug'] for p in body['data']]
+    # Newest first; draft excluded.
+    assert slugs == ['second', 'first']
+    assert body['pagination']['total'] == 2
+
+
+def test_blog_list_filters_by_tag(client, app):
+    _enable_blog(app)
+    _seed_blog_post(app, 'a', 'A', published_at='2026-01-01T00:00:00Z')
+    _seed_blog_post(app, 'b', 'B', published_at='2026-02-01T00:00:00Z')
+    _tag_post(app, 'a', 'Homelab')
+    _tag_post(app, 'b', 'Networking')
+
+    body = _json(client.get('/api/v1/blog?tag=homelab'))
+    slugs = [p['slug'] for p in body['data']]
+    assert slugs == ['a']
+    assert body['pagination']['total'] == 1
+
+
+def test_blog_list_includes_tags_on_each_post(client, app):
+    _enable_blog(app)
+    _seed_blog_post(app, 'tagged', 'Tagged')
+    _tag_post(app, 'tagged', 'Homelab', 'Networking')
+
+    body = _json(client.get('/api/v1/blog'))
+    post = body['data'][0]
+    tag_slugs = sorted(t['slug'] for t in post['tags'])
+    assert tag_slugs == ['homelab', 'networking']
+
+
+def test_blog_detail_returns_rendered_html(client, app):
+    _enable_blog(app)
+    _seed_blog_post(app, 'hello', 'Hello')
+    _tag_post(app, 'hello', 'Welcome')
+
+    body = _json(client.get('/api/v1/blog/hello'))
+    assert body['data']['slug'] == 'hello'
+    assert body['data']['content'] == '<p>Body</p>'
+    # HTML posts are passed through as-is by render_post_content.
+    assert body['data']['rendered_html'] == '<p>Body</p>'
+    assert [t['slug'] for t in body['data']['tags']] == ['welcome']
+
+
+def test_blog_detail_404_for_draft(client, app):
+    _enable_blog(app)
+    _seed_blog_post(app, 'sneak', 'Sneak', status='draft')
+    response = client.get('/api/v1/blog/sneak')
+    assert response.status_code == 404
+
+
+def test_blog_detail_404_when_disabled(client, app):
+    _enable_blog(app, False)
+    response = client.get('/api/v1/blog/anything')
+    assert response.status_code == 404
+
+
+def test_blog_tags_returns_counts(client, app):
+    _enable_blog(app)
+    _seed_blog_post(app, 'a', 'A')
+    _seed_blog_post(app, 'b', 'B')
+    _seed_blog_post(app, 'c', 'C', status='draft')
+    _tag_post(app, 'a', 'Homelab')
+    _tag_post(app, 'b', 'Homelab')
+    _tag_post(app, 'c', 'Homelab')  # draft shouldn't count
+
+    body = _json(client.get('/api/v1/blog/tags'))
+    tags_by_slug = {t['slug']: t for t in body['data']}
+    assert 'homelab' in tags_by_slug
+    assert tags_by_slug['homelab']['post_count'] == 2
+
+
+def test_blog_tags_route_resolves_before_slug(client, app):
+    """Flask should prefer the static '/blog/tags' over '/blog/<slug>'.
+
+    Regression guard: ensure an unlucky post slug of 'tags' doesn't
+    shadow the tags endpoint.
+    """
+    _enable_blog(app)
+    _seed_blog_post(app, 'tags', 'A post literally slugged tags')
+
+    response = client.get('/api/v1/blog/tags')
+    body = _json(response)
+    # A slug-detail response would carry 'data' as an object with slug key.
+    # A tags-list response has 'data' as a list of tag dicts.
+    assert isinstance(body['data'], list)
+
+
+def test_blog_tags_404_when_disabled(client, app):
+    _enable_blog(app, False)
+    response = client.get('/api/v1/blog/tags')
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # csrf_client fixture (mirrors tests/test_security.py for this module)
 # ---------------------------------------------------------------------------
 
