@@ -357,6 +357,22 @@ SETTINGS_REGISTRY = {
         'category': 'Security',
         'description': ('Maximum admin-scope API requests per minute per client IP.'),
     },
+    # --- API documentation (Phase 16.5) ---
+    # When off, /api/v1/docs, /api/v1/openapi.yaml, and /api/v1/openapi.json
+    # all return 404 NOT_FOUND (not 403) so the endpoints don't reveal
+    # themselves. Off by default — operators that want public API
+    # discovery opt in.
+    'api_docs_enabled': {
+        'type': 'bool',
+        'default': 'false',
+        'label': 'API Documentation (Swagger UI)',
+        'category': 'Security',
+        'description': (
+            'Expose the OpenAPI 3.0 specification and an interactive '
+            'Swagger UI at /api/v1/docs. Off by default; enable only on '
+            'instances where public API discovery is intended.'
+        ),
+    },
     # --- Observability (Phase 18.2) ---
     'metrics_enabled': {
         'type': 'bool',

@@ -461,10 +461,10 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 ### 16.5 — API Documentation
 
-- [ ] Generate OpenAPI 3.0 specification (`openapi.yaml`) — hand-written, not auto-generated (keeps it clean and intentional)
-- [ ] Serve interactive docs at `/api/v1/docs` using Swagger UI (loaded from CDN, behind a `api_docs_enabled` feature flag, default off)
-- [ ] Include authentication examples, error code catalog, and pagination guide
-- [ ] API changelog section in `CHANGELOG.md` for tracking breaking changes
+- [x] **OpenAPI 3.0 spec:** `docs/openapi.yaml` — hand-authored, 34 operations across 27 paths. Bearer security scheme, reusable schemas (`Error`, `Pagination`, every resource shape), reusable responses (`NotFound`, `Unauthorized`, `Forbidden`, `RateLimited`, `ValidationError`, `UnsupportedMediaType`), tags `Public` / `Write` / `Admin`. Drift-guarded by `tests/test_openapi_spec.py` (18 tests) which asserts the spec ↔ Flask URL-map sets are byte-identical.
+- [x] **Swagger UI:** `GET /api/v1/docs` renders a standalone template wired to `swagger-ui-dist@5.17.14` (pinned, CDN). Init lives in `app/static/js/swagger-init.js` so the page never relies on CSP `'unsafe-inline'` for scripts. `GET /api/v1/openapi.yaml` and `/openapi.json` serve the spec with ETag + 304 round-tripping. All three routes sit behind the `api_docs_enabled` setting (default `false`, Security category) and 404 when disabled — matches the `/metrics` and disabled-blog "don't leak existence" pattern.
+- [x] **Documentation completeness:** auth examples (Bearer header + scope semantics), error-code catalog (enum on the `Error` schema, cross-checked against `app/routes/api.py` literals by `test_error_code_catalog_covers_source_codes`), and a pagination guide (envelope + `page`/`per_page` clamping rules) all live in `info.description` so Swagger UI renders them at the top.
+- [x] **CHANGELOG:** "Added — Phase 16.5: OpenAPI 3.0 Documentation" entry under Unreleased records the spec file, three routes, the new setting, and the test additions.
 
 ### 16.6 — API Tests
 
