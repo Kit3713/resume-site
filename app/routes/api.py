@@ -60,6 +60,7 @@ from flask import Blueprint, Response, current_app, g, jsonify, request
 from app import limiter
 from app.db import get_db
 from app.events import Events, emit
+from app.exceptions import ValidationError
 from app.models import (
     count_recent_submissions,
     get_all_approved_reviews,
@@ -76,7 +77,12 @@ from app.models import (
     get_visible_stats,
     save_contact_submission,
 )
-from app.services.api_tokens import rate_limit_write, require_api_token
+from app.services.activity_log import get_recent_activity, log_action
+from app.services.api_tokens import (
+    rate_limit_admin,
+    rate_limit_write,
+    require_api_token,
+)
 from app.services.blog import (
     create_post,
     delete_post,
@@ -92,7 +98,21 @@ from app.services.blog import (
     update_post,
 )
 from app.services.pagination import clamp_page, offset_for, paginate
-from app.services.settings_svc import get_all_cached
+from app.services.reviews import (
+    approve_review,
+    get_reviews_by_status,
+    reject_review,
+    update_review_tier,
+)
+from app.services.settings_svc import (
+    SETTINGS_REGISTRY,
+    get_all,
+    get_all_cached,
+    get_grouped_settings,
+)
+from app.services.settings_svc import (
+    save_many as save_settings,
+)
 
 api_bp = Blueprint('api', __name__, url_prefix='/api/v1')
 
@@ -1323,6 +1343,514 @@ def contact_submit():
 
     return _conditional_response(
         {'data': {'id': submission_id, 'ok': True, 'is_spam': is_spam}},
+        status=201,
+    )
+
+
+# ===========================================================================
+# ADMIN ENDPOINTS (Phase 16.4 — Token Required: admin scope)
+# ===========================================================================
+#
+# All /api/v1/admin/ routes sit behind @require_api_token('admin') and
+# use the slower rate_limit_admin bucket (default 10/min). The HTML
+# admin UI remains the primary surface; these endpoints exist so a
+# headless client (ops tooling, external dashboard, mobile app) can
+# drive the same workflows.
+#
+# Field whitelists are deliberately small — the API should never leak
+# internals (ip_address for contact submissions is kept because admins
+# legitimately need it for abuse handling; user_agent truncated).
+
+_CONTACT_PUBLIC_FIELDS = (
+    'id',
+    'name',
+    'email',
+    'message',
+    'ip_address',
+    'user_agent',
+    'is_spam',
+    'read',
+    'created_at',
+)
+
+_REVIEW_ADMIN_FIELDS = (
+    'id',
+    'reviewer_name',
+    'reviewer_title',
+    'relationship',
+    'message',
+    'rating',
+    'type',
+    'status',
+    'display_tier',
+    'token_id',
+    'created_at',
+    'reviewed_at',
+)
+
+_ACTIVITY_PUBLIC_FIELDS = (
+    'id',
+    'action',
+    'category',
+    'detail',
+    'admin_user',
+    'created_at',
+)
+
+_REVIEW_TOKEN_PUBLIC_FIELDS = (
+    'id',
+    'token',
+    'name',
+    'type',
+    'used',
+    'used_at',
+    'created_at',
+    'expires_at',
+)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/admin/settings
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/admin/settings', methods=['GET'])
+@limiter.limit(rate_limit_admin, methods=['GET'])
+@require_api_token('admin')
+def admin_settings_list():
+    """Return every setting, grouped by category.
+
+    Response::
+
+        {
+          "data": {
+            "categories": [
+              {"name": "Site Identity", "settings": [{...}, ...]},
+              ...
+            ],
+            "flat": {"site_title": "...", ...}
+          }
+        }
+
+    Each setting dict carries its registry metadata (type, default,
+    label, options) so a headless admin panel can render the form
+    without hard-coding the schema.
+    """
+    db = get_db()
+    grouped = get_grouped_settings(db)
+    categories = [
+        {'name': name, 'settings': [dict(s) for s in settings]} for name, settings in grouped
+    ]
+    return _conditional_response({'data': {'categories': categories, 'flat': get_all(db)}})
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/v1/admin/settings
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/admin/settings', methods=['PUT'])
+@limiter.limit(rate_limit_admin, methods=['PUT'])
+@require_api_token('admin')
+def admin_settings_update():
+    """Bulk-update settings. Body is a flat ``{key: value}`` JSON object.
+
+    Unknown keys (not in ``SETTINGS_REGISTRY``) are silently ignored —
+    same contract as the HTML admin form. Boolean settings not present
+    in the body are NOT flipped to false (that's an HTML-form quirk we
+    don't want to replicate for API clients who may send a partial
+    update). Returns 200 with the refreshed settings payload.
+    """
+    db = get_db()
+    body = _json_body()
+    # Filter to known keys up front so unknown keys don't even reach
+    # save_many (which would skip them anyway). Booleans are normalised
+    # to the string literals 'true' / 'false' the settings table stores.
+    cleaned = {}
+    for key, raw in body.items():
+        if key not in SETTINGS_REGISTRY:
+            continue
+        if SETTINGS_REGISTRY[key].get('type') == 'bool':
+            cleaned[key] = 'true' if raw in (True, 'true', 'True', 1, '1') else 'false'
+        else:
+            cleaned[key] = '' if raw is None else str(raw)
+
+    save_settings(db, cleaned)
+    log_action(
+        db,
+        action='Updated settings via API',
+        category='settings',
+        detail=f'{len(cleaned)} key(s) changed',
+    )
+    emit(
+        Events.SETTINGS_CHANGED,
+        keys=sorted(cleaned.keys()),
+        source='api.admin_settings_update',
+    )
+    return _conditional_response(
+        {'data': {'updated_keys': sorted(cleaned.keys()), 'flat': get_all(db)}}
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/admin/analytics
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/admin/analytics', methods=['GET'])
+@limiter.limit(rate_limit_admin, methods=['GET'])
+@require_api_token('admin')
+def admin_analytics():
+    """Return a page-view summary: total, recent (7d), popular paths, daily series.
+
+    Query parameters:
+        days (int, default 7, max 90): recent-window size.
+        popular_limit (int, default 10, max 50): top-N pages by count.
+    """
+    db = get_db()
+    try:
+        days = max(1, min(int(request.args.get('days', 7)), 90))
+    except (TypeError, ValueError):
+        days = 7
+    try:
+        limit = max(1, min(int(request.args.get('popular_limit', 10)), 50))
+    except (TypeError, ValueError):
+        limit = 10
+
+    total = db.execute('SELECT COUNT(*) AS n FROM page_views').fetchone()['n']
+    # The '-N days' modifier has to be built from the validated int so
+    # the clamped value is the one that hits SQLite.
+    recent = db.execute(
+        'SELECT COUNT(*) AS n FROM page_views '
+        "WHERE created_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)",
+        (f'-{days} days',),
+    ).fetchone()['n']
+    popular = db.execute(
+        'SELECT path, COUNT(*) AS n FROM page_views GROUP BY path ORDER BY n DESC LIMIT ?',
+        (limit,),
+    ).fetchall()
+    series = db.execute(
+        'SELECT date(created_at) AS day, COUNT(*) AS n FROM page_views '
+        "WHERE created_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?) "
+        'GROUP BY day ORDER BY day',
+        (f'-{days} days',),
+    ).fetchall()
+
+    payload = {
+        'total_views': total,
+        'recent_views': recent,
+        'window_days': days,
+        'popular_pages': [{'path': r['path'], 'count': r['n']} for r in popular],
+        'time_series': [{'date': r['day'], 'count': r['n']} for r in series],
+    }
+    return _conditional_response({'data': payload})
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/admin/activity
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/admin/activity', methods=['GET'])
+@limiter.limit(rate_limit_admin, methods=['GET'])
+@require_api_token('admin')
+def admin_activity_log():
+    """Return the recent admin activity log.
+
+    Query parameters:
+        limit (int, default 20, max 200): how many entries to return.
+    """
+    try:
+        limit = max(1, min(int(request.args.get('limit', 20)), 200))
+    except (TypeError, ValueError):
+        limit = 20
+    rows = get_recent_activity(get_db(), limit=limit)
+    items = [_row_to_dict(r, _ACTIVITY_PUBLIC_FIELDS) for r in rows]
+    return _conditional_response({'data': items})
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/admin/reviews
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/admin/reviews', methods=['GET'])
+@limiter.limit(rate_limit_admin, methods=['GET'])
+@require_api_token('admin')
+def admin_reviews_list():
+    """List reviews, optionally filtered by status.
+
+    Query parameters:
+        status (str, optional): ``pending`` | ``approved`` | ``rejected``.
+            Missing / empty returns all three statuses concatenated
+            (pending first, matching the admin UI).
+    """
+    db = get_db()
+    status = (request.args.get('status') or '').strip()
+    if status:
+        try:
+            rows = get_reviews_by_status(db, status)
+        except ValidationError as exc:
+            return _error(
+                str(exc),
+                'VALIDATION_ERROR',
+                400,
+                details={'field': 'status', 'allowed': ['pending', 'approved', 'rejected']},
+            )
+    else:
+        pending = get_reviews_by_status(db, 'pending')
+        approved = get_reviews_by_status(db, 'approved')
+        rejected = get_reviews_by_status(db, 'rejected')
+        rows = list(pending) + list(approved) + list(rejected)
+
+    items = [_row_to_dict(r, _REVIEW_ADMIN_FIELDS) for r in rows]
+    return _conditional_response({'data': items})
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/v1/admin/reviews/<id>
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/admin/reviews/<int:review_id>', methods=['PUT'])
+@limiter.limit(rate_limit_admin, methods=['PUT'])
+@require_api_token('admin')
+def admin_review_update(review_id):
+    """Approve / reject / re-tier a review.
+
+    Body (JSON) — exactly one of:
+        {"action": "approve", "display_tier": "featured|standard|hidden"}
+        {"action": "reject"}
+        {"action": "set_tier", "display_tier": "..."}   # for already-approved
+    """
+    db = get_db()
+    existing = db.execute('SELECT id FROM reviews WHERE id = ?', (review_id,)).fetchone()
+    if existing is None:
+        return _error(f'No review with id {review_id}', 'NOT_FOUND', 404)
+
+    body = _json_body()
+    action = (body.get('action') or '').strip()
+    tier = (body.get('display_tier') or 'standard').strip()
+
+    if action == 'approve':
+        approve_review(db, review_id, display_tier=tier)
+        detail = f'id={review_id} tier={tier}'
+        verb = 'Approved review'
+    elif action == 'reject':
+        reject_review(db, review_id)
+        detail = f'id={review_id}'
+        verb = 'Rejected review'
+    elif action == 'set_tier':
+        update_review_tier(db, review_id, display_tier=tier)
+        detail = f'id={review_id} tier={tier}'
+        verb = 'Updated review tier'
+    else:
+        return _error(
+            f'Unknown action {action!r}',
+            'VALIDATION_ERROR',
+            400,
+            details={'field': 'action', 'allowed': ['approve', 'reject', 'set_tier']},
+        )
+
+    log_action(db, action=verb, category='reviews', detail=detail)
+    if action == 'approve':
+        emit(Events.REVIEW_APPROVED, review_id=review_id, display_tier=tier, source='api')
+
+    updated = db.execute('SELECT * FROM reviews WHERE id = ?', (review_id,)).fetchone()
+    return _conditional_response({'data': _row_to_dict(updated, _REVIEW_ADMIN_FIELDS)})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/admin/tokens — generate a review invite token
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/admin/tokens', methods=['POST'])
+@limiter.limit(rate_limit_admin, methods=['POST'])
+@require_api_token('admin')
+def admin_review_token_create():
+    """Generate a single-use review invitation token.
+
+    Body (JSON):
+        name (str, optional) — recipient label for the admin view.
+        type (str, optional, default 'recommendation'):
+            'recommendation' | 'client_review'.
+
+    Returns 201 with the full token row (including the raw value —
+    review tokens are designed to be shared verbatim with a contact,
+    unlike API tokens which are stored as hashes).
+    """
+    import secrets as _secrets
+
+    db = get_db()
+    body = _json_body()
+    name = (body.get('name') or '').strip()
+    token_type = (body.get('type') or 'recommendation').strip()
+    if token_type not in ('recommendation', 'client_review'):
+        return _error(
+            f'Invalid token type {token_type!r}',
+            'VALIDATION_ERROR',
+            400,
+            details={'field': 'type', 'allowed': ['recommendation', 'client_review']},
+        )
+
+    token_string = _secrets.token_urlsafe(32)
+    cursor = db.execute(
+        'INSERT INTO review_tokens (token, name, type) VALUES (?, ?, ?)',
+        (token_string, name, token_type),
+    )
+    db.commit()
+    log_action(
+        db,
+        action='Generated review token via API',
+        category='tokens',
+        detail=f'{name or "anonymous"} ({token_type})',
+    )
+    row = db.execute('SELECT * FROM review_tokens WHERE id = ?', (cursor.lastrowid,)).fetchone()
+    return _conditional_response(
+        {'data': _row_to_dict(row, _REVIEW_TOKEN_PUBLIC_FIELDS)},
+        status=201,
+    )
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/v1/admin/tokens/<id>
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/admin/tokens/<int:token_id>', methods=['DELETE'])
+@limiter.limit(rate_limit_admin, methods=['DELETE'])
+@require_api_token('admin')
+def admin_review_token_delete(token_id):
+    """Delete (hard-revoke) a review invite token. 204 on success, 404 otherwise."""
+    db = get_db()
+    row = db.execute('SELECT id FROM review_tokens WHERE id = ?', (token_id,)).fetchone()
+    if row is None:
+        return _error(f'No review token with id {token_id}', 'NOT_FOUND', 404)
+
+    db.execute('DELETE FROM review_tokens WHERE id = ?', (token_id,))
+    db.commit()
+    log_action(
+        db,
+        action='Deleted review token via API',
+        category='tokens',
+        detail=f'id={token_id}',
+    )
+    return Response(status=204)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/admin/contacts
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/admin/contacts', methods=['GET'])
+@limiter.limit(rate_limit_admin, methods=['GET'])
+@require_api_token('admin')
+def admin_contacts_list():
+    """Paginated contact submissions.
+
+    Query parameters:
+        page (int, default 1)
+        per_page (int, default 20, max 100)
+        include_spam (bool, default false): if true, include spam rows
+            interleaved by timestamp. Defaults to false so an admin's
+            default view is noise-free.
+    """
+    db = get_db()
+    page = clamp_page(request.args.get('page'))
+    per_page = _parse_per_page(request.args.get('per_page'), default=20)
+    include_spam = str(request.args.get('include_spam', 'false')).lower() in {'1', 'true', 'yes'}
+
+    # ``where`` is one of two hard-coded literals — never user input —
+    # so the f-string interpolation is safe. The suppressions silence
+    # ruff (S608) and bandit (B608) without disabling the check
+    # globally.
+    where = '' if include_spam else 'WHERE is_spam = 0'
+    total = db.execute(
+        f'SELECT COUNT(*) AS n FROM contact_submissions {where}'  # noqa: S608  # nosec B608
+    ).fetchone()['n']
+    rows = db.execute(
+        f'SELECT * FROM contact_submissions {where} '  # noqa: S608  # nosec B608
+        'ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?',
+        (per_page, offset_for(page, per_page)),
+    ).fetchall()
+
+    items = [_row_to_dict(r, _CONTACT_PUBLIC_FIELDS) for r in rows]
+    return _paginated_response(items, page=page, per_page=per_page, total=total)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/admin/backup
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route('/admin/backup', methods=['POST'])
+@limiter.limit(rate_limit_admin, methods=['POST'])
+@require_api_token('admin')
+def admin_backup_create():
+    """Trigger an on-demand backup, return the archive path + size.
+
+    Body (JSON, optional):
+        {"db_only": true}   — create a database-only archive (fast).
+
+    The backup is written to the same directory the ``manage.py backup``
+    CLI uses: config > env ``RESUME_SITE_BACKUP_DIR`` > ``<repo>/backups``.
+    ``create_backup`` emits ``Events.BACKUP_COMPLETED`` itself, so this
+    route doesn't double-emit.
+    """
+    import os as _os
+
+    from app.services.backups import BackupError, create_backup
+
+    body = _json_body()
+    db_only = bool(body.get('db_only', False))
+
+    db_path = current_app.config['DATABASE_PATH']
+    photos_dir = current_app.config.get('PHOTO_STORAGE')
+    # Match manage.py's resolution: explicit arg would go here, then
+    # env, then <repo>/backups. The API has no explicit arg so env +
+    # default suffice.
+    output_dir = _os.path.abspath(
+        _os.environ.get('RESUME_SITE_BACKUP_DIR')
+        or _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(__file__))), 'backups')
+    )
+    config_path = _os.environ.get(
+        'RESUME_SITE_CONFIG',
+        _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.dirname(__file__))), 'config.yaml'
+        ),
+    )
+
+    try:
+        archive = create_backup(
+            db_path=db_path,
+            photos_dir=photos_dir,
+            config_path=config_path if _os.path.isfile(config_path) else None,
+            output_dir=output_dir,
+            db_only=db_only,
+        )
+    except BackupError as exc:
+        return _error(str(exc), 'BACKUP_FAILED', 500)
+    except OSError as exc:
+        return _error(f'I/O failure during backup: {exc}', 'BACKUP_FAILED', 500)
+
+    size = _os.path.getsize(archive) if _os.path.exists(archive) else 0
+    log_action(
+        get_db(),
+        action='Created on-demand backup via API',
+        category='backup',
+        detail=_os.path.basename(archive),
+    )
+    return _conditional_response(
+        {
+            'data': {
+                'archive_path': archive,
+                'archive_name': _os.path.basename(archive),
+                'size_bytes': size,
+                'db_only': db_only,
+            }
+        },
         status=201,
     )
 

@@ -442,16 +442,22 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 16.4 — Admin Endpoints (Token Required — `admin` scope)
 
-- [ ] `GET /api/v1/admin/settings` — all settings (grouped by category)
-- [ ] `PUT /api/v1/admin/settings` — bulk update settings
-- [ ] `GET /api/v1/admin/analytics` — page view summary (total, per-page, time series)
-- [ ] `GET /api/v1/admin/activity` — recent activity log
-- [ ] `GET /api/v1/admin/reviews` — all reviews with status filter
-- [ ] `PUT /api/v1/admin/reviews/:id` — update review (approve, reject, change tier)
-- [ ] `POST /api/v1/admin/tokens` — generate review invite token
-- [ ] `DELETE /api/v1/admin/tokens/:id` — revoke review token
-- [ ] `GET /api/v1/admin/contacts` — contact submissions with pagination
-- [ ] `POST /api/v1/admin/backup` — trigger an on-demand backup (returns backup file path)
+All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_admin` bucket (default 10/min). Every mutation writes to the admin activity log with category-tagged detail so the API and the HTML admin UI share a single audit trail.
+
+- [x] `GET /api/v1/admin/settings` — returns `{data: {categories: [{name, settings: [...]}], flat: {key: value}}}`. Each setting carries its registry metadata (type, default, label, options) so a headless admin panel can render the form without hard-coding the schema.
+- [x] `PUT /api/v1/admin/settings` — bulk update from a flat JSON object. Unknown keys silently dropped (matches HTML form contract), booleans normalised to `'true'`/`'false'`, `None` coerced to empty string. Emits `Events.SETTINGS_CHANGED` with the sorted list of updated keys. Does NOT flip unset booleans to false (that's an HTML-form quirk; API clients may send partial updates).
+- [x] `GET /api/v1/admin/analytics` — total views / recent window / popular paths / daily time series. `?days=N` (1–90, default 7) and `?popular_limit=N` (1–50, default 10). All SQL parameters are bound; the `-N days` modifier is built from the clamped int so adversarial query strings can't reach the driver.
+- [x] `GET /api/v1/admin/activity` — recent activity log entries. `?limit=N` (1–200, default 20).
+- [x] `GET /api/v1/admin/reviews` — all reviews or filter by `?status=pending|approved|rejected`. Invalid status → 400 `VALIDATION_ERROR`. No status = pending/approved/rejected concatenated in that order (matches admin UI).
+- [x] `PUT /api/v1/admin/reviews/<id>` — body `{action: "approve"|"reject"|"set_tier", display_tier: "..."}`. Unknown action → 400; unknown id → 404. Emits `Events.REVIEW_APPROVED` on approve; every action writes to activity log.
+- [x] `POST /api/v1/admin/tokens` — generate a review invite token (single-use, shared verbatim with a contact — different from API tokens which are hashed). Body `{name, type: "recommendation"|"client_review"}`. Returns 201 with the raw token string.
+- [x] `DELETE /api/v1/admin/tokens/<id>` — hard-delete a review token. 204 on success, 404 if missing.
+- [x] `GET /api/v1/admin/contacts` — paginated submissions. `?per_page=N` (1–100, default 20), `?page=N`, `?include_spam=true` (default false). The dynamic WHERE clause uses only two hardcoded literals (`''` and `'WHERE is_spam = 0'`) — never user input — documented with inline `# noqa: S608 # nosec B608` on the f-string.
+- [x] `POST /api/v1/admin/backup` — on-demand backup via `app.services.backups.create_backup`. Body `{db_only: bool}` (optional, default false). Returns 201 with `{archive_path, archive_name, size_bytes, db_only}`. `create_backup` emits `Events.BACKUP_COMPLETED` itself so the route doesn't double-emit. Output directory resolves via `RESUME_SITE_BACKUP_DIR` env var > `<repo>/backups`.
+
+**Tests:** 27 new tests in `tests/test_api.py` (total 118 API, 678 project-wide). Coverage includes: auth gating (write scope → 403 on admin routes; missing token → 401), settings list envelope + registry metadata, settings update filtering unknown keys + event emission, analytics total/popular/series/clamping, activity log round-trip, reviews filter-by-status + invalid-status 400, review approve/reject/set_tier transitions + 404 + event, review-token create with type validation + delete 204 + 404, contacts pagination with include_spam toggle, backup create via tmp_path + env override + event verification.
+
+**Ruff + bandit clean.** Two S608/B608 false positives (dynamic WHERE in /admin/contacts with two hardcoded literal alternatives) are suppressed inline with rationale.
 
 ### 16.5 — API Documentation
 

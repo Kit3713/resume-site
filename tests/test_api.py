@@ -1495,6 +1495,477 @@ def test_portfolio_delete_requires_write_scope(client, no_rate_limits, app):
     assert response.status_code == 403
 
 
+# ===========================================================================
+# ADMIN ENDPOINTS (Phase 16.4)
+# ===========================================================================
+
+
+@pytest.fixture
+def api_admin_token(app):
+    """Create an ``admin``-scoped API token and return the raw value."""
+    from app.db import get_db
+    from app.services.api_tokens import generate_token
+
+    with app.app_context():
+        generated = generate_token(get_db(), name='admin-bot', scope='admin')
+    return generated.raw
+
+
+def _admin_auth(token, *, with_json=False):
+    headers = {'Authorization': f'Bearer {token}'}
+    if with_json:
+        headers['Content-Type'] = 'application/json'
+    return headers
+
+
+# ---------------------------------------------------------------------------
+# Auth gating
+# ---------------------------------------------------------------------------
+
+
+def test_admin_endpoint_rejects_write_scope(client, no_rate_limits, app):
+    """A token with write scope (but not admin) must 403 on /admin routes."""
+    from app.db import get_db
+    from app.services.api_tokens import generate_token
+
+    with app.app_context():
+        raw = generate_token(get_db(), name='write-only', scope='write').raw
+
+    response = client.get(
+        '/api/v1/admin/settings',
+        headers={'Authorization': f'Bearer {raw}'},
+    )
+    assert response.status_code == 403
+
+
+def test_admin_endpoint_rejects_missing_token(client, no_rate_limits):
+    response = client.get('/api/v1/admin/settings')
+    assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/settings
+# ---------------------------------------------------------------------------
+
+
+def test_admin_settings_list_returns_grouped_and_flat(client, no_rate_limits, api_admin_token):
+    response = client.get(
+        '/api/v1/admin/settings',
+        headers=_admin_auth(api_admin_token),
+    )
+    assert response.status_code == 200
+    body = _json(response)
+    assert 'categories' in body['data']
+    assert 'flat' in body['data']
+    assert all('name' in c and 'settings' in c for c in body['data']['categories'])
+    assert 'site_title' in body['data']['flat']
+
+
+# ---------------------------------------------------------------------------
+# PUT /admin/settings
+# ---------------------------------------------------------------------------
+
+
+def test_admin_settings_update_applies_changes(client, no_rate_limits, api_admin_token, app):
+    response = client.put(
+        '/api/v1/admin/settings',
+        json={'site_title': 'API Updated', 'blog_enabled': True},
+        headers=_admin_auth(api_admin_token, with_json=True),
+    )
+    assert response.status_code == 200
+    body = _json(response)
+    assert 'site_title' in body['data']['updated_keys']
+    assert body['data']['flat']['site_title'] == 'API Updated'
+    assert body['data']['flat']['blog_enabled'] == 'true'
+
+
+def test_admin_settings_update_ignores_unknown_keys(client, no_rate_limits, api_admin_token):
+    """Unknown keys are silently dropped — matches HTML form contract."""
+    response = client.put(
+        '/api/v1/admin/settings',
+        json={'site_title': 'Ok', 'inject_malicious': 'x'},
+        headers=_admin_auth(api_admin_token, with_json=True),
+    )
+    assert response.status_code == 200
+    assert 'inject_malicious' not in _json(response)['data']['updated_keys']
+
+
+def test_admin_settings_update_emits_event(client, no_rate_limits, api_admin_token):
+    from app.events import Events, clear, register
+
+    captured = []
+    clear()
+    register(Events.SETTINGS_CHANGED, lambda **p: captured.append(p))
+    try:
+        client.put(
+            '/api/v1/admin/settings',
+            json={'site_title': 'Event Test'},
+            headers=_admin_auth(api_admin_token, with_json=True),
+        )
+    finally:
+        clear()
+    assert len(captured) == 1
+    assert 'site_title' in captured[0]['keys']
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/analytics
+# ---------------------------------------------------------------------------
+
+
+def test_admin_analytics_returns_summary(client, no_rate_limits, api_admin_token, app):
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    for path in ('/', '/', '/blog', '/portfolio'):
+        conn.execute(
+            'INSERT INTO page_views (path, referrer, user_agent, ip_address) VALUES (?, ?, ?, ?)',
+            (path, '', 'pytest', '127.0.0.1'),
+        )
+    conn.commit()
+    conn.close()
+
+    response = client.get(
+        '/api/v1/admin/analytics',
+        headers=_admin_auth(api_admin_function := api_admin_token),
+    )
+    assert response.status_code == 200
+    body = _json(response)['data']
+    # The analytics middleware may add rows for the API request itself,
+    # so assert >= our seed count rather than an exact match.
+    assert body['total_views'] >= 4
+    assert body['popular_pages'][0]['path'] == '/'
+    assert body['popular_pages'][0]['count'] == 2
+    assert body['window_days'] == 7
+    assert isinstance(body['time_series'], list)
+    _ = api_admin_function
+
+
+def test_admin_analytics_respects_days_clamp(client, no_rate_limits, api_admin_token):
+    response = client.get(
+        '/api/v1/admin/analytics?days=999',
+        headers=_admin_auth(api_admin_token),
+    )
+    assert response.status_code == 200
+    assert _json(response)['data']['window_days'] == 90
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/activity
+# ---------------------------------------------------------------------------
+
+
+def test_admin_activity_returns_recent_entries(client, no_rate_limits, api_admin_token, app):
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    conn.execute(
+        'INSERT INTO admin_activity_log (action, category, detail, admin_user) '
+        "VALUES ('Test action', 'test', 'detail', 'admin')"
+    )
+    conn.commit()
+    conn.close()
+
+    response = client.get(
+        '/api/v1/admin/activity',
+        headers=_admin_auth(api_admin_token),
+    )
+    assert response.status_code == 200
+    body = _json(response)
+    assert isinstance(body['data'], list)
+    assert any(e['action'] == 'Test action' for e in body['data'])
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/reviews
+# ---------------------------------------------------------------------------
+
+
+def _seed_review(app, name, status='pending', tier='standard'):
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    conn.execute(
+        'INSERT INTO reviews (reviewer_name, reviewer_title, message, type, '
+        'status, display_tier) VALUES (?, ?, ?, ?, ?, ?)',
+        (name, 'Title', 'msg', 'recommendation', status, tier),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_admin_reviews_list_all(client, no_rate_limits, api_admin_token, app):
+    _seed_review(app, 'A', status='pending')
+    _seed_review(app, 'B', status='approved')
+    _seed_review(app, 'C', status='rejected')
+
+    response = client.get(
+        '/api/v1/admin/reviews',
+        headers=_admin_auth(api_admin_token),
+    )
+    assert response.status_code == 200
+    names = sorted(r['reviewer_name'] for r in _json(response)['data'])
+    assert names == ['A', 'B', 'C']
+
+
+def test_admin_reviews_filter_by_status(client, no_rate_limits, api_admin_token, app):
+    _seed_review(app, 'A', status='pending')
+    _seed_review(app, 'B', status='approved')
+
+    response = client.get(
+        '/api/v1/admin/reviews?status=approved',
+        headers=_admin_auth(api_admin_token),
+    )
+    assert response.status_code == 200
+    names = [r['reviewer_name'] for r in _json(response)['data']]
+    assert names == ['B']
+
+
+def test_admin_reviews_rejects_invalid_status(client, no_rate_limits, api_admin_token):
+    response = client.get(
+        '/api/v1/admin/reviews?status=nonsense',
+        headers=_admin_auth(api_admin_token),
+    )
+    assert response.status_code == 400
+    assert _json(response)['code'] == 'VALIDATION_ERROR'
+
+
+# ---------------------------------------------------------------------------
+# PUT /admin/reviews/<id>
+# ---------------------------------------------------------------------------
+
+
+def test_admin_review_approve(client, no_rate_limits, api_admin_token, app):
+    _seed_review(app, 'A', status='pending')
+    response = client.put(
+        '/api/v1/admin/reviews/1',
+        json={'action': 'approve', 'display_tier': 'featured'},
+        headers=_admin_auth(api_admin_token, with_json=True),
+    )
+    assert response.status_code == 200
+    body = _json(response)
+    assert body['data']['status'] == 'approved'
+    assert body['data']['display_tier'] == 'featured'
+
+
+def test_admin_review_reject(client, no_rate_limits, api_admin_token, app):
+    _seed_review(app, 'A', status='pending')
+    response = client.put(
+        '/api/v1/admin/reviews/1',
+        json={'action': 'reject'},
+        headers=_admin_auth(api_admin_token, with_json=True),
+    )
+    assert response.status_code == 200
+    assert _json(response)['data']['status'] == 'rejected'
+
+
+def test_admin_review_set_tier(client, no_rate_limits, api_admin_token, app):
+    _seed_review(app, 'A', status='approved', tier='standard')
+    response = client.put(
+        '/api/v1/admin/reviews/1',
+        json={'action': 'set_tier', 'display_tier': 'featured'},
+        headers=_admin_auth(api_admin_token, with_json=True),
+    )
+    assert response.status_code == 200
+    assert _json(response)['data']['display_tier'] == 'featured'
+
+
+def test_admin_review_404_for_missing(client, no_rate_limits, api_admin_token):
+    response = client.put(
+        '/api/v1/admin/reviews/999',
+        json={'action': 'approve'},
+        headers=_admin_auth(api_admin_token, with_json=True),
+    )
+    assert response.status_code == 404
+
+
+def test_admin_review_rejects_bad_action(client, no_rate_limits, api_admin_token, app):
+    _seed_review(app, 'A', status='pending')
+    response = client.put(
+        '/api/v1/admin/reviews/1',
+        json={'action': 'nuke'},
+        headers=_admin_auth(api_admin_token, with_json=True),
+    )
+    assert response.status_code == 400
+
+
+def test_admin_review_approve_emits_event(client, no_rate_limits, api_admin_token, app):
+    from app.events import Events, clear, register
+
+    _seed_review(app, 'A', status='pending')
+    captured = []
+    clear()
+    register(Events.REVIEW_APPROVED, lambda **p: captured.append(p))
+    try:
+        client.put(
+            '/api/v1/admin/reviews/1',
+            json={'action': 'approve', 'display_tier': 'featured'},
+            headers=_admin_auth(api_admin_token, with_json=True),
+        )
+    finally:
+        clear()
+    assert len(captured) == 1
+    assert captured[0]['review_id'] == 1
+    assert captured[0]['display_tier'] == 'featured'
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/tokens + DELETE /admin/tokens/<id>
+# ---------------------------------------------------------------------------
+
+
+def test_admin_review_token_create(client, no_rate_limits, api_admin_token, app):
+    response = client.post(
+        '/api/v1/admin/tokens',
+        json={'name': 'Ada Lovelace', 'type': 'recommendation'},
+        headers=_admin_auth(api_admin_token, with_json=True),
+    )
+    assert response.status_code == 201
+    body = _json(response)
+    assert body['data']['name'] == 'Ada Lovelace'
+    assert body['data']['type'] == 'recommendation'
+    assert body['data']['token']
+
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    row = conn.execute('SELECT COUNT(*) FROM review_tokens').fetchone()
+    conn.close()
+    assert row[0] == 1
+
+
+def test_admin_review_token_create_rejects_bad_type(client, no_rate_limits, api_admin_token):
+    response = client.post(
+        '/api/v1/admin/tokens',
+        json={'name': 'X', 'type': 'admin'},
+        headers=_admin_auth(api_admin_token, with_json=True),
+    )
+    assert response.status_code == 400
+    assert _json(response)['details']['field'] == 'type'
+
+
+def test_admin_review_token_delete(client, no_rate_limits, api_admin_token, app):
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    conn.execute(
+        "INSERT INTO review_tokens (token, name, type) VALUES ('t1', 'Ada', 'recommendation')"
+    )
+    conn.commit()
+    tok_id = conn.execute('SELECT id FROM review_tokens').fetchone()[0]
+    conn.close()
+
+    response = client.delete(
+        f'/api/v1/admin/tokens/{tok_id}',
+        headers=_admin_auth(api_admin_token),
+    )
+    assert response.status_code == 204
+
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    row = conn.execute('SELECT COUNT(*) FROM review_tokens').fetchone()
+    conn.close()
+    assert row[0] == 0
+
+
+def test_admin_review_token_delete_404_for_missing(client, no_rate_limits, api_admin_token):
+    response = client.delete(
+        '/api/v1/admin/tokens/999',
+        headers=_admin_auth(api_admin_token),
+    )
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/contacts
+# ---------------------------------------------------------------------------
+
+
+def _seed_contact(app, name, *, is_spam=0):
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    conn.execute(
+        'INSERT INTO contact_submissions (name, email, message, is_spam) VALUES (?, ?, ?, ?)',
+        (name, f'{name.lower()}@x.co', f'msg from {name}', is_spam),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_admin_contacts_list_excludes_spam_by_default(client, no_rate_limits, api_admin_token, app):
+    _seed_contact(app, 'Ada')
+    _seed_contact(app, 'Bob', is_spam=1)
+    body = _json(
+        client.get(
+            '/api/v1/admin/contacts',
+            headers=_admin_auth(api_admin_token),
+        )
+    )
+    names = [c['name'] for c in body['data']]
+    assert names == ['Ada']
+    assert body['pagination']['total'] == 1
+
+
+def test_admin_contacts_include_spam_param(client, no_rate_limits, api_admin_token, app):
+    _seed_contact(app, 'Ada')
+    _seed_contact(app, 'Bob', is_spam=1)
+    body = _json(
+        client.get(
+            '/api/v1/admin/contacts?include_spam=true',
+            headers=_admin_auth(api_admin_token),
+        )
+    )
+    assert body['pagination']['total'] == 2
+
+
+def test_admin_contacts_pagination(client, no_rate_limits, api_admin_token, app):
+    for i in range(15):
+        _seed_contact(app, f'User{i}')
+    body = _json(
+        client.get(
+            '/api/v1/admin/contacts?per_page=5&page=2',
+            headers=_admin_auth(api_admin_token),
+        )
+    )
+    assert body['pagination'] == {'page': 2, 'per_page': 5, 'total': 15, 'pages': 3}
+    assert len(body['data']) == 5
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/backup
+# ---------------------------------------------------------------------------
+
+
+def test_admin_backup_creates_archive(
+    client, no_rate_limits, api_admin_token, tmp_path, monkeypatch
+):
+    import os
+
+    backup_dir = tmp_path / 'api-backups'
+    monkeypatch.setenv('RESUME_SITE_BACKUP_DIR', str(backup_dir))
+
+    response = client.post(
+        '/api/v1/admin/backup',
+        json={'db_only': True},
+        headers=_admin_auth(api_admin_token, with_json=True),
+    )
+    assert response.status_code == 201
+    body = _json(response)
+    assert body['data']['archive_name'].endswith('.tar.gz')
+    assert body['data']['size_bytes'] > 0
+    assert body['data']['db_only'] is True
+    assert os.path.isfile(body['data']['archive_path'])
+
+
+def test_admin_backup_emits_event(client, no_rate_limits, api_admin_token, tmp_path, monkeypatch):
+    from app.events import Events, clear, register
+
+    monkeypatch.setenv('RESUME_SITE_BACKUP_DIR', str(tmp_path / 'evt-backups'))
+
+    captured = []
+    clear()
+    register(Events.BACKUP_COMPLETED, lambda **p: captured.append(p))
+    try:
+        response = client.post(
+            '/api/v1/admin/backup',
+            json={'db_only': True},
+            headers=_admin_auth(api_admin_token, with_json=True),
+        )
+    finally:
+        clear()
+    assert response.status_code == 201
+    assert len(captured) == 1
+    assert captured[0]['db_only'] is True
+
+
 # ---------------------------------------------------------------------------
 # csrf_client fixture (mirrors tests/test_security.py for this module)
 # ---------------------------------------------------------------------------
