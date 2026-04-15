@@ -651,18 +651,21 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 **Problem:** Metrics without alerting are just numbers. Alerting converts observability data into operator actions. This phase defines what conditions should trigger alerts and provides ready-to-use rule definitions.
 
-- [ ] **Alerting rules document:** `docs/alerting-rules.yaml` — Prometheus alerting rules in standard format, ready to load into Alertmanager or any compatible system:
-  - `ResumeHighErrorRate`: `rate(resume_site_errors_total{category="InternalError"}[5m]) > 0` — any internal error is a bug and should alert immediately
-  - `ResumeHighLatency`: `histogram_quantile(0.95, rate(resume_site_request_duration_seconds_bucket[5m])) > 1.0` — p95 over 1 second
-  - `ResumeHighRequestRate`: `rate(resume_site_requests_total[1m]) > 100` — possible DDoS or bot activity
-  - `ResumeBruteForce`: `rate(resume_site_errors_total{category="AuthError", endpoint="/admin/login"}[5m]) > 5` — login brute force
-  - `ResumeBackupStale`: `time() - resume_site_backup_last_success_timestamp > 172800` — no successful backup in 48 hours
-  - `ResumeContainerUnhealthy`: health check failure (external probe)
-  - `ResumeDiskSpace`: `resume_site_disk_usage_bytes{path="/app/data"} / resume_site_disk_total_bytes{path="/app/data"} > 0.9` — disk 90% full
-  - `ResumeAPITokenExpiring`: API tokens expiring within 7 days (logged at INFO, not a Prometheus metric — CLI command or admin dashboard warning)
-- [ ] **Disk usage metric:** Add `resume_site_disk_usage_bytes{path}` gauge to `/metrics` — reports usage for `/app/data` (database) and `/app/photos` (uploads). Enables alerting before disk-full failures occur
-- [ ] **Alert documentation:** Each rule in `alerting-rules.yaml` includes: a `description` (what it means), a `runbook_url` pointing to the relevant section of `docs/PRODUCTION.md` (what to do about it), and `severity` (critical/warning/info)
-- [ ] **In-app alerting (admin dashboard):** The admin dashboard renders a "System Health" panel showing: active warnings (stale backup, disk usage > 80%, recent internal errors), performance summary (avg response time, requests/hour), and a link to `/metrics` for detailed data. This gives operators basic situational awareness without requiring an external monitoring stack
+- [x] **Alerting rules document:** `docs/alerting-rules.yaml` — seven rules in two groups (`resume-site-application`, `resume-site-availability`):
+  - `ResumeInternalErrorRate` (critical) — any InternalError is a bug
+  - `ResumeAuthErrorSpike` (warning) — 401/403 flow > 6/min sustained
+  - `ResumeHighLatency` (warning) — p95 request duration > 1s
+  - `ResumeHighRequestRate` (info) — > 100 requests/minute
+  - `ResumeNoTraffic` (warning) — /metrics reachable but requests_total flat for 30 min
+  - `ResumeProcessRestarted` (info) — uptime_seconds < 120s
+  - `ResumeScrapeDown` (critical) — Prometheus `up{job="resume-site"} == 0`
+  Each rule carries `severity` + `component` labels and `summary` + `description` + `runbook_url` annotations.
+- [x] **Alert documentation:** `docs/alerting-rules.md` — per-alert runbook section (what it means, what to check, mitigations in order of reversibility) plus setup instructions and a severity taxonomy.
+- [x] **Metric-name drift guard:** `tests/test_alerting_rules.py` (18 tests) parses the YAML, validates the Prometheus schema, confirms every rule has the required fields, and cross-references every `resume_site_*` metric in a rule `expr` against the live registry in `app/services/metrics.py`. Every `runbook_url` anchor is verified against the actual headings in `alerting-rules.md`. A canary test fires if a shipped metric is never alerted on.
+- [ ] **Disk usage metric (`resume_site_disk_usage_bytes{path}`):** deferred — needs a gauge callback pattern and DB/photo path discovery. Alert placeholder removed until the metric ships.
+- [ ] **Stale backup alert (`ResumeBackupStale`):** deferred — needs a `resume_site_backup_last_success_timestamp` gauge that reads the settings row already maintained by Phase 17.1.
+- [ ] **Brute-force "endpoint" label:** deferred — `errors_total` currently has `{category, status}` only; adding `endpoint` was kept out of Phase 18.9 to avoid cardinality. A finer `ResumeBruteForce` rule can land once the label is added.
+- [ ] **In-app alerting (admin dashboard):** deferred — admin-dashboard template work.
 
 ### 18.11 — Grafana Dashboard Template
 
