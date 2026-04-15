@@ -27,9 +27,6 @@ from __future__ import annotations
 import sqlite3
 from collections import namedtuple
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -79,13 +79,13 @@ def _get_db_path():
 from app.services.migrations import (  # noqa: E402 — top-of-file imports already loaded
     ensure_schema_version_table as _ensure_schema_version_table,
 )
-from app.services.migrations import (
+from app.services.migrations import (  # noqa: E402 — top-of-file imports already loaded
     get_applied_versions as _get_applied_versions,
 )
-from app.services.migrations import (
+from app.services.migrations import (  # noqa: E402 — top-of-file imports already loaded
     get_migrations_dir as _get_migrations_dir,
 )
-from app.services.migrations import (
+from app.services.migrations import (  # noqa: E402 — top-of-file imports already loaded
     list_migration_files as _list_migration_files,
 )
 
