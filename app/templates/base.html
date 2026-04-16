@@ -54,6 +54,7 @@
     } %}
     <link href="https://fonts.googleapis.com/css2?family={{ font_families.get(font_key, font_families['inter']) }}&display=swap" rel="stylesheet">
 
+    <link rel="preload" href="{{ static_hashed('css/style.css') }}" as="style">
     <link rel="stylesheet" href="{{ static_hashed('css/style.css') }}">
 
     {# Dynamic theme overrides: accent color and font pairing #}
