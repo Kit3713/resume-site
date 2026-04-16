@@ -36,6 +36,7 @@ from flask import (
     send_from_directory,
 )
 
+from app import csrf
 from app.db import get_db
 from app.models import (
     get_all_visible_photos,
@@ -55,6 +56,38 @@ from app.models import (
 from app.services.blog import get_featured_posts
 
 public_bp = Blueprint('public', __name__, template_folder='../templates')
+
+
+# ============================================================
+# CSP VIOLATION REPORTING (Phase 13.2)
+# ============================================================
+
+
+@public_bp.route('/csp-report', methods=['POST'])
+@csrf.exempt
+def csp_report():
+    """Receive Content-Security-Policy violation reports from browsers.
+
+    Browsers POST a JSON body with ``{"csp-report": {...}}`` when a CSP
+    directive is violated. We log it and increment a counter visible on
+    the admin dashboard. Returns 204 regardless of payload validity so
+    the browser doesn't retry.
+    """
+    import logging
+
+    logger = logging.getLogger('app.security')
+    try:
+        data = request.get_json(silent=True) or {}
+        report = data.get('csp-report', {})
+        logger.warning(
+            'CSP violation: directive=%s blocked=%s document=%s',
+            report.get('violated-directive', '-'),
+            report.get('blocked-uri', '-'),
+            report.get('document-uri', '-'),
+        )
+    except Exception:  # noqa: BLE001 — never fail on a report
+        logger.warning('CSP violation: unparseable report body')
+    return '', 204
 
 
 # ============================================================

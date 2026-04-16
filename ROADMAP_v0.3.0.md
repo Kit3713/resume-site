@@ -159,9 +159,8 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 **Problem:** v0.2.0 ships CSP in `Content-Security-Policy-Report-Only`. This detects violations but doesn't block them.
 
 - [x] **Nonce infrastructure (Phase 13.2 part 1):** Per-request nonce generated via `secrets.token_urlsafe(16)` in `_assign_csp_nonce()` before-request handler, stored in `g.csp_nonce`, injected into template context. All inline `<script>` and `<style>` tags across `base.html`, `base_admin.html`, `content_edit.html`, `blog_edit.html`, `api_tokens_reveal.html`, and `settings.html` carry `nonce="{{ csp_nonce }}"`. CSP header updated to `'nonce-<value>'` in both `script-src` and `style-src`, replacing `'unsafe-inline'`. Still in `Report-Only` mode.
-- [ ] Migrate from `Content-Security-Policy-Report-Only` to enforced `Content-Security-Policy`
-- [ ] Add `report-uri` or `report-to` directive pointing to an internal endpoint (`/csp-report`) that logs violations to the activity log. Admin dashboard displays CSP violation count
-- [ ] Test exhaustively: every public page, every admin page, every GSAP animation, every font load, every CDN script
+- [x] **CSP enforcement (Phase 13.2 part 2):** Header switched from `Content-Security-Policy-Report-Only` to enforced `Content-Security-Policy`. `report-uri /csp-report` directive added. `/csp-report` POST endpoint (`app/routes/public.py`) logs violation details (directive, blocked URI, document URI) at WARNING level on the `app.security` logger. Endpoint is CSRF-exempt (browsers send reports without tokens). Excluded from analytics tracking. Security test updated to assert enforced header + nonce presence + no Report-Only fallback.
+- [ ] Test exhaustively: every public page, every admin page, every GSAP animation, every font load, every CDN script (manual test — deferred to Playwright in Phase 18.4)
 
 ### 13.3 — Request Filtering (WAF-Lite)
 

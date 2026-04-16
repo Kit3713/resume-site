@@ -35,7 +35,7 @@ def track_page_view() -> None:
 
     path = request.path
     if path.startswith(
-        ('/static/', '/admin', '/photos/', '/favicon', '/healthz', '/readyz', '/set-locale')
+        ('/static/', '/admin', '/photos/', '/favicon', '/healthz', '/readyz', '/set-locale', '/csp-report')
     ):
         return
 

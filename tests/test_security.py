@@ -297,13 +297,16 @@ def test_content_save_strips_xss(auth_client, populated_db):
 # ============================================================
 
 
-def test_header_csp_report_only(client):
-    """Content-Security-Policy-Report-Only header must be present."""
+def test_header_csp_enforced(client):
+    """Content-Security-Policy header must be enforced with nonce."""
     response = client.get('/')
-    csp = response.headers.get('Content-Security-Policy-Report-Only', '')
+    csp = response.headers.get('Content-Security-Policy', '')
     assert "default-src 'self'" in csp
     assert 'cdnjs.cloudflare.com' in csp
     assert 'fonts.googleapis.com' in csp
+    assert "'nonce-" in csp
+    assert 'report-uri /csp-report' in csp
+    assert 'Content-Security-Policy-Report-Only' not in response.headers
 
 
 # ============================================================
