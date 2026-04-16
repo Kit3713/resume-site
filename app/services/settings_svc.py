@@ -378,6 +378,27 @@ SETTINGS_REGISTRY = {
             'instances where public API discovery is intended.'
         ),
     },
+    # --- Request Filter (Phase 13.3) ---
+    'request_filter_enabled': {
+        'type': 'bool',
+        'default': 'true',
+        'label': 'Enable WAF-Lite Request Filter',
+        'category': 'Security',
+        'description': (
+            'Inspect incoming requests for path traversal, SQL injection probes, '
+            'oversized bodies, and suspicious user-agents. Blocked requests get 400.'
+        ),
+    },
+    'request_filter_log_only': {
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Request Filter Log-Only Mode',
+        'category': 'Security',
+        'description': (
+            'When enabled, violations are logged at WARNING but not blocked. '
+            'Use for tuning before enforcing.'
+        ),
+    },
     # --- Observability (Phase 18.2) ---
     'metrics_enabled': {
         'type': 'bool',

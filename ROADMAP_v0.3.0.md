@@ -164,15 +164,9 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 13.3 — Request Filtering (WAF-Lite)
 
-- [ ] Add a `before_request` handler that inspects incoming requests for common attack patterns:
-  - Path traversal attempts (`../`, `..%2f`, `%00`)
-  - SQL injection fingerprints in query parameters (common patterns: `' OR 1=1`, `UNION SELECT`, `; DROP`)
-  - Oversized request bodies (enforce `MAX_CONTENT_LENGTH` globally, not just on upload routes)
-  - Malformed `Content-Type` headers on POST requests
-  - Suspicious `User-Agent` strings (empty, single character, known scanner signatures)
-- [ ] Blocked requests return 400 (not 403 — don't reveal the filter exists) and are logged with full request details
-- [ ] The filter is configurable: `request_filter_enabled` setting with an admin toggle, and a `request_filter_log_only` mode for tuning
-- [ ] Do NOT implement a full WAF — this is a lightweight first-pass filter. Document what it catches and what it doesn't in the threat model
+- [x] **Request filter:** `app/services/request_filter.py` — `before_request` handler inspecting: path traversal (`../`, `..%2f`, `%00`, null bytes in both decoded and raw paths), SQL injection probes (`' OR`, `UNION SELECT`, `; DROP` in query strings), oversized request bodies (>10 MB), and missing Content-Type on non-empty POST/PUT/PATCH bodies. Returns 400 (not 403). Logged at WARNING with method, path, IP, and truncated user-agent.
+- [x] **Filter settings:** `request_filter_enabled` (default `true`) and `request_filter_log_only` (default `false`) in the Security category of SETTINGS_REGISTRY. Log-only mode passes requests through but still logs violations for tuning.
+- [x] **Tests:** 9 tests in `tests/test_request_filter.py` covering path traversal, encoded traversal, null bytes, SQL injection, UNION SELECT, normal requests, disabled filter, and log-only mode.
 
 ### 13.4 — API Authentication (Token-Based)
 

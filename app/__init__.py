@@ -264,6 +264,18 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
 
     app.before_request(_start_request_timer)
 
+    # --- 7c. WAF-lite request filter (Phase 13.3) ---
+    from app.services.request_filter import check_request as _check_request
+
+    def _run_request_filter():
+        settings = {}
+        with contextlib.suppress(Exception):
+            db = get_db()
+            settings = get_all_cached(db, app.config['DATABASE_PATH'])
+        _check_request(settings)
+
+    app.before_request(_run_request_filter)
+
     # --- 8. Analytics middleware ---
     from app.services.analytics import track_page_view
 
