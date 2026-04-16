@@ -152,13 +152,7 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 13.1 — Threat Model Document
 
-- [ ] Produce `THREAT_MODEL.md` documenting:
-  - Attack surface enumeration (public routes, admin routes, API routes, file upload, SMTP relay, SQLite, container boundary)
-  - Threat actors (anonymous internet user, authenticated API consumer, compromised reverse proxy, supply chain)
-  - Mitigations in place (by phase and layer)
-  - Residual risks and accepted trade-offs
-  - Incident response outline (what to do if the SQLite DB is compromised, if the container is breached, if an API token leaks)
-- [ ] Review against OWASP Top 10 (2021) and map each item to resume-site's controls
+- [x] `THREAT_MODEL.md` produced with all sections: attack surface (7 categories: public routes, admin routes, API routes, file upload, SMTP relay, SQLite, container boundary), threat actors (4: anonymous, API consumer, compromised proxy, supply chain), mitigations table (20+ controls mapped to phases), OWASP Top 10 (2021) mapping (all 10 items), residual risks with acceptance rationale (8 documented), incident response outlines for DB compromise, container breach, API token leak, and spam/abuse flood
 
 ### 13.2 — CSP Enforcement
 
