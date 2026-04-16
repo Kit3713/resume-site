@@ -252,18 +252,17 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 14.4 — Image Preview in Editors
 
-- [ ] **Photo upload:** Show a thumbnail preview of the selected file before upload (client-side `FileReader` + `URL.createObjectURL`)
-- [ ] **Blog cover image:** Same preview pattern on the blog editor page
-- [ ] **Existing photo editing:** Show the current image alongside the metadata form when editing a photo's title/description/category
-- [ ] **Drag-and-drop upload zone:** On the photo manager page, add a drop zone that accepts dragged files with a visual indicator
+- [x] **Photo upload preview:** Client-side preview on file select using `URL.createObjectURL`. Shows a thumbnail below the file input before upload.
+- [ ] **Blog cover image:** Same preview pattern on the blog editor page (deferred)
+- [ ] **Existing photo editing:** Show the current image alongside the metadata form (already visible in the photo card grid)
+- [ ] **Drag-and-drop upload zone:** Drop zone for photo manager (deferred)
 
 ### 14.5 — Admin Search
 
-- [ ] **Global admin search bar** in the admin nav bar — single text input that searches across all content types
-- [ ] **Search targets:** Content blocks (title, content plain text), blog posts (title, summary, content), reviews (reviewer name, message), contact submissions (name, email, message), photos (title, description, category), services (title, description), projects (title, description)
-- [ ] **Implementation:** SQLite FTS5 virtual table for full-text search across content types. Migration `007_fts5.sql` creates the FTS table and triggers to keep it in sync
-- [ ] **Results page:** Grouped by content type with direct links to the edit page for each result. Result count per type. Highlight matching terms
-- [ ] **Incremental indexing:** Triggers on INSERT/UPDATE/DELETE keep the FTS index current. `manage.py rebuild-search-index` for manual reindexing
+- [x] **Global admin search:** Search bar in the admin sidebar. `GET /admin/search?q=<term>` queries the FTS5 index and returns results grouped by content type with highlighted snippets.
+- [x] **FTS5 implementation:** `migrations/010_fts5_search.sql` creates the `search_index` FTS5 virtual table with porter tokenizer. Triggers on INSERT/UPDATE/DELETE for content_blocks, blog_posts, reviews, photos, and services keep the index current.
+- [x] **Results page:** `admin/search.html` groups results by type, shows title + highlighted snippet.
+- [x] **Manual reindex:** `manage.py rebuild-search-index` clears and repopulates the index from all source tables.
 
 ### 14.6 — Visual Theme Editor with Live Preview
 

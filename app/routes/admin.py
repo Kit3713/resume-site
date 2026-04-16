@@ -1152,6 +1152,41 @@ def reorder():
     return jsonify({'ok': True})
 
 
+_SEARCH_TYPE_URLS = {
+    'content_block': 'admin.content_edit',
+    'blog_post': 'admin.blog_edit',
+    'review': 'admin.reviews',
+    'photo': 'admin.photos',
+    'service': 'admin.services',
+}
+
+
+@admin_bp.route('/search')
+@login_required
+def search():
+    """Full-text search across all admin content types (Phase 14.5)."""
+    q = request.args.get('q', '').strip()
+    results = []
+    if q:
+        db = get_db()
+        try:
+            rows = db.execute(
+                'SELECT content_type, content_id, title, snippet(search_index, 3, "<mark>", "</mark>", "…", 32) AS snippet '
+                'FROM search_index WHERE search_index MATCH ? ORDER BY rank LIMIT 50',
+                (q,),
+            ).fetchall()
+            for row in rows:
+                results.append({
+                    'type': row['content_type'],
+                    'id': row['content_id'],
+                    'title': row['title'],
+                    'snippet': row['snippet'],
+                })
+        except Exception:  # noqa: BLE001, S110 — FTS5 table may not exist yet
+            pass
+    return render_template('admin/search.html', query=q, results=results, type_urls=_SEARCH_TYPE_URLS)
+
+
 def _in_clause(ids):
     """Build a safe IN clause with ? placeholders from a validated int list."""
     return ','.join('?' * len(ids))

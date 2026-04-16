@@ -405,6 +405,46 @@ def rotate_secret_key(args):
     print('The admin must log in again.\n')
 
 
+def rebuild_search_index(args):
+    """Rebuild the FTS5 search index from scratch.
+
+    Clears and re-populates the search_index virtual table from all
+    content sources: content_blocks, blog_posts, reviews, photos, services.
+    """
+    import sqlite3
+
+    db_path = _get_db_path()
+    db = sqlite3.connect(db_path)
+    db.row_factory = sqlite3.Row
+    try:
+        db.execute('DELETE FROM search_index')
+    except Exception:
+        print('search_index table not found — run migrations first.', file=sys.stderr)
+        sys.exit(1)
+
+    sources = [
+        ('content_block', 'content_blocks', 'id', 'title', 'plain_text'),
+        ('blog_post', 'blog_posts', 'id', 'title', "COALESCE(summary,'') || ' ' || COALESCE(content,'')"),
+        ('review', 'reviews', 'id', 'reviewer_name', 'message'),
+        ('photo', 'photos', 'id', 'title', "COALESCE(description,'') || ' ' || COALESCE(category,'')"),
+        ('service', 'services', 'id', 'title', 'description'),
+    ]
+
+    total = 0
+    for content_type, table, id_col, title_col, body_expr in sources:
+        rows = db.execute(f'SELECT {id_col}, {title_col}, {body_expr} AS body FROM {table}').fetchall()  # noqa: S608 — hardcoded table/column names
+        for row in rows:
+            db.execute(
+                'INSERT INTO search_index(content_type, content_id, title, body) VALUES (?,?,?,?)',
+                (content_type, row[0], row[1], row[2]),
+            )
+            total += 1
+
+    db.commit()
+    db.close()
+    print(f'Search index rebuilt: {total} items indexed.')
+
+
 def hash_password(args):
     """Generate a secure password hash for the admin account.
 
@@ -1311,6 +1351,7 @@ def main():
     # Secret key generation / rotation
     subparsers.add_parser('generate-secret', help='Generate a secure secret_key')
     subparsers.add_parser('rotate-secret-key', help='Rotate secret_key in config.yaml (invalidates sessions)')
+    subparsers.add_parser('rebuild-search-index', help='Rebuild FTS5 search index from all content')
 
     # Password hash generation
     subparsers.add_parser('hash-password', help='Generate an admin password hash')
@@ -1432,6 +1473,7 @@ def main():
         'config': config_validate,
         'generate-secret': generate_secret,
         'rotate-secret-key': rotate_secret_key,
+        'rebuild-search-index': rebuild_search_index,
         'hash-password': hash_password,
         'generate-token': generate_token,
         'generate-api-token': generate_api_token,

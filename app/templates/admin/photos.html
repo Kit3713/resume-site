@@ -14,7 +14,8 @@
         <h2 class="admin-section__title">{{ _('Upload New Photo') }}</h2>
         <form method="POST" action="{{ url_for('admin.photos_upload') }}" enctype="multipart/form-data" class="admin-form admin-form--inline">
             <div class="form-group">
-                <input type="file" name="photo" accept="image/*" class="form-input" required>
+                <input type="file" name="photo" accept="image/*" class="form-input" required id="photo-input">
+                <img id="photo-preview" style="display:none;max-height:120px;margin-top:0.5rem;border-radius:8px" alt="Preview">
             </div>
             <div class="form-group">
                 <input type="text" name="title" class="form-input" placeholder="Title (optional)">
@@ -112,6 +113,21 @@ checks.forEach(function(cb) {
         countEl.textContent = n;
     });
 });
+// Image preview on file select
+var photoInput = document.getElementById('photo-input');
+var preview = document.getElementById('photo-preview');
+if (photoInput && preview) {
+    photoInput.addEventListener('change', function() {
+        var file = this.files[0];
+        if (file && file.type.startsWith('image/')) {
+            preview.src = URL.createObjectURL(file);
+            preview.style.display = 'block';
+        } else {
+            preview.style.display = 'none';
+        }
+    });
+}
+
 window.doBulk = function(action, params) {
     var ids = Array.from(document.querySelectorAll('.bulk-check:checked')).map(function(cb) {
         return parseInt(cb.value, 10);

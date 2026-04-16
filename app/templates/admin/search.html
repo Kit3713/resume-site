@@ -1,0 +1,42 @@
+{# Admin Search Results — Phase 14.5 #}
+{% extends "admin/base_admin.html" %}
+
+{% block title %}{{ _('Search') }}{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+    <h1 class="admin-page__title">{{ _('Search') }}</h1>
+
+    <form method="GET" action="{{ url_for('admin.search') }}" class="admin-form admin-form--inline" style="margin-bottom:var(--space-lg)">
+        <input type="text" name="q" value="{{ query }}" class="form-input" placeholder="{{ _('Search content...') }}" autofocus style="flex:1">
+        <button type="submit" class="btn btn--primary btn--sm">{{ _('Search') }}</button>
+    </form>
+
+    {% if query %}
+    <p class="admin-section__caption">{{ results|length }} {{ _('results for') }} "{{ query }}"</p>
+
+    {% if results %}
+    {% set ns = namespace(current_type='') %}
+    {% for result in results %}
+        {% if result.type != ns.current_type %}
+            {% if ns.current_type %}
+            </div>
+            {% endif %}
+            {% set ns.current_type = result.type %}
+            <div class="admin-section">
+            <h2 class="admin-section__title">{{ result.type | replace('_', ' ') | title }}</h2>
+        {% endif %}
+        <div class="admin-list-item" style="padding:var(--space-sm)">
+            <div>
+                <strong>{{ result.title or _('(untitled)') }}</strong>
+                <p style="color:var(--color-text-secondary);font-size:var(--fs-sm)">{{ result.snippet | safe }}</p>
+            </div>
+        </div>
+    {% endfor %}
+    </div>
+    {% else %}
+    <p class="admin-empty">{{ _('No results found.') }}</p>
+    {% endif %}
+    {% endif %}
+</div>
+{% endblock %}
