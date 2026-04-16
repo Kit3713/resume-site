@@ -1068,6 +1068,86 @@ def webhooks_deliveries(webhook_id):
 # ============================================================
 
 
+# ============================================================
+# CONTENT TRANSLATIONS (Phase 15.3)
+# ============================================================
+
+_TRANSLATABLE_TABLES = {
+    'content_blocks': 'Content Block',
+    'blog_posts': 'Blog Post',
+    'services': 'Service',
+    'stats': 'Stat',
+    'projects': 'Project',
+    'certifications': 'Certification',
+}
+
+
+@admin_bp.route('/translations/<table>/<int:item_id>', methods=['GET', 'POST'])
+@login_required
+def translations(table, item_id):
+    """View and save translations for a content item (Phase 15.3)."""
+    if table not in _TRANSLATABLE_TABLES:
+        abort(404)
+
+    db = get_db()
+    from app.services.settings_svc import get_all_cached
+    from app.services.translations import (
+        get_available_translations,
+        get_translated,
+        save_translation,
+    )
+
+    settings = get_all_cached(db, current_app.config['DATABASE_PATH'])
+    available_locales = [
+        loc.strip() for loc in settings.get('available_locales', 'en').split(',') if loc.strip()
+    ]
+
+    original = get_translated(db, table, item_id, 'en')
+    if not original:
+        abort(404)
+
+    if request.method == 'POST':
+        locale = request.form.get('locale', '').strip()
+        if locale and locale in available_locales:
+            from app.services.translations import _TRANSLATION_TABLES
+
+            config = _TRANSLATION_TABLES.get(table, {})
+            fields = {}
+            for field in config.get('fields', ()):
+                val = request.form.get(field, '').strip()
+                if val:
+                    fields[field] = val
+            if fields:
+                save_translation(db, table, item_id, locale, **fields)
+                db.commit()
+                flash(_('Translation saved.'), 'success')
+        return redirect(url_for('admin.translations', table=table, item_id=item_id))
+
+    existing_locales = get_available_translations(db, table, item_id)
+    locale_translations = {}
+    for loc in available_locales:
+        if loc == 'en':
+            continue
+        trans = get_translated(db, table, item_id, loc, fallback_locale='')
+        locale_translations[loc] = trans
+
+    from app.services.translations import _TRANSLATION_TABLES
+
+    fields = _TRANSLATION_TABLES.get(table, {}).get('fields', ())
+
+    return render_template(
+        'admin/translations.html',
+        table=table,
+        table_label=_TRANSLATABLE_TABLES[table],
+        item_id=item_id,
+        original=original,
+        available_locales=[loc for loc in available_locales if loc != 'en'],
+        existing_locales=existing_locales,
+        locale_translations=locale_translations,
+        fields=fields,
+    )
+
+
 _THEME_PRESETS = {
     'default': {'accent': '#0071e3', 'label': 'Default Blue'},
     'ocean': {'accent': '#00897B', 'label': 'Ocean Teal'},

@@ -292,10 +292,10 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 15.3 — Admin Translation UI
 
-- [ ] **Translation tab on edit pages:** When editing a content block, blog post, service, stat, project, or certification, a "Translations" tab appears below the main editor. Tabs for each configured locale (from `available_locales` setting). Each tab shows the translatable fields pre-filled with the default-locale content (as a reference, not editable), and empty fields for the translated values
-- [ ] **Translation status indicators:** On admin list pages, a locale badge shows which translations exist for each item (e.g., "en ✓ es ✓ fr ✗")
-- [ ] **Bulk translation export/import:** `manage.py translations export-content --locale es --format po` exports all translatable user content as a .po file for external translation tools. `manage.py translations import-content --locale es content-es.po` imports translations back
-- [ ] **Translation completeness dashboard:** Widget on the admin dashboard showing per-locale translation coverage (e.g., "Spanish: 45/60 items translated — 75%")
+- [x] **Translation editor:** `/admin/translations/<table>/<id>` page with per-locale forms showing original content as reference and input fields for each translatable field. Status badges (translated/not translated) per locale. Works for all 6 translatable content types.
+- [x] **Export/import CLI:** `manage.py translations-export --locale es [-o file.json]` exports all translatable content as JSON with `_translated` suffix fields. `manage.py translations-import --locale es file.json` imports translations back. JSON format for easy integration with translation tools.
+- [x] **RSS language tag:** `<language>` element added to the blog RSS feed from the `default_locale` setting.
+- [ ] **Translation completeness dashboard:** Widget showing per-locale coverage (deferred to future iteration).
 
 ### 15.4 — Public Translation Rendering
 

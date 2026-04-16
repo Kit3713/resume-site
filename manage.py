@@ -445,6 +445,89 @@ def rebuild_search_index(args):
     print(f'Search index rebuilt: {total} items indexed.')
 
 
+def translations_export(args):
+    """Export translatable content as JSON for external translation tools."""
+    import json as _json
+
+    locale = args.locale
+    db = _connect_db()
+
+    from app.services.translations import _TRANSLATION_TABLES
+
+    export = {}
+    for source_table, config in _TRANSLATION_TABLES.items():
+        rows = db.execute(f'SELECT * FROM {source_table}').fetchall()  # noqa: S608
+        items = []
+        for row in rows:
+            item = {'id': row['id']}
+            for field in config['fields']:
+                item[field] = row[field]
+            # Include existing translation if any
+            trans = db.execute(
+                f'SELECT * FROM {config["table"]} WHERE {config["fk"]} = ? AND locale = ?',  # noqa: S608
+                (row['id'], locale),
+            ).fetchone()
+            if trans:
+                for field in config['fields']:
+                    item[f'{field}_translated'] = trans[field]
+            items.append(item)
+        export[source_table] = items
+
+    db.close()
+    output = _json.dumps(export, indent=2, ensure_ascii=False)
+
+    if args.output:
+        with open(args.output, 'w') as f:
+            f.write(output)
+        print(f'Exported to {args.output}')
+    else:
+        print(output)
+
+
+def translations_import(args):
+    """Import translations from a JSON file."""
+    import json as _json
+
+    locale = args.locale
+    db = _connect_db()
+
+    from app.services.translations import save_translation
+
+    with open(args.file) as f:
+        data = _json.load(f)
+
+    count = 0
+    for source_table, items in data.items():
+        from app.services.translations import _TRANSLATION_TABLES
+
+        config = _TRANSLATION_TABLES.get(source_table)
+        if not config:
+            continue
+        for item in items:
+            fields = {}
+            for field in config['fields']:
+                val = item.get(f'{field}_translated', '').strip()
+                if val:
+                    fields[field] = val
+            if fields:
+                save_translation(db, source_table, item['id'], locale, **fields)
+                count += 1
+
+    db.commit()
+    db.close()
+    print(f'Imported {count} translations for locale "{locale}".')
+
+
+def _connect_db():
+    """Open a direct sqlite3 connection to the configured database."""
+    import sqlite3
+
+    db_path = _get_db_path()
+    db = sqlite3.connect(db_path)
+    db.row_factory = sqlite3.Row
+    return db
+
+
 def hash_password(args):
     """Generate a secure password hash for the admin account.
 
@@ -1353,6 +1436,15 @@ def main():
     subparsers.add_parser('rotate-secret-key', help='Rotate secret_key in config.yaml (invalidates sessions)')
     subparsers.add_parser('rebuild-search-index', help='Rebuild FTS5 search index from all content')
 
+    # Translation export/import (Phase 15.3)
+    export_parser = subparsers.add_parser('translations-export', help='Export translatable content as JSON')
+    export_parser.add_argument('--locale', required=True, help='Target locale code (e.g., es, fr)')
+    export_parser.add_argument('--output', '-o', help='Output file path (default: stdout)')
+
+    import_parser = subparsers.add_parser('translations-import', help='Import translations from JSON')
+    import_parser.add_argument('--locale', required=True, help='Locale code for the imported translations')
+    import_parser.add_argument('file', help='Path to the JSON file to import')
+
     # Password hash generation
     subparsers.add_parser('hash-password', help='Generate an admin password hash')
 
@@ -1474,6 +1566,8 @@ def main():
         'generate-secret': generate_secret,
         'rotate-secret-key': rotate_secret_key,
         'rebuild-search-index': rebuild_search_index,
+        'translations-export': translations_export,
+        'translations-import': translations_import,
         'hash-password': hash_password,
         'generate-token': generate_token,
         'generate-api-token': generate_api_token,
