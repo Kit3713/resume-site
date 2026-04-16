@@ -532,6 +532,11 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
 
         return response
 
+    # --- 9b. Asset fingerprinting (Phase 12.3) ---
+    from app.assets import init_app as init_assets
+
+    init_assets(app)
+
     # --- 10. Template context processor ---
     @app.context_processor
     def inject_settings():

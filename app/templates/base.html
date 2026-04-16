@@ -54,7 +54,7 @@
     } %}
     <link href="https://fonts.googleapis.com/css2?family={{ font_families.get(font_key, font_families['inter']) }}&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ static_hashed('css/style.css') }}">
 
     {# Dynamic theme overrides: accent color and font pairing #}
     {% set accent = site_settings.get('accent_color', '#0071e3') %}
@@ -219,7 +219,7 @@
     <!-- Scripts -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
-    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script src="{{ static_hashed('js/main.js') }}"></script>
     {% block scripts_extra %}{% endblock %}
 </body>
 </html>
