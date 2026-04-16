@@ -37,9 +37,10 @@
     {% if photos %}
     <div class="admin-section">
         <h2 class="admin-section__title">{{ _('All Photos') }} ({{ photos|length }})</h2>
-        <div class="admin-photos-grid">
+        <div class="admin-photos-grid" id="sortable-photos">
             {% for photo in photos %}
-            <div class="admin-photo-card">
+            <div class="admin-photo-card" data-id="{{ photo.id }}">
+                <span class="drag-handle drag-handle--photo" title="{{ _('Drag to reorder') }}">&#9776;</span>
                 <div class="admin-photo-card__img">
                     <img src="{{ url_for('public.serve_photo', storage_name=photo.storage_name) }}" alt="{{ photo.title }}" loading="lazy">
                     <span class="admin-photo-card__tier">{{ photo.display_tier }}</span>
@@ -70,4 +71,27 @@
     <p class="admin-empty">{{ _('No photos uploaded yet.') }}</p>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script nonce="{{ csp_nonce }}">
+(function() {
+    var el = document.getElementById('sortable-photos');
+    if (!el || typeof Sortable === 'undefined') return;
+    Sortable.create(el, {
+        handle: '.drag-handle',
+        animation: 150,
+        onEnd: function() {
+            var ids = Array.from(el.querySelectorAll('[data-id]')).map(function(item) {
+                return parseInt(item.dataset.id, 10);
+            });
+            fetch('{{ url_for("admin.reorder") }}', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({table: 'photos', id_order: ids})
+            });
+        }
+    });
+})();
+</script>
 {% endblock %}

@@ -559,12 +559,30 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
             loc.strip() for loc in settings.get('available_locales', 'en').split(',') if loc.strip()
         ]
         current_locale = str(get_locale())
+
+        # Parse JSON layout settings (Phase 14.1)
+        import json as _json
+
+        nav_order = []
+        with contextlib.suppress(Exception):
+            raw = settings.get('nav_order', '')
+            if raw:
+                nav_order = _json.loads(raw)
+
+        homepage_layout = []
+        with contextlib.suppress(Exception):
+            raw = settings.get('homepage_layout', '')
+            if raw:
+                homepage_layout = _json.loads(raw)
+
         return {
             'site_settings': settings,
             'site_config': site_config,
             'available_locales': available_locales,
             'current_locale': current_locale,
             'csp_nonce': g.get('csp_nonce', ''),
+            'nav_order': nav_order,
+            'homepage_layout': homepage_layout,
         }
 
     # --- 11. Template filters (Phase 17.2) ---

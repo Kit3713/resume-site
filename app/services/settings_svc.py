@@ -190,6 +190,29 @@ SETTINGS_REGISTRY = {
         'label': 'Hide Certifications',
         'category': 'Navigation',
     },
+    # --- Layout (Phase 14.1) ---
+    'nav_order': {
+        'type': 'str',
+        'default': '',
+        'label': 'Navigation Item Order (JSON array)',
+        'category': 'Navigation',
+        'description': (
+            'JSON array of nav keys in display order. '
+            'E.g., ["about","services","portfolio","projects","blog","testimonials","certifications","contact"]. '
+            'Empty = default order.'
+        ),
+    },
+    'homepage_layout': {
+        'type': 'str',
+        'default': '',
+        'label': 'Homepage Section Layout (JSON array)',
+        'category': 'Appearance',
+        'description': (
+            'JSON array of {section, visible} objects controlling homepage section order and visibility. '
+            'E.g., [{"section":"hero","visible":true},{"section":"about","visible":true}]. '
+            'Empty = default order, all visible.'
+        ),
+    },
     # --- Content ---
     'case_studies_enabled': {
         'type': 'bool',

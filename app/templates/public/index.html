@@ -30,6 +30,15 @@
 
 {% block content %}
 
+{# Build a set of hidden sections from homepage_layout (Phase 14.1) #}
+{% set hidden_sections = namespace(items=[]) %}
+{% for item in homepage_layout %}
+    {% if item.visible is defined and not item.visible %}
+        {% set _ = hidden_sections.items.append(item.section) %}
+    {% endif %}
+{% endfor %}
+
+{% if 'hero' not in hidden_sections.items %}
 <!-- Hero Section -->
 <section class="hero" id="hero">
     <div class="hero__container">
@@ -71,7 +80,9 @@
         </div>
     </div>
 </section>
+{% endif %}
 
+{% if 'about' not in hidden_sections.items %}
 <!-- About Section -->
 <section class="section" id="about">
     <div class="section__container">
@@ -83,7 +94,9 @@
         {% endif %}
     </div>
 </section>
+{% endif %}
 
+{% if 'stats' not in hidden_sections.items %}
 <!-- Stats Bar -->
 {% if stats %}
 <section class="stats-bar" id="stats">
@@ -99,7 +112,9 @@
     </div>
 </section>
 {% endif %}
+{% endif %}
 
+{% if 'services' not in hidden_sections.items %}
 <!-- Services Overview -->
 {% if services %}
 <section class="section section--alt" id="services">
@@ -122,7 +137,9 @@
     </div>
 </section>
 {% endif %}
+{% endif %}
 
+{% if 'portfolio' not in hidden_sections.items %}
 <!-- Featured Portfolio -->
 {% if featured_photos %}
 <section class="section" id="portfolio">
@@ -148,7 +165,9 @@
     </div>
 </section>
 {% endif %}
+{% endif %}
 
+{% if 'blog' not in hidden_sections.items %}
 <!-- Featured Blog Posts -->
 {% if featured_blog_posts %}
 <section class="section section--alt" id="blog">
@@ -185,7 +204,9 @@
     </div>
 </section>
 {% endif %}
+{% endif %}
 
+{% if 'testimonials' not in hidden_sections.items %}
 <!-- Featured Testimonials -->
 {% if featured_reviews %}
 <section class="section section--alt" id="testimonials">
@@ -216,7 +237,9 @@
     </div>
 </section>
 {% endif %}
+{% endif %}
 
+{% if 'contact' not in hidden_sections.items %}
 <!-- Contact CTA -->
 <section class="section" id="contact">
     <div class="section__container section__container--center">
@@ -227,5 +250,6 @@
         </div>
     </div>
 </section>
+{% endif %}
 
 {% endblock %}

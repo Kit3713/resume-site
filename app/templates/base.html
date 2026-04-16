@@ -129,28 +129,29 @@
             </button>
 
             <ul class="navbar__menu" id="navMenu">
-                {# Nav items with admin-controlled visibility (nav_hide_* settings) #}
-                {% if site_settings.get('nav_hide_about', 'false') != 'true' %}
-                <li><a href="{{ url_for('public.index') }}#about">{{ _('About') }}</a></li>
-                {% endif %}
-                {% if site_settings.get('nav_hide_services', 'false') != 'true' %}
-                <li><a href="{{ url_for('public.services') }}">{{ _('Services') }}</a></li>
-                {% endif %}
-                {% if site_settings.get('nav_hide_portfolio', 'false') != 'true' %}
-                <li><a href="{{ url_for('public.portfolio') }}">{{ _('Portfolio') }}</a></li>
-                {% endif %}
-                {% if site_settings.get('nav_hide_projects', 'false') != 'true' %}
-                <li><a href="{{ url_for('public.projects') }}">{{ _('Projects') }}</a></li>
-                {% endif %}
-                {% if site_settings.get('nav_hide_testimonials', 'false') != 'true' %}
-                <li><a href="{{ url_for('public.testimonials') }}">{{ _('Testimonials') }}</a></li>
-                {% endif %}
-                {% if site_settings.get('blog_enabled', 'false') == 'true' %}
-                <li><a href="{{ url_for('blog.blog_index') }}">{{ _('Blog') }}</a></li>
-                {% endif %}
-                {% if site_settings.get('nav_hide_contact', 'false') != 'true' %}
-                <li><a href="{{ url_for('contact.contact_page') }}">{{ _('Contact') }}</a></li>
-                {% endif %}
+                {#
+                  Nav items — order controlled by nav_order setting (Phase 14.1).
+                  Each item has a key, label, URL, and visibility check.
+                  If nav_order is set, items render in that order; otherwise default order.
+                #}
+                {% set nav_items = {
+                    'about':          {'label': _('About'),          'url': url_for('public.index') ~ '#about',        'hide': site_settings.get('nav_hide_about', 'false') == 'true'},
+                    'services':       {'label': _('Services'),       'url': url_for('public.services'),                 'hide': site_settings.get('nav_hide_services', 'false') == 'true'},
+                    'portfolio':      {'label': _('Portfolio'),      'url': url_for('public.portfolio'),                'hide': site_settings.get('nav_hide_portfolio', 'false') == 'true'},
+                    'projects':       {'label': _('Projects'),       'url': url_for('public.projects'),                 'hide': site_settings.get('nav_hide_projects', 'false') == 'true'},
+                    'testimonials':   {'label': _('Testimonials'),   'url': url_for('public.testimonials'),             'hide': site_settings.get('nav_hide_testimonials', 'false') == 'true'},
+                    'blog':           {'label': _('Blog'),           'url': url_for('blog.blog_index'),                 'hide': site_settings.get('blog_enabled', 'false') != 'true'},
+                    'certifications': {'label': _('Certifications'), 'url': url_for('public.certifications'),           'hide': site_settings.get('nav_hide_certifications', 'false') == 'true'},
+                    'contact':        {'label': _('Contact'),        'url': url_for('contact.contact_page'),            'hide': site_settings.get('nav_hide_contact', 'false') == 'true'},
+                } %}
+                {% set default_order = ['about', 'services', 'portfolio', 'projects', 'testimonials', 'blog', 'certifications', 'contact'] %}
+                {% set nav_keys = nav_order if nav_order else default_order %}
+                {% for key in nav_keys %}
+                    {% set item = nav_items.get(key) %}
+                    {% if item and not item.hide %}
+                <li><a href="{{ item.url }}">{{ item.label }}</a></li>
+                    {% endif %}
+                {% endfor %}
                 {% block nav_extra %}{% endblock %}
                 {# Language switcher (only when multiple locales configured) #}
                 {% if available_locales|length > 1 %}

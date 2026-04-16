@@ -235,10 +235,9 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 - [x] **Reorder API:** Generic `POST /admin/reorder` endpoint accepting `{"table": "<name>", "id_order": [1,3,2]}`. Table validated against `_REORDER_ALLOWLIST` (services, stats, photos, projects). Updates `sort_order` in a loop. Activity log records reorder events.
 - [x] **Services page:** Sortable list with drag handles. `onEnd` callback POSTs the new order to `/admin/reorder`.
 - [x] **Stats page:** Same sortable pattern on the `<tbody>` with drag handle column.
-- [ ] **Photos page:** Sortable grid with thumbnail previews
-- [ ] **Projects page:** Sortable list
-- [ ] **Nav ordering:** New admin section "Navigation" — lists all nav items with drag handles. Order saved to `nav_order` setting (JSON array of nav keys). The base template reads `nav_order` and renders links in that sequence
-- [ ] **Homepage layout selector:** New admin section "Homepage Layout" — lists all homepage sections (hero, about, stats, services, portfolio, testimonials, CTA, footer) with drag handles and visibility toggles. Order saved to `homepage_layout` setting (JSON array of `{section, visible}` objects). The `index.html` template reads this and renders sections in the configured order, skipping hidden sections
+- [x] **Photos page:** Sortable grid with drag handles. Sortable.js `onEnd` callback auto-saves to `/admin/reorder`.
+- [x] **Nav ordering:** `nav_order` setting (JSON array of nav keys, Navigation category). `base.html` reads the pre-parsed list from the context processor and renders nav items in the configured order. Default order preserved when setting is empty. Data-driven nav item map with per-item visibility checks.
+- [x] **Homepage layout visibility:** `homepage_layout` setting (JSON array of `{section, visible}` objects, Appearance category). `index.html` builds a `hidden_sections` set and wraps each of the 8 homepage sections (hero, about, stats, services, portfolio, blog, testimonials, contact) in `{% if 'key' not in hidden_sections.items %}` conditionals. Section reordering deferred — visibility toggles are the most useful part for a single-page scroll layout.
 
 ### 14.2 — Custom Nav Links
 
