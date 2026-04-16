@@ -369,6 +369,42 @@ def generate_secret(args):
     print(f'  secret_key: "{key}"')
 
 
+def rotate_secret_key(args):
+    """Generate a new secret_key and write it into config.yaml.
+
+    All active sessions will be invalidated — Flask session cookies are
+    signed with the secret_key, so rotating it makes every existing
+    cookie unverifiable. The admin will need to log in again.
+    """
+    import secrets as _secrets
+
+    import yaml
+
+    config_path = _config_path_for_backup()
+    if not os.path.isfile(config_path):
+        print(f'ERROR: config.yaml not found at {config_path}', file=sys.stderr)
+        sys.exit(1)
+
+    new_key = _secrets.token_urlsafe(64)
+
+    with open(config_path) as f:
+        raw = f.read()
+        config = yaml.safe_load(raw) or {}
+
+    old_key = config.get('secret_key', '')
+    config['secret_key'] = new_key
+
+    with open(config_path, 'w') as f:
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+    print('\n=== Secret Key Rotated ===')
+    print(f'Config:   {config_path}')
+    print(f'Old key:  {old_key[:8]}... (truncated)')
+    print(f'New key:  {new_key[:8]}... (truncated)')
+    print('\nWARNING: All active sessions are now invalid.')
+    print('The admin must log in again.\n')
+
+
 def hash_password(args):
     """Generate a secure password hash for the admin account.
 
@@ -1272,8 +1308,9 @@ def main():
     # Config validation
     subparsers.add_parser('config', help='Validate config.yaml')
 
-    # Secret key generation
+    # Secret key generation / rotation
     subparsers.add_parser('generate-secret', help='Generate a secure secret_key')
+    subparsers.add_parser('rotate-secret-key', help='Rotate secret_key in config.yaml (invalidates sessions)')
 
     # Password hash generation
     subparsers.add_parser('hash-password', help='Generate an admin password hash')
@@ -1394,6 +1431,7 @@ def main():
         'migrate': migrate,
         'config': config_validate,
         'generate-secret': generate_secret,
+        'rotate-secret-key': rotate_secret_key,
         'hash-password': hash_password,
         'generate-token': generate_token,
         'generate-api-token': generate_api_token,

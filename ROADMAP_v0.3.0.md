@@ -184,16 +184,9 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 13.5 — Secret Rotation and Audit
 
-- [ ] **Secret key rotation:** `manage.py rotate-secret-key` — generates a new secret key, writes to config.yaml (or prints for manual insertion), warns that all active sessions will be invalidated
-- [ ] **Startup security audit:** Expand the existing startup warnings into a formal audit log entry:
-  - Secret key strength (length, entropy estimate)
-  - Password hash algorithm and iteration count
-  - SMTP credentials present (warn if missing — contact form won't work)
-  - Admin `allowed_networks` configured (warn if empty — admin open to all IPs)
-  - HTTPS indicators (session cookie secure flag, HSTS header config)
-  - Database file permissions (warn if world-readable)
-  - Container user (warn if running as root)
-- [ ] **Dependency scanning:** Add `pip-audit` as a pre-commit hook (not just CI). Add `safety` as a secondary scanner. Document the process for responding to CVEs in `SECURITY.md`
+- [x] **Secret key rotation:** `manage.py rotate-secret-key` — generates a new 64-byte URL-safe key, writes directly to config.yaml via PyYAML, prints truncated old/new keys, warns that all sessions are invalidated.
+- [x] **Startup security audit:** `_startup_security_audit()` in `app/services/config.py` checks: SMTP configuration (warn if missing), admin `allowed_networks` (warn if empty), `session_cookie_secure` (warn if false), database file permissions (warn if world-readable), running as root (warn). Secret key strength and password hash algorithm checks were already in `_validate_secret_key()` and the existing password_hash check.
+- [x] **Dependency scanning:** `pip-audit` added to `.pre-commit-config.yaml` as a hook (v2.7.3, with `--require-hashes`). CVE response process documented in `SECURITY.md` (triage, patch, container rebuild, release, disclose).
 
 ### 13.6 — Session and Cookie Hardening
 

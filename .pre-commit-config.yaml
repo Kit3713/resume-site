@@ -55,6 +55,17 @@ repos:
           )$
 
   # ----------------------------------------------------------------
+  # pip-audit — dependency vulnerability scanner (Phase 13.5)
+  # ----------------------------------------------------------------
+  - repo: https://github.com/pypa/pip-audit
+    rev: v2.7.3
+    hooks:
+      - id: pip-audit
+        args: ['--require-hashes', '--requirement']
+        files: 'requirements\.txt$'
+        pass_filenames: true
+
+  # ----------------------------------------------------------------
   # Standard hygiene
   # ----------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks

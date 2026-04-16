@@ -48,6 +48,26 @@ resume-site uses a defense-in-depth approach:
 - `pip-audit` in CI pipeline
 - Minimal dependency tree — every dependency justified
 
+## CVE Response Process (Phase 13.5)
+
+When a CVE is discovered in a runtime dependency:
+
+1. **Triage:** Check `pip-audit` output (CI runs this on every PR; pre-commit
+   hook runs locally). Determine if the vulnerability is reachable from
+   resume-site's usage of the package.
+2. **Patch:** Bump the affected package in `requirements.in`, regenerate
+   `requirements.txt` with hashes (`pip-compile --generate-hashes`), and
+   verify the test suite passes.
+3. **Container rebuild:** Push a new image with `docker build --pull --no-cache`
+   to ensure the base image layer is fresh. The Trivy CVE scan in CI will
+   verify the fix.
+4. **Release:** If the CVE is HIGH or CRITICAL and reachable, cut a patch
+   release (e.g., v0.3.1) immediately. MEDIUM+ findings are batched into
+   the next planned release.
+5. **Disclose:** Update `CHANGELOG.md` with the CVE ID, affected versions,
+   and the fix version. If users are at risk, notify via a GitHub Security
+   Advisory.
+
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability, please report it responsibly:
