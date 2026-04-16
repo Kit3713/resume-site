@@ -30,11 +30,18 @@
     <title>{% block title %}{{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}</title>
     <meta name="description" content="{% block meta_description %}{{ site_settings.get('site_tagline', '') }}{% endblock %}">
 
+    <!-- Canonical URL (Phase 12.4 SEO) -->
+    {% block canonical %}{% endblock %}
+
     <!-- Open Graph -->
     <meta property="og:title" content="{% block og_title %}{{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}">
-    <meta property="og:description" content="{{ site_settings.get('site_tagline', '') }}">
-    <meta property="og:type" content="website">
+    <meta property="og:description" content="{% block og_description %}{{ site_settings.get('site_tagline', '') }}{% endblock %}">
+    <meta property="og:type" content="{% block og_type %}website{% endblock %}">
     <meta property="og:site_name" content="{{ site_settings.get('site_title', 'Portfolio') }}">
+    {% block og_extra %}{% endblock %}
+
+    <!-- JSON-LD Structured Data (Phase 12.4 SEO) -->
+    {% block jsonld %}{% endblock %}
 
     <!-- Prevent theme flash -->
     <script nonce="{{ csp_nonce }}">

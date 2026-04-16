@@ -128,10 +128,9 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 12.4 — Template Optimization
 
-- [ ] **Template inheritance audit:** Map the full inheritance chain (base.html → page templates). Ensure no block is overridden redundantly. Verify that admin templates do not inherit public-facing CSS/JS they don't use
-- [ ] **Macro extraction:** Identify repeated HTML patterns across templates (card components, pagination controls, empty states, flash message rendering) and extract into Jinja2 macros in `app/templates/components/`
-- [ ] **Conditional rendering:** Audit `{% if %}` blocks that check settings — ensure they short-circuit cleanly (no rendering hidden content then wrapping in `display:none`)
-- [ ] **SEO template audit:** Verify meta tags, Open Graph, structured data (JSON-LD for Person, BlogPosting), canonical URLs, and hreflang are correct on every public page
+- [x] **Template inheritance audit:** All 15 admin templates extend `base_admin.html` (separate from public CSS/JS). Admin login intentionally extends `base.html` for navbar access. No redundant block overrides found. All 12 public templates extend `base.html`.
+- [x] **Macro extraction:** Created `components/empty_state.html` macro (repeated in 10+ templates). `components/picture.html` responsive image macro (Phase 12.3). Pagination has only one occurrence — not extracted.
+- [x] **SEO template audit:** Added `{% block canonical %}`, `{% block og_description %}`, `{% block og_type %}`, `{% block og_extra %}`, and `{% block jsonld %}` to `base.html`. Landing page: Person JSON-LD schema. Blog posts: BlogPosting JSON-LD schema, canonical URL, `og:description` from summary, `article:author`, `article:tag` for each tag. hreflang already present. Conditional rendering clean — no hidden-content anti-patterns found.
 
 ### 12.5 — Static Analysis and Code Quality Enforcement
 

@@ -15,6 +15,19 @@
 
 {% block title %}{{ site_settings.get('site_title', 'Portfolio') }} — {{ site_settings.get('site_tagline', '') }}{% endblock %}
 
+{% block jsonld %}
+<script nonce="{{ csp_nonce }}" type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@type": "Person",
+    "name": "{{ site_settings.get('hero_name', site_settings.get('site_title', '')) | e }}",
+    "jobTitle": "{{ site_settings.get('hero_subtitle', '') | e }}",
+    "url": "{{ request.url_root }}",
+    "description": "{{ site_settings.get('site_tagline', '') | e }}"
+}
+</script>
+{% endblock %}
+
 {% block content %}
 
 <!-- Hero Section -->
