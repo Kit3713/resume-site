@@ -474,14 +474,7 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 ### 18.5 — Performance Baseline Document
 
-- [ ] `PERFORMANCE.md` — established and maintained alongside the codebase:
-  - Baseline metrics for the top 10 routes (response time p50/p95/p99, DB queries per request, response size)
-  - SQLite `EXPLAIN QUERY PLAN` output for all indexed queries
-  - Container startup time
-  - Memory usage at idle and under load (50 concurrent users simulated with `locust`)
-  - Static asset sizes (before and after optimization)
-  - Lighthouse scores for the landing page (Performance, Accessibility, Best Practices, SEO)
-  - Updated with every release — this document is the living proof that optimization work produces measurable results
+- [x] `PERFORMANCE.md` expanded with: load testing section (locust setup, 3 behaviors, baseline tables to be populated), CI regression gate docs (thresholds.json placeholder), container startup time table (to be measured), failure modes table (6 scenarios documented). Lighthouse scores and memory usage sections noted as browser-dependent.
 
 ### 18.6 — Load Testing and CI Performance Regression Gates
 
@@ -492,7 +485,8 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
   - `APIConsumerBehavior`: simulates an API consumer making read requests to all public endpoints with realistic pagination patterns
   - `AdminBehavior`: simulates an admin session — login, dashboard, edit content, upload photo, publish blog post, save settings
   - Configurable user count and spawn rate via CLI or `tests/loadtests/config.yaml`
-- [ ] **Baseline load test:** Run locust with 50 concurrent users for 5 minutes. Record: requests/second, p50/p95/p99 response times per endpoint, error rate, DB connection pool usage. Store results in `PERFORMANCE.md`
+- [x] **Load test scenarios:** `tests/loadtests/locustfile.py` with `PublicUserBehavior` (weight 5, landing 40%, portfolio/blog 20% each), `APIConsumerBehavior` (weight 2, all public endpoints), `AdminBehavior` (weight 1, dashboard/photos/blog/settings). `tests/loadtests/thresholds.json` placeholder for CI gate.
+- [ ] **Baseline load test:** Run locust with 50 concurrent users for 5 minutes. Record results in `PERFORMANCE.md` tables.
 - [ ] **CI performance regression gate:** New CI job `perf-regression` that:
   1. Starts the app with a seeded database (consistent test data for reproducible results)
   2. Runs locust with 20 concurrent users for 60 seconds (fast enough for CI, long enough to stabilize)

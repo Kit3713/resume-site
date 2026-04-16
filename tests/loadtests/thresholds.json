@@ -1,0 +1,12 @@
+{
+  "_comment": "CI performance regression thresholds (Phase 18.6). Populate after running the baseline load test. p95 values in milliseconds.",
+  "thresholds": {
+    "/": {"p95_ms": null},
+    "/portfolio": {"p95_ms": null},
+    "/blog": {"p95_ms": null},
+    "/services": {"p95_ms": null},
+    "/api/v1/site": {"p95_ms": null},
+    "/api/v1/portfolio": {"p95_ms": null},
+    "/admin/": {"p95_ms": null}
+  }
+}
