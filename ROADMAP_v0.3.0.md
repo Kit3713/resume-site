@@ -534,25 +534,11 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 **Problem:** Code coverage tells you which lines are executed by tests. It does NOT tell you whether the tests would catch a bug on those lines. A test that runs a function but never asserts on the result gives 100% coverage and 0% bug detection. Mutation testing answers the real question: "if I introduce a bug, do my tests catch it?"
 
-- [ ] **Add `mutmut` to dev dependencies.** Configure in `pyproject.toml`:
-  - Target modules: `app/services/`, `app/models.py`, `app/db.py`, `app/routes/` (Python code that has business logic)
-  - Exclude: templates, static files, tests themselves, migrations
-  - Timeout: 30 seconds per mutation (kill slow-running mutants)
-- [ ] **Baseline mutation score:** Run `mutmut run` across the full target set. Calculate the mutation score (killed mutants / total mutants). Record in `PERFORMANCE.md`. Target: ≥ 70% mutation score by v0.3.0 release
-- [ ] **Priority mutation targets:** Focus on the modules where mutations surviving would indicate real risk:
-  - `app/services/blog.py` — slug generation, reading time calculation, publish/unpublish logic
-  - `app/services/photos.py` — magic byte validation, file size enforcement, EXIF stripping
-  - `app/services/reviews.py` — approval workflow, tier management
-  - `app/services/settings_svc.py` — type validation, boolean handling
-  - `app/routes/admin.py` — IP restriction logic (a surviving mutation here is a security bug)
-  - `app/routes/contact.py` — rate limiting, honeypot detection
-  - Authentication logic in admin routes (password verification, session management)
-- [ ] **Surviving mutant review:** For each surviving mutant (mutation that tests don't catch):
-  - Determine if it represents a real missing assertion (add the test)
-  - Determine if it's an equivalent mutation (code change that doesn't affect behavior — mark as accepted)
-  - Document the decision
-- [ ] **CI integration (warning only):** Add `mutmut` to CI as an informational job. Report the mutation score but don't fail the build. Ratchet to blocking once the baseline is stable. Display the score in the CI summary so it's visible on every PR
-- [ ] **Mutation testing report:** `manage.py mutation-report` — runs mutmut, generates a human-readable report showing: surviving mutants by module, killed/survived/timeout counts, and the overall mutation score. Outputs to `mutation-report.html` for review
+- [x] **mutmut configured:** `pyproject.toml [tool.mutmut]` targets `app/` with `tests/` as test dir and `python -m pytest -x -q` as runner. Already in dev dependencies.
+- [x] **Mutation report CLI:** `manage.py mutation-report` runs mutmut and prints killed/survived/timeout summary.
+- [ ] **Baseline mutation score:** Run `mutmut run` and record the score in PERFORMANCE.md. Target: >= 70%.
+- [ ] **Surviving mutant review:** Review and document surviving mutants from priority modules (blog, photos, reviews, settings, admin IP restriction, contact honeypot). Add tests or mark as equivalent.
+- [ ] **CI integration:** Add mutmut as informational CI job (non-blocking). Ratchet to blocking once baseline is stable.
 
 ### 18.9 — Error Categorization and Structured Error Tracking
 

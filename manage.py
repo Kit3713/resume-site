@@ -518,6 +518,34 @@ def translations_import(args):
     print(f'Imported {count} translations for locale "{locale}".')
 
 
+def mutation_report(args):
+    """Run mutmut and generate a summary report.
+
+    Requires mutmut to be installed (pip install mutmut). Runs mutation
+    testing against the configured paths_to_mutate in pyproject.toml and
+    prints a summary of killed/survived/timeout mutants.
+    """
+    import subprocess as _sp
+
+    print('Running mutmut... (this may take several minutes)')
+    result = _sp.run(
+        ['mutmut', 'run', '--no-progress'],  # noqa: S603, S607
+        capture_output=True,
+        text=True,
+    )
+    print(result.stdout)
+    if result.stderr:
+        print(result.stderr, file=sys.stderr)
+
+    print('\n=== Mutation Testing Results ===')
+    results = _sp.run(
+        ['mutmut', 'results'],  # noqa: S603, S607
+        capture_output=True,
+        text=True,
+    )
+    print(results.stdout)
+
+
 def _connect_db():
     """Open a direct sqlite3 connection to the configured database."""
     import sqlite3
@@ -1445,6 +1473,9 @@ def main():
     import_parser.add_argument('--locale', required=True, help='Locale code for the imported translations')
     import_parser.add_argument('file', help='Path to the JSON file to import')
 
+    # Mutation testing (Phase 18.8)
+    subparsers.add_parser('mutation-report', help='Run mutmut and print a summary report')
+
     # Password hash generation
     subparsers.add_parser('hash-password', help='Generate an admin password hash')
 
@@ -1568,6 +1599,7 @@ def main():
         'rebuild-search-index': rebuild_search_index,
         'translations-export': translations_export,
         'translations-import': translations_import,
+        'mutation-report': mutation_report,
         'hash-password': hash_password,
         'generate-token': generate_token,
         'generate-api-token': generate_api_token,
