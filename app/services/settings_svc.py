@@ -378,6 +378,49 @@ SETTINGS_REGISTRY = {
             'instances where public API discovery is intended.'
         ),
     },
+    # --- File Upload Hardening (Phase 13.7) ---
+    'upload_scan_command': {
+        'type': 'str',
+        'default': '',
+        'label': 'Antivirus Scan Command',
+        'category': 'Security',
+        'description': (
+            'Path to an antivirus scanner (e.g., clamdscan). Uploaded files '
+            'are passed as the first argument. Non-zero exit = rejection. '
+            'Leave empty to skip scanning.'
+        ),
+    },
+    'upload_preserve_exif': {
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Preserve EXIF Metadata on Upload',
+        'category': 'Security',
+        'description': (
+            'By default, EXIF metadata (GPS, camera model, timestamps) is '
+            'stripped from uploaded photos for privacy. Enable this to keep it.'
+        ),
+    },
+    # --- Request Filter (Phase 13.3) ---
+    'request_filter_enabled': {
+        'type': 'bool',
+        'default': 'true',
+        'label': 'Enable WAF-Lite Request Filter',
+        'category': 'Security',
+        'description': (
+            'Inspect incoming requests for path traversal, SQL injection probes, '
+            'oversized bodies, and suspicious user-agents. Blocked requests get 400.'
+        ),
+    },
+    'request_filter_log_only': {
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Request Filter Log-Only Mode',
+        'category': 'Security',
+        'description': (
+            'When enabled, violations are logged at WARNING but not blocked. '
+            'Use for tuning before enforcing.'
+        ),
+    },
     # --- Observability (Phase 18.2) ---
     'metrics_enabled': {
         'type': 'bool',

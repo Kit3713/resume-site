@@ -34,6 +34,20 @@
                 {%- if backup_total_bytes %} · {{ '%.1f'|format(backup_total_bytes / 1048576) }} MB{% endif -%}
             </p>
         </div>
+        <div class="admin-card">
+            {# Error summary (Phase 18.9). Reads from in-memory metrics
+               counters — resets on process restart. Full history is in
+               structured logs. #}
+            <h3 class="admin-card__title">{{ _('Errors (since restart)') }}</h3>
+            <p class="admin-card__value">{{ total_errors }}</p>
+            {% if error_summary %}
+            <p class="admin-card__meta">
+                {%- for category, count in error_summary.items() %}
+                {{ category }}: {{ count }}{{ ', ' if not loop.last else '' }}
+                {%- endfor -%}
+            </p>
+            {% endif %}
+        </div>
     </div>
 
     {% if popular_pages %}

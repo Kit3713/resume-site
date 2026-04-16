@@ -258,6 +258,68 @@ zero. Prometheus tried to scrape `/metrics` and got no answer.
 
 ---
 
+## ResumeBackupStale
+
+**Severity:** warning - **Component:** backup
+
+**What it means:** The `backup_last_success` setting timestamp is more than
+48 hours old. The scheduled backup pipeline has stopped producing archives.
+
+**Likely causes:**
+
+- The `resume-site-backup.timer` systemd unit is disabled or failed.
+- The backup volume mount is broken (container can't write to
+  `/app/backups`).
+- `manage.py backup` is erroring out (disk full, permission denied, DB
+  locked for too long).
+
+**What to check:**
+
+1. `systemctl --user status resume-site-backup.timer` — is it active?
+   When did it last trigger?
+2. `podman exec resume-site python manage.py backup --list` — does a
+   recent archive exist?
+3. Run a manual backup to see the error:
+   `podman exec resume-site python manage.py backup`
+4. Check the backup volume:
+   `podman volume inspect resume-site-backups`
+
+**Mitigations:**
+
+- Re-enable the timer: `systemctl --user enable --now resume-site-backup.timer`
+- Fix volume permissions: `podman unshare chown 1000:1000 $(podman volume inspect --format '{{.Mountpoint}}' resume-site-backups)`
+- If disk is full, prune old backups:
+  `podman exec resume-site python manage.py backup --prune --keep 3`
+
+---
+
+## ResumeDiskUsageHigh
+
+**Severity:** warning - **Component:** storage
+
+**What it means:** One of the monitored storage paths (database file or
+photo directory) exceeds 1 GB. Default threshold — tune to your deployment.
+
+**What to check:**
+
+1. `podman exec resume-site du -sh /app/data/site.db /app/photos/` to
+   identify which path is growing.
+2. For the database: the `page_views` table grows unbounded on active
+   sites. Run `SELECT COUNT(*) FROM page_views;` and consider archiving
+   older entries.
+3. For photos: check whether unused uploads (deleted from the UI but not
+   from disk) are accumulating.
+
+**Mitigations:**
+
+- Trim analytics: `podman exec resume-site python manage.py purge-analytics --older-than 90d`
+- Remove orphaned photo files (photos deleted in the admin UI but left on
+  disk due to a failed cleanup).
+- Increase the alert threshold if your deployment legitimately serves
+  large media.
+
+---
+
 ## Extending this file
 
 Adding a new alert rule:

@@ -29,6 +29,7 @@ line-length = 100
 extend-exclude = [
     "migrations",          # Plain SQL, not Python
     "translations",        # Generated .po/.mo files
+    "vulture_allowlist.py", # Vulture false-positive allowlist — not real Python
     ".venv",
     "venv",
     "photos",
@@ -43,9 +44,10 @@ extend-exclude = [
 #   B    — flake8-bugbear (likely bugs)
 #   S    — flake8-bandit-lite (common security anti-patterns)
 #   C4   — comprehensions (prefer list/set/dict comprehensions)
+#   C90  — mccabe cyclomatic complexity (max 15 per function)
 #   SIM  — simplify (code simplification suggestions)
 #   UP   — pyupgrade (modern syntax opportunities)
-select = ["E", "W", "F", "I", "B", "S", "C4", "SIM", "UP"]
+select = ["E", "W", "F", "I", "B", "S", "C4", "C90", "SIM", "UP"]
 ignore = [
     "E501",  # Line length — handled by formatter, don't double-flag
     "B008",  # Do not perform function calls in argument defaults —
@@ -71,6 +73,9 @@ ignore = [
     "T201",   # print() is the primary output channel for a CLI
     "S603",   # subprocess calls use fixed argv lists, not shell strings
 ]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15    # Phase 12.5 — functions above this are flagged for refactoring
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]

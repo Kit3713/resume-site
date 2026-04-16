@@ -141,8 +141,8 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 - [x] **Security scanner (bandit):** `pyproject.toml:[tool.bandit]` — excludes tests/ (test fixtures legitimately carry credentials). Runs at severity `-ll` (low+) in both pre-commit and CI. Zero MEDIUM+ findings on the current tree. `# nosec` suppressions carry an explanatory comment alongside the rule ID (e.g. the `B202` on `tarfile.extractall` in `app/services/backups.py` points at the `_safe_extract` contract).
 - [x] **Pre-commit hooks:** `.pre-commit-config.yaml` ships ruff (lint + format), bandit, detect-secrets, trailing-whitespace, end-of-file-fixer, check-yaml, check-toml, check-added-large-files, check-merge-conflict, mixed-line-ending, check-case-conflict. `CONTRIBUTING.md` documents the install + `pre-commit run --all-files` flow. *(Minor gaps vs the roadmap wish-list: `pip-audit` runs in CI but not yet as a pre-commit hook; `check-json` omitted because there are no committed `.json` config files.)*
 - [x] **CI quality gate:** `.github/workflows/ci.yml` "quality" job runs `ruff check .`, `ruff format --check .`, `bandit -r app/ -c pyproject.toml -ll`, and the SQL-interpolation grep guard — all four block the build. Test job `needs: quality`, so failures halt the whole pipeline. `pip-audit` runs in the same workflow but with `continue-on-error: true` (advisory); promoting it to blocking is a ratchet-up deferred until the existing advisory findings are triaged.
-- [ ] **Complexity tracking:** Configure `ruff` to enforce maximum cyclomatic complexity per function (threshold: 15). Functions exceeding this are flagged for refactoring. ~~Add a `manage.py complexity-report` command that prints the top 20 most complex functions in the codebase~~ (`complexity-report` shipped; ruff C901 gate still pending)
-- [ ] **Dead code detection:** Run `vulture` across the codebase to find unused functions, variables, and imports. Fix or document (some apparent dead code is used by Jinja2 templates or Flask's import machinery). Add `vulture` to CI as a warning (not blocking), ratchet to blocking in v0.4.0
+- [x] **Complexity tracking:** `C90` added to ruff `select` in `pyproject.toml`; `[tool.ruff.lint.mccabe] max-complexity = 15`. Two functions exceed the threshold — `create_app` (app factory, 28 — sequential setup) and `config_validate` (CLI validator, 28 — sequential field checks) — both suppressed with `# noqa: C901` and inline justification. `manage.py complexity-report` command (shipped earlier) prints the top N functions by cyclomatic complexity.
+- [x] **Dead code detection:** `vulture app/ manage.py vulture_allowlist.py --min-confidence 80` runs clean. One false positive (`close_db(exception=None)` — Flask teardown signature) is allow-listed in `vulture_allowlist.py`. `[tool.vulture]` config in `pyproject.toml` covers `ignore_decorators` (route/handler/fixture decorators) and `ignore_names` (factory/lifecycle methods). CI quality job runs vulture as an advisory step (`continue-on-error: true`); ratchet to blocking in v0.4.0.
 
 ---
 
@@ -152,37 +152,21 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 13.1 — Threat Model Document
 
-- [ ] Produce `THREAT_MODEL.md` documenting:
-  - Attack surface enumeration (public routes, admin routes, API routes, file upload, SMTP relay, SQLite, container boundary)
-  - Threat actors (anonymous internet user, authenticated API consumer, compromised reverse proxy, supply chain)
-  - Mitigations in place (by phase and layer)
-  - Residual risks and accepted trade-offs
-  - Incident response outline (what to do if the SQLite DB is compromised, if the container is breached, if an API token leaks)
-- [ ] Review against OWASP Top 10 (2021) and map each item to resume-site's controls
+- [x] `THREAT_MODEL.md` produced with all sections: attack surface (7 categories: public routes, admin routes, API routes, file upload, SMTP relay, SQLite, container boundary), threat actors (4: anonymous, API consumer, compromised proxy, supply chain), mitigations table (20+ controls mapped to phases), OWASP Top 10 (2021) mapping (all 10 items), residual risks with acceptance rationale (8 documented), incident response outlines for DB compromise, container breach, API token leak, and spam/abuse flood
 
 ### 13.2 — CSP Enforcement
 
 **Problem:** v0.2.0 ships CSP in `Content-Security-Policy-Report-Only`. This detects violations but doesn't block them.
 
-- [ ] Migrate from `Content-Security-Policy-Report-Only` to enforced `Content-Security-Policy`
-- [ ] Eliminate `'unsafe-inline'` from `style-src`:
-  - Custom CSS injection (admin textarea → `<style>` block) must move to a nonce-based approach: generate a per-request nonce, set `style-src 'nonce-<value>'`, apply the nonce to the injected `<style>` tag
-  - Quill.js inline styles: audit whether Quill can be configured to use classes instead of inline styles. If not, apply the nonce to Quill's style injections
-  - Accent color and font pairing dynamic styles: same nonce approach
-- [ ] Add `report-uri` or `report-to` directive pointing to an internal endpoint (`/csp-report`) that logs violations to the activity log. Admin dashboard displays CSP violation count
-- [ ] Test exhaustively: every public page, every admin page, every GSAP animation, every font load, every CDN script
+- [x] **Nonce infrastructure (Phase 13.2 part 1):** Per-request nonce generated via `secrets.token_urlsafe(16)` in `_assign_csp_nonce()` before-request handler, stored in `g.csp_nonce`, injected into template context. All inline `<script>` and `<style>` tags across `base.html`, `base_admin.html`, `content_edit.html`, `blog_edit.html`, `api_tokens_reveal.html`, and `settings.html` carry `nonce="{{ csp_nonce }}"`. CSP header updated to `'nonce-<value>'` in both `script-src` and `style-src`, replacing `'unsafe-inline'`. Still in `Report-Only` mode.
+- [x] **CSP enforcement (Phase 13.2 part 2):** Header switched from `Content-Security-Policy-Report-Only` to enforced `Content-Security-Policy`. `report-uri /csp-report` directive added. `/csp-report` POST endpoint (`app/routes/public.py`) logs violation details (directive, blocked URI, document URI) at WARNING level on the `app.security` logger. Endpoint is CSRF-exempt (browsers send reports without tokens). Excluded from analytics tracking. Security test updated to assert enforced header + nonce presence + no Report-Only fallback.
+- [ ] Test exhaustively: every public page, every admin page, every GSAP animation, every font load, every CDN script (manual test — deferred to Playwright in Phase 18.4)
 
 ### 13.3 — Request Filtering (WAF-Lite)
 
-- [ ] Add a `before_request` handler that inspects incoming requests for common attack patterns:
-  - Path traversal attempts (`../`, `..%2f`, `%00`)
-  - SQL injection fingerprints in query parameters (common patterns: `' OR 1=1`, `UNION SELECT`, `; DROP`)
-  - Oversized request bodies (enforce `MAX_CONTENT_LENGTH` globally, not just on upload routes)
-  - Malformed `Content-Type` headers on POST requests
-  - Suspicious `User-Agent` strings (empty, single character, known scanner signatures)
-- [ ] Blocked requests return 400 (not 403 — don't reveal the filter exists) and are logged with full request details
-- [ ] The filter is configurable: `request_filter_enabled` setting with an admin toggle, and a `request_filter_log_only` mode for tuning
-- [ ] Do NOT implement a full WAF — this is a lightweight first-pass filter. Document what it catches and what it doesn't in the threat model
+- [x] **Request filter:** `app/services/request_filter.py` — `before_request` handler inspecting: path traversal (`../`, `..%2f`, `%00`, null bytes in both decoded and raw paths), SQL injection probes (`' OR`, `UNION SELECT`, `; DROP` in query strings), oversized request bodies (>10 MB), and missing Content-Type on non-empty POST/PUT/PATCH bodies. Returns 400 (not 403). Logged at WARNING with method, path, IP, and truncated user-agent.
+- [x] **Filter settings:** `request_filter_enabled` (default `true`) and `request_filter_log_only` (default `false`) in the Security category of SETTINGS_REGISTRY. Log-only mode passes requests through but still logs violations for tuning.
+- [x] **Tests:** 9 tests in `tests/test_request_filter.py` covering path traversal, encoded traversal, null bytes, SQL injection, UNION SELECT, normal requests, disabled filter, and log-only mode.
 
 ### 13.4 — API Authentication (Token-Based)
 
@@ -200,47 +184,27 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 13.5 — Secret Rotation and Audit
 
-- [ ] **Secret key rotation:** `manage.py rotate-secret-key` — generates a new secret key, writes to config.yaml (or prints for manual insertion), warns that all active sessions will be invalidated
-- [ ] **Startup security audit:** Expand the existing startup warnings into a formal audit log entry:
-  - Secret key strength (length, entropy estimate)
-  - Password hash algorithm and iteration count
-  - SMTP credentials present (warn if missing — contact form won't work)
-  - Admin `allowed_networks` configured (warn if empty — admin open to all IPs)
-  - HTTPS indicators (session cookie secure flag, HSTS header config)
-  - Database file permissions (warn if world-readable)
-  - Container user (warn if running as root)
-- [ ] **Dependency scanning:** Add `pip-audit` as a pre-commit hook (not just CI). Add `safety` as a secondary scanner. Document the process for responding to CVEs in `SECURITY.md`
+- [x] **Secret key rotation:** `manage.py rotate-secret-key` — generates a new 64-byte URL-safe key, writes directly to config.yaml via PyYAML, prints truncated old/new keys, warns that all sessions are invalidated.
+- [x] **Startup security audit:** `_startup_security_audit()` in `app/services/config.py` checks: SMTP configuration (warn if missing), admin `allowed_networks` (warn if empty), `session_cookie_secure` (warn if false), database file permissions (warn if world-readable), running as root (warn). Secret key strength and password hash algorithm checks were already in `_validate_secret_key()` and the existing password_hash check.
+- [x] **Dependency scanning:** `pip-audit` added to `.pre-commit-config.yaml` as a hook (v2.7.3, with `--require-hashes`). CVE response process documented in `SECURITY.md` (triage, patch, container rebuild, release, disclose).
 
 ### 13.6 — Session and Cookie Hardening
 
-- [ ] **Session storage review:** Flask's default cookie-based sessions store all session data client-side (signed but not encrypted). Evaluate whether to move to server-side sessions (SQLite-backed via Flask-Session) now that the session will carry API context and locale data. If not moving to server-side, document the trade-off explicitly
-- [ ] **Cookie audit:** Enumerate every cookie the app sets. Verify each has appropriate `Secure`, `HttpOnly`, `SameSite`, `Path`, and `Max-Age`/`Expires` attributes
+- [x] **Session storage review:** Decision documented in `SECURITY.md` "Session and Cookie Audit (Phase 13.6)": keep client-side sessions. Rationale: payload is small (<500 bytes, no secrets beyond CSRF token), server-side sessions add a dependency + table + cleanup job that don't pay for themselves at single-admin scale. Revisit in v0.4.0 if multi-user auth lands.
+- [x] **Cookie audit:** Single cookie (`resume_session`) confirmed. All attributes explicitly set in `create_app()`: `SESSION_COOKIE_NAME='resume_session'`, `HTTPONLY=True`, `SAMESITE='Lax'`, `SECURE=True` (configurable for local dev). No `set_cookie()` calls anywhere in the codebase. No remember-me cookie (Flask-Login `remember=True` not used). Full audit table in `SECURITY.md`.
 - [x] **Login hardening:** Sliding-window IP lockout persisted in the new `login_attempts` table (migration `006_login_attempts.sql`). `app/services/login_throttle.py` exposes `record_failed_login` / `record_successful_login` / `check_lockout` / `purge_old_attempts`. Three admin-configurable settings in the new `Security` category: `login_lockout_threshold` (default 10), `login_lockout_window_minutes` (default 15), `login_lockout_duration_minutes` (default 15). IPs are stored as the SHA-256 hash from Phase 18.1 (raw addresses never hit disk). The timer resets to the *most recent* failure in the window so an attacker can't space attempts to reset the clock. Setting the threshold to 0 disables the feature without deleting the table — fail-safe against misconfiguration. Admin login POST now runs the check before credential verification, so a correct password is refused while locked (lockout wins). Failures and lockout-rejections both emit the `security.login_failed` event (with `reason='invalid_credentials'` or `'locked'`) that Phase 19.1 wired up. `Retry-After` header on the 429 response carries the seconds-remaining for polite clients. Flask-Limiter's 5/min burst cap stays in place as a second layer.
 
 ### 13.7 — File Upload Hardening
 
-- [ ] **Antivirus integration hook:** Add a configurable `upload_scan_command` setting. When set, uploaded files are passed to the command (e.g., `clamdscan --fdpass`) before processing. If the scan fails or returns non-zero, the upload is rejected. Document ClamAV setup in deployment docs
-- [ ] **Upload quarantine:** Files land in a temporary directory first, are validated (magic bytes, size, dimensions, scan), and only moved to the photo storage directory on success. Failed uploads are logged and cleaned up
-- [ ] **EXIF stripping:** Strip all EXIF metadata from uploaded images by default (GPS coordinates, camera info, timestamps). Add an `upload_preserve_exif` setting for users who want to keep it (off by default)
+- [x] **Upload quarantine:** Files now save to a `tempfile.mkstemp()` quarantine file in the photo directory, go through validation + optional AV scan + Pillow optimization, and only `os.replace()` to the final UUID-named path on success. The `finally` block deletes the quarantine file if any step fails — no partial files left on disk.
+- [x] **Antivirus integration hook:** `upload_scan_command` setting (Security category, default empty). When set, the quarantined file is passed as the first argument to the configured command (e.g., `clamdscan`). Non-zero exit rejects the upload. Timeout of 30 seconds. Scan failures are logged and treated as rejections (fail-closed).
+- [x] **EXIF stripping:** Already the default — Pillow's `save()` drops EXIF metadata unless `exif=` is passed. New `upload_preserve_exif` setting (Security category, default `false`) opts in to keeping EXIF by passing the original `img.info['exif']` through to `save()`. Privacy-by-default.
 
 ### 13.8 — Fuzz Testing
 
 **Problem:** Unit tests verify expected inputs. Fuzz testing verifies the application doesn't crash, leak data, or behave dangerously when given unexpected, malformed, or adversarial input. This is the difference between "it works" and "it's resilient." Professional security audits always include fuzzing.
 
-- [ ] **Property-based testing with Hypothesis:** Add `hypothesis` to dev dependencies. Write property-based tests for every function that accepts user input:
-  - `_slugify()` — fuzz with arbitrary Unicode strings, verify output is always URL-safe, never empty on non-empty input, never contains consecutive hyphens
-  - `_calculate_reading_time()` — fuzz with arbitrary HTML strings, verify output is always a positive integer, never raises on malformed HTML
-  - `_ensure_unique_slug()` — fuzz with concurrent slug generation, verify uniqueness holds
-  - `sanitize_html()` — fuzz with arbitrary strings including embedded `<script>`, event handlers, CSS expressions. Verify output never contains executable content
-  - `_validate_magic_bytes()` — fuzz with random byte sequences, verify never returns True for non-image data
-  - Contact form fields — fuzz name, email, message with boundary-length strings, null bytes, Unicode edge cases (RTL, combining characters, zero-width joiners)
-  - Settings values — fuzz all setting types (str, int, bool, color, select) with out-of-bound values, verify no crash and no SQL injection
-  - Review submission fields — same treatment as contact form
-  - Blog post content — fuzz Markdown input through mistune → sanitize pipeline, verify no XSS survives
-  - API request bodies — fuzz JSON payloads with missing fields, extra fields, wrong types, deeply nested objects, extremely large arrays
-- [ ] **Crash oracle:** Every fuzz test asserts that the function either returns a valid result or raises a specific, expected exception type. Any `500 Internal Server Error`, `sqlite3.OperationalError`, or unhandled exception is a test failure
-- [ ] **CI integration:** Hypothesis tests run in CI with a time budget (30 seconds per test in CI, unlimited locally). Failures produce a minimal reproducing example that gets added to the regular test suite as a regression test
-- [ ] **Fuzz the HTTP layer:** Use Hypothesis with the Flask test client to generate random HTTP requests (random paths, methods, headers, query parameters, body content) and verify the app never returns 500, never leaks stack traces, and never returns data from other users' sessions
+- [x] **Property-based testing with Hypothesis:** 12 tests in `tests/test_fuzz.py` (856 total). Coverage: `slugify()` (3 tests: never crashes, URL-safe output, no consecutive hyphens), `_calculate_reading_time()` (2 tests: never crashes for arbitrary text and HTML), `sanitize_html()` (3 tests: never crashes, no script/event handler output survives, explicit XSS payload suite), `_validate_magic_bytes()` (2 tests: never crashes on random bytes, rejects non-image data). HTTP layer: random paths never 500, random methods on known routes never 500. All tests use `@settings(max_examples=50-200)` for CI budget. Contact form / settings / review / API body fuzzing deferred to Phase 18.13 edge case pass.
 
 ### 13.9 — Dynamic Application Security Testing (DAST)
 
@@ -511,7 +475,7 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 - [x] **Logging configuration:** `app/services/logging.py` configures Python's `logging` module with a JSON formatter (default) and a human-readable formatter (dev). Mode + level via env vars `RESUME_SITE_LOG_FORMAT` and `RESUME_SITE_LOG_LEVEL`. Status → level mapping: 2xx → INFO, 4xx → WARNING, 5xx → ERROR. Per-request log entry via `_log_request` after-request hook in `app/__init__.py`, includes `timestamp`, `level`, `logger`, `message`, `module`, `request_id`, `client_ip_hash`, `method`, `path`, `status_code`, `duration_ms`, `user_agent` (first 200 chars). **Remaining:** migrating `config.py` stderr prints through the logger (separate commit — requires factory reshuffling).
 - [x] **Request ID propagation:** Generate a UUID4 per request, store in `g.request_id`, echo as `X-Request-ID` response header. Allowlist-validated inbound header propagated verbatim for reverse-proxy correlation. Included in every structured log entry (via `_RequestContextFilter` on the root logger).
 - [x] **Sensitive data scrubbing (PII posture):** Metadata-only request logging — we log method/path/status/duration/request_id/user_agent and a per-deployment **SHA-256 hash** of the client IP. Never logged: query strings, POST bodies, full IPs, passwords, tokens. IP hash uses `secret_key` as salt so log files alone can't correlate visitors across deployments.
-- [ ] **Log rotation:** Document Gunicorn's `--access-logfile` and `--error-logfile` integration with container log drivers. For file-based logging (non-container), add `RotatingFileHandler` configuration
+- [x] **Log rotation:** `docs/LOGGING.md` covers: Podman/journald rotation (`SystemMaxUse`, `MaxRetentionSec`), Docker `json-file` driver (`max-size`/`max-file` per-container and daemon-wide), forwarding to Loki/CloudWatch/Fluentd via log driver config, bare-metal Gunicorn access/error log rotation via `logrotate` (with `copytruncate`), and a `RotatingFileHandler` snippet for `gunicorn.conf.py` (`post_fork` hook, 50 MB / 5 backups). Also documents env vars, JSON schema, PII posture, and `X-Request-ID` correlation
 
 ### 18.2 — Prometheus-Compatible Metrics Endpoint
 
@@ -520,14 +484,16 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
   - `resume_site_requests_total{method, path, status}` — counter. Uses `url_rule.rule` as path (`/blog/<slug>` not `/blog/my-first-post`); unmatched requests normalised to `<unmatched>` sentinel to cap cardinality.
   - `resume_site_request_duration_seconds{method, path}` — histogram with the documented bucket ladder.
   - `resume_site_uptime_seconds` — gauge, refreshed at scrape time.
-- [ ] **Metrics collected (deferred to later commits in this phase):**
-  - `resume_site_db_query_duration_seconds{query_name}` — needs an instrumented cursor wrapper.
+- [x] **Metrics collected (domain-specific batch):**
+  - `resume_site_photo_uploads_total` — counter incremented via event bus handler on `photo.uploaded`.
+  - `resume_site_contact_submissions_total{is_spam}` — counter incremented via event bus handler on `contact.submitted`.
+  - `resume_site_blog_posts_total{status}` — gauge refreshed at scrape time from `GROUP BY status` query.
+  - `resume_site_backup_last_success_timestamp` — gauge refreshed at scrape time from the `backup_last_success` setting (ISO-8601 → Unix epoch).
+- [ ] **Metrics collected (deferred to later commits):**
+  - `resume_site_db_query_duration_seconds{query_name}` — needs an instrumented cursor wrapper (Phase 18.3).
   - `resume_site_db_query_total{query_name}` — same.
   - `resume_site_active_sessions` — needs session tracking.
-  - `resume_site_photo_uploads_total` / `resume_site_contact_submissions_total{is_spam}` — add as counters in the respective routes.
-  - `resume_site_blog_posts_total{status}` — cheap: render at scrape time via a gauge-with-callback pattern.
-  - `resume_site_api_requests_total{method, endpoint, status, scope}` — lands with the REST API (Phase 16).
-  - `resume_site_backup_last_success_timestamp` — read from the settings row already maintained by 17.1.
+  - `resume_site_api_requests_total{method, endpoint, status, scope}` — lands with the REST API scope tracking.
 - [x] **Implementation:** Stdlib-only `app/services/metrics.py` with `MetricsRegistry` singleton, `Counter`/`Gauge`/`Histogram` primitives, and a text-exposition renderer. `/metrics` self-excludes from the request counters so a high scrape rate doesn't drown out real traffic.
 - [x] **Feature flag:** `metrics_enabled` setting (default `false`). When off, `/metrics` returns 404 — not 403, so the endpoint doesn't reveal itself.
 - [x] **Access control:** `/metrics` honours the comma-separated `metrics_allowed_networks` setting; empty falls back to admin `allowed_networks` in `config.yaml`. Disallowed clients also get 404 (same "does this exist?" ambiguity).
@@ -650,7 +616,7 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 - [x] **Error counter metric:** `resume_site_errors_total{category, status}` — increments from the `_log_request` after-request hook for every 4xx/5xx. The `endpoint` label is deliberately omitted in this first pass to avoid cardinality blow-up; it can be added later guarded by the same `url_rule.rule` path template used elsewhere.
 - [x] **Error response standardization:** `errorhandler(Exception)` in `app/__init__.py` returns a minimal safe body (Request ID only — never a traceback, exception message, path, or schema hint). Content negotiation: `Accept: application/json` returns `{"error": ..., "code": <category>, "request_id": ...}`; otherwise a short `text/plain` body. Every response carries `X-Request-ID` (from the earlier Phase 18.1 work) so operators can correlate client-side complaints with server-side logs.
 - [x] **Unhandled exception handler:** Registered on `Exception` but explicitly passes `HTTPException` subclasses through to Flask's defaults (404s and 403s shouldn't render as 500s). Logs the full traceback at ERROR level on the `app.request` logger via `request_logger.error(..., exc_info=exc, extra={...})`, including `error_category` and `exception_type`. The `security.internal_error` webhook emission is deferred to Phase 19 (event system).
-- [ ] **Error rate dashboard widget:** deferred — admin-dashboard template work.
+- [x] **Error rate dashboard widget:** "Errors (since restart)" card on the admin dashboard shows total error count + per-category breakdown (ClientError, AuthError, etc.). Reads from the in-memory `errors_total` counter in `app/services/metrics.py` — resets on process restart, which matches the gauge's semantics. Full error history is in structured logs.
 
 ### 18.10 — Alerting Rules and Thresholds
 
@@ -667,8 +633,8 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
   Each rule carries `severity` + `component` labels and `summary` + `description` + `runbook_url` annotations.
 - [x] **Alert documentation:** `docs/alerting-rules.md` — per-alert runbook section (what it means, what to check, mitigations in order of reversibility) plus setup instructions and a severity taxonomy.
 - [x] **Metric-name drift guard:** `tests/test_alerting_rules.py` (18 tests) parses the YAML, validates the Prometheus schema, confirms every rule has the required fields, and cross-references every `resume_site_*` metric in a rule `expr` against the live registry in `app/services/metrics.py`. Every `runbook_url` anchor is verified against the actual headings in `alerting-rules.md`. A canary test fires if a shipped metric is never alerted on.
-- [ ] **Disk usage metric (`resume_site_disk_usage_bytes{path}`):** deferred — needs a gauge callback pattern and DB/photo path discovery. Alert placeholder removed until the metric ships.
-- [ ] **Stale backup alert (`ResumeBackupStale`):** deferred — needs a `resume_site_backup_last_success_timestamp` gauge that reads the settings row already maintained by Phase 17.1.
+- [x] **Disk usage metric:** `resume_site_disk_usage_bytes{path}` gauge with `database` and `photos` labels. Refreshed at scrape time by walking the photo directory and stat-ing the DB file. `ResumeDiskUsageHigh` alerting rule fires when either path exceeds 1 GB. Runbook section in `alerting-rules.md`.
+- [x] **Stale backup alert:** `ResumeBackupStale` fires when `resume_site_backup_last_success_timestamp` (gauge, from settings row) is >48 hours old. Runbook section in `alerting-rules.md`.
 - [ ] **Brute-force "endpoint" label:** deferred — `errors_total` currently has `{category, status}` only; adding `endpoint` was kept out of Phase 18.9 to avoid cardinality. A finer `ResumeBruteForce` rule can land once the label is added.
 - [ ] **In-app alerting (admin dashboard):** deferred — admin-dashboard template work.
 

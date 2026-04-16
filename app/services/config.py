@@ -252,4 +252,52 @@ def load_config(path: str) -> dict:
             file=sys.stderr,
         )
 
+    _startup_security_audit(config)
+
     return config
+
+
+def _startup_security_audit(config: dict) -> None:
+    """Log a startup security posture summary (Phase 13.5).
+
+    Checks for common misconfigurations and prints warnings to stderr.
+    None of these are fatal — the app starts regardless, but operators
+    should address them in production deployments.
+    """
+    warnings = []
+
+    smtp = config.get('smtp', {})
+    if not smtp.get('host'):
+        warnings.append('SMTP not configured — contact form email delivery will fail')
+
+    admin = config.get('admin', {})
+    networks = admin.get('allowed_networks', [])
+    if not networks:
+        warnings.append(
+            'admin.allowed_networks is empty — admin panel is accessible from any IP'
+        )
+
+    session_secure = config.get('session_cookie_secure', True)
+    if not session_secure:
+        warnings.append(
+            'session_cookie_secure is false — session cookies sent over plain HTTP'
+        )
+
+    db_path = config.get('database_path', '')
+    if db_path and os.path.isfile(db_path):
+        import stat
+
+        mode = os.stat(db_path).st_mode
+        if mode & stat.S_IROTH:
+            warnings.append(
+                f'Database file {db_path} is world-readable — restrict permissions'
+            )
+
+    if os.getuid() == 0:
+        warnings.append('Running as root — use a non-root user in production')
+
+    if warnings:
+        print('\n--- Startup Security Audit ---', file=sys.stderr)
+        for w in warnings:
+            print(f'  WARNING: {w}', file=sys.stderr)
+        print('---\n', file=sys.stderr)

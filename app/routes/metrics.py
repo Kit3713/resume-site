@@ -28,7 +28,10 @@ from flask import Blueprint, abort, current_app, request
 
 from app.services.metrics import (
     CONTENT_TYPE,
+    backup_last_success_timestamp,
+    blog_posts_total,
     client_ip_in_networks,
+    disk_usage_bytes,
     get_registry,
     parse_cidr_list,
     process_uptime_seconds,
@@ -72,6 +75,7 @@ def metrics():
     # leak diagnostic info from an unhealthy app. ``contextlib.suppress``
     # keeps the code path compact without a bare except.
     settings = {}
+    db = None
     with contextlib.suppress(Exception):
         from app.db import get_db
 
@@ -96,5 +100,55 @@ def metrics():
     registry = get_registry()
     # Refresh process-uptime gauge at scrape time so it's always current.
     uptime_seconds.set(process_uptime_seconds())
+
+    # Refresh scrape-time gauges (Phase 18.2 deferred batch).
+    _refresh_blog_posts_gauge(db)
+    _refresh_backup_timestamp_gauge(settings)
+    _refresh_disk_usage_gauge(current_app.config)
+
     body = registry.render()
     return body, 200, {'Content-Type': CONTENT_TYPE}
+
+
+def _refresh_blog_posts_gauge(db):
+    """Set blog_posts_total gauge per status from the database."""
+    if db is None:
+        return
+    with contextlib.suppress(Exception):
+        rows = db.execute(
+            'SELECT status, COUNT(*) as cnt FROM blog_posts GROUP BY status'
+        ).fetchall()
+        for row in rows:
+            blog_posts_total.set(row['cnt'], label_values=(row['status'],))
+
+
+def _refresh_backup_timestamp_gauge(settings):
+    """Set backup_last_success_timestamp gauge from the settings value."""
+    raw = settings.get('backup_last_success', '')
+    if not raw:
+        return
+    with contextlib.suppress(Exception):
+        from datetime import UTC, datetime
+
+        dt = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+        backup_last_success_timestamp.set(dt.replace(tzinfo=UTC).timestamp())
+
+
+def _refresh_disk_usage_gauge(app_config):
+    """Set disk_usage_bytes gauge for the database and photo directories."""
+    import os
+
+    with contextlib.suppress(Exception):
+        db_path = app_config.get('DATABASE_PATH', '')
+        if db_path and os.path.isfile(db_path):
+            disk_usage_bytes.set(os.path.getsize(db_path), label_values=('database',))
+
+    with contextlib.suppress(Exception):
+        photo_dir = app_config.get('PHOTO_STORAGE', '')
+        if photo_dir and os.path.isdir(photo_dir):
+            total = sum(
+                os.path.getsize(os.path.join(dirpath, f))
+                for dirpath, _dirnames, filenames in os.walk(photo_dir)
+                for f in filenames
+            )
+            disk_usage_bytes.set(total, label_values=('photos',))

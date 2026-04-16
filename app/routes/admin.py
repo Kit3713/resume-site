@@ -348,6 +348,20 @@ def dashboard():
     # behind the future /admin/backups page.
     recent_backups = backup_entries[:5]
 
+    # Error summary (Phase 18.9). Read from the in-memory metrics
+    # counters — these reset on process restart, which is fine for a
+    # dashboard overview. The full history lives in structured logs.
+    error_summary = {}
+    try:
+        from app.services.metrics import errors_total
+
+        for label_key, count in errors_total._values.items():
+            category = label_key[0]  # (category, status) tuple
+            error_summary[category] = error_summary.get(category, 0) + int(count)
+    except Exception:  # noqa: BLE001, S110 — diagnostic widget, never break the dashboard
+        pass
+    total_errors = sum(error_summary.values())
+
     return render_template(
         'admin/dashboard.html',
         total_views=total_views,
@@ -362,6 +376,8 @@ def dashboard():
         backup_total_bytes=backup_total_bytes,
         backup_dir=backup_dir,
         recent_backups=recent_backups,
+        total_errors=total_errors,
+        error_summary=error_summary,
     )
 
 

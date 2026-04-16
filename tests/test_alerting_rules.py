@@ -123,6 +123,8 @@ ALLOWED_COMPONENTS = {
     'performance',
     'traffic',
     'availability',
+    'backup',
+    'storage',
 }
 
 
@@ -230,7 +232,14 @@ def test_every_custom_metric_is_referenced_at_least_once(all_rules, custom_metri
     # ResumeHighRequestRate / ResumeNoTraffic; duration in ResumeHighLatency.
     # This test is a canary — if a new metric lands without an alert
     # intentionally, exempt it here with a comment.
-    EXEMPT: set[str] = set()
+    EXEMPT: set[str] = {
+        # Informational counters — useful for dashboards but no natural
+        # alerting threshold. Operators who want alerts on these can add
+        # custom rules referencing the metric names directly.
+        'resume_site_photo_uploads_total',
+        'resume_site_contact_submissions_total',
+        'resume_site_blog_posts_total',
+    }
 
     all_expr_text = '\n'.join(r['expr'] for r in all_rules)
     referenced = set(METRIC_RE.findall(all_expr_text))

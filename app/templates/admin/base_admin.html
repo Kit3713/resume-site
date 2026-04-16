@@ -17,7 +17,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Admin{% endblock %} — {{ site_settings.get('site_title', 'Portfolio') }}</title>
-    <script>
+    <script nonce="{{ csp_nonce }}">
         (function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -74,7 +74,7 @@
     </div>
 
     {% block scripts_extra %}{% endblock %}
-    <script>
+    <script nonce="{{ csp_nonce }}">
     // Auto-inject CSRF token into all admin forms.
     // The token is server-rendered at page load time, then distributed to every
     // <form method="POST"> element so we don't have to modify each template.

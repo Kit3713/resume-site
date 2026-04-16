@@ -26,13 +26,18 @@ Storage layout:
 
 from __future__ import annotations
 
+import logging
 import os
+import subprocess
+import tempfile
 import uuid
 from typing import Any
 
 from flask import Response, abort, current_app, send_from_directory
 from PIL import Image
 from werkzeug.datastructures import FileStorage
+
+_log = logging.getLogger('app.photos')
 
 # Magic byte signatures for each allowed image format.
 # These are the first N bytes of a valid file of that type.
@@ -153,55 +158,58 @@ def process_upload(file_storage: FileStorage) -> dict[str, Any] | str | None:
     photo_dir = _get_photo_dir()
     os.makedirs(photo_dir, exist_ok=True)
 
-    file_path = os.path.join(photo_dir, storage_name)
-
-    # Save the uploaded file to disk
-    file_storage.save(file_path)
-    file_size = os.path.getsize(file_path)
-
-    # Optimize the image with Pillow.
-    #
-    # We *always* re-save through Pillow — even for small images that don't
-    # need downscaling — for two reasons:
-    #   1. EXIF stripping (privacy): Pillow's save() drops metadata unless
-    #      you explicitly pass `exif=...`. A phone photo uploaded at 500px
-    #      would otherwise retain GPS coordinates, camera model, etc.
-    #      This also satisfies the Phase 13.7 privacy deliverable.
-    #   2. Consistent optimization: re-encoding at quality=85 with
-    #      `optimize=True` and `progressive=True` (for JPEG) produces
-    #      smaller files and better perceived load time on slow links.
-    #
-    # GIFs are deliberately *not* re-saved because Pillow's animated-GIF
-    # support is lossy (frames can be lost) and animation is part of the
-    # user's intent.
+    # Phase 13.7: Upload quarantine — save to a temp file first, validate,
+    # then move to the final location. Failed uploads leave no partial files.
+    quarantine_fd, quarantine_path = tempfile.mkstemp(suffix=ext, dir=photo_dir)
     try:
-        with Image.open(file_path) as img:
-            width, height = img.size
+        os.close(quarantine_fd)
+        file_storage.save(quarantine_path)
 
-            # Downscale oversized images while maintaining aspect ratio
-            max_dim = 2000
-            if width > max_dim or height > max_dim:
-                img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+        # Optional antivirus scan (Phase 13.7)
+        scan_error = _run_antivirus_scan(quarantine_path)
+        if scan_error:
+            return scan_error
 
-            # Re-save with format-specific optimization. Not passing `exif=`
-            # means any embedded EXIF block is dropped on write.
-            if ext in ('.jpg', '.jpeg'):
-                img.save(file_path, 'JPEG', quality=85, optimize=True, progressive=True)
-            elif ext == '.png':
-                img.save(file_path, 'PNG', optimize=True)
-            elif ext == '.webp':
-                img.save(file_path, 'WebP', quality=85)
-            # GIFs: intentionally left untouched (see comment above).
+        file_path = os.path.join(photo_dir, storage_name)
+        file_size = os.path.getsize(quarantine_path)
 
-            # Update dimensions and file size after optimization
-            width, height = img.size
-            file_size = os.path.getsize(file_path)
-    except (OSError, ValueError, Image.DecompressionBombError):
-        # Pillow raises OSError for unreadable/corrupt images, ValueError for
-        # unsupported modes, and DecompressionBombError for pixel-count DoS.
-        # Keep the original file on disk with the admin-provided metadata so
-        # the upload isn't a silent data loss.
-        width, height = None, None
+        # Optimize the image with Pillow.
+        # EXIF handling (Phase 13.7): by default Pillow's save() drops EXIF
+        # metadata (GPS, camera model, timestamps). The upload_preserve_exif
+        # setting opts in to keeping it.
+        preserve_exif = _should_preserve_exif()
+
+        try:
+            with Image.open(quarantine_path) as img:
+                width, height = img.size
+                exif_data = img.info.get('exif') if preserve_exif else None
+
+                max_dim = 2000
+                if width > max_dim or height > max_dim:
+                    img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+
+                save_kwargs: dict[str, Any] = {}
+                if exif_data:
+                    save_kwargs['exif'] = exif_data
+
+                if ext in ('.jpg', '.jpeg'):
+                    img.save(quarantine_path, 'JPEG', quality=85, optimize=True, progressive=True, **save_kwargs)
+                elif ext == '.png':
+                    img.save(quarantine_path, 'PNG', optimize=True)
+                elif ext == '.webp':
+                    img.save(quarantine_path, 'WebP', quality=85, **save_kwargs)
+
+                width, height = img.size
+                file_size = os.path.getsize(quarantine_path)
+        except (OSError, ValueError, Image.DecompressionBombError):
+            width, height = None, None
+
+        # Quarantine passed — promote to final location
+        os.replace(quarantine_path, file_path)
+        quarantine_path = None  # prevent cleanup
+    finally:
+        if quarantine_path and os.path.exists(quarantine_path):
+            os.unlink(quarantine_path)
 
     # Map file extensions to MIME types
     mime_map = {
@@ -219,6 +227,61 @@ def process_upload(file_storage: FileStorage) -> dict[str, Any] | str | None:
         'width': width,
         'height': height,
         'file_size': file_size,
+    }
+
+
+def _run_antivirus_scan(file_path: str) -> str | None:
+    """Run the configured antivirus scanner on a file, if configured.
+
+    Returns an error message string if the scan rejects the file,
+    None if the scan passes or is not configured.
+    """
+    import contextlib
+
+    from app.services.settings_svc import get_all_cached
+
+    settings = {}
+    with contextlib.suppress(Exception):
+        from app.db import get_db
+
+        db = get_db()
+        settings = get_all_cached(db, current_app.config['DATABASE_PATH'])
+
+    scan_cmd = settings.get('upload_scan_command', '').strip()
+    if not scan_cmd:
+        return None
+
+    try:
+        result = subprocess.run(  # noqa: S603 — command is admin-configured, not user input
+            [scan_cmd, file_path],
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            _log.warning('antivirus scan rejected file: cmd=%s path=%s', scan_cmd, file_path)
+            return 'File rejected by antivirus scan.'
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _log.error('antivirus scan failed: cmd=%s error=%s', scan_cmd, exc)
+        return 'Antivirus scan failed. Upload rejected for safety.'
+
+    return None
+
+
+def _should_preserve_exif() -> bool:
+    """Check whether the upload_preserve_exif setting is enabled."""
+    import contextlib
+
+    from app.services.settings_svc import get_all_cached
+
+    settings = {}
+    with contextlib.suppress(Exception):
+        from app.db import get_db
+
+        db = get_db()
+        settings = get_all_cached(db, current_app.config['DATABASE_PATH'])
+
+    return str(settings.get('upload_preserve_exif', 'false')).lower() in {
+        '1', 'true', 'yes', 'on',
     }
 
 

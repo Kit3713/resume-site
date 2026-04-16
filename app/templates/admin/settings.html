@@ -152,7 +152,7 @@
 {% endblock %}
 
 {% block scripts_extra %}
-<script>
+<script nonce="{{ csp_nonce }}">
 // Color preset quick-select: clicking a preset sets both the preset dropdown and accent color
 document.querySelectorAll('.preset-btn').forEach(function(btn) {
     btn.addEventListener('click', function() {
