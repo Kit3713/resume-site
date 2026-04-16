@@ -28,6 +28,8 @@ from flask import Blueprint, abort, current_app, request
 
 from app.services.metrics import (
     CONTENT_TYPE,
+    backup_last_success_timestamp,
+    blog_posts_total,
     client_ip_in_networks,
     get_registry,
     parse_cidr_list,
@@ -72,6 +74,7 @@ def metrics():
     # leak diagnostic info from an unhealthy app. ``contextlib.suppress``
     # keeps the code path compact without a bare except.
     settings = {}
+    db = None
     with contextlib.suppress(Exception):
         from app.db import get_db
 
@@ -96,5 +99,34 @@ def metrics():
     registry = get_registry()
     # Refresh process-uptime gauge at scrape time so it's always current.
     uptime_seconds.set(process_uptime_seconds())
+
+    # Refresh scrape-time gauges (Phase 18.2 deferred batch).
+    _refresh_blog_posts_gauge(db)
+    _refresh_backup_timestamp_gauge(settings)
+
     body = registry.render()
     return body, 200, {'Content-Type': CONTENT_TYPE}
+
+
+def _refresh_blog_posts_gauge(db):
+    """Set blog_posts_total gauge per status from the database."""
+    if db is None:
+        return
+    with contextlib.suppress(Exception):
+        rows = db.execute(
+            'SELECT status, COUNT(*) as cnt FROM blog_posts GROUP BY status'
+        ).fetchall()
+        for row in rows:
+            blog_posts_total.set(row['cnt'], label_values=(row['status'],))
+
+
+def _refresh_backup_timestamp_gauge(settings):
+    """Set backup_last_success_timestamp gauge from the settings value."""
+    raw = settings.get('backup_last_success', '')
+    if not raw:
+        return
+    with contextlib.suppress(Exception):
+        from datetime import UTC, datetime
+
+        dt = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+        backup_last_success_timestamp.set(dt.replace(tzinfo=UTC).timestamp())

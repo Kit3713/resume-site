@@ -556,6 +556,24 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
 
     register_bus_handlers(app.config['DATABASE_PATH'])
 
+    # --- 12b. Metrics event handlers (Phase 18.2 deferred counters) ---
+    # Increment domain-specific counters on the event bus so the /metrics
+    # route picks them up at scrape time.
+    from app.events import Events
+    from app.events import register as register_event
+    from app.services.metrics import contact_submissions_total, photo_uploads_total
+
+    register_event(
+        Events.PHOTO_UPLOADED,
+        lambda **_kw: photo_uploads_total.inc(),
+    )
+    register_event(
+        Events.CONTACT_SUBMITTED,
+        lambda **kw: contact_submissions_total.inc(
+            label_values=(str(kw.get('is_spam', False)).lower(),)
+        ),
+    )
+
     # --- 13. Ensure storage directories exist ---
     os.makedirs(os.path.dirname(app.config['DATABASE_PATH']) or '.', exist_ok=True)
     os.makedirs(app.config['PHOTO_STORAGE'], exist_ok=True)

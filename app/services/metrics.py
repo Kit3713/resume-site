@@ -360,6 +360,30 @@ errors_total = _registry.counter(
     label_names=('category', 'status'),
 )
 
+# --- Domain-specific metrics (Phase 18.2 deferred batch) ---
+
+photo_uploads_total = _registry.counter(
+    'resume_site_photo_uploads_total',
+    'Total photo uploads processed (admin UI + API).',
+)
+
+contact_submissions_total = _registry.counter(
+    'resume_site_contact_submissions_total',
+    'Total contact form submissions by spam status.',
+    label_names=('is_spam',),
+)
+
+blog_posts_total = _registry.gauge(
+    'resume_site_blog_posts_total',
+    'Current number of blog posts by status (computed at scrape time).',
+    label_names=('status',),
+)
+
+backup_last_success_timestamp = _registry.gauge(
+    'resume_site_backup_last_success_timestamp',
+    'Unix epoch of the most recent successful backup (from settings table).',
+)
+
 
 # ---------------------------------------------------------------------------
 # Request instrumentation helper

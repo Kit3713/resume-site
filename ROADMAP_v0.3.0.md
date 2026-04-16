@@ -520,14 +520,16 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
   - `resume_site_requests_total{method, path, status}` — counter. Uses `url_rule.rule` as path (`/blog/<slug>` not `/blog/my-first-post`); unmatched requests normalised to `<unmatched>` sentinel to cap cardinality.
   - `resume_site_request_duration_seconds{method, path}` — histogram with the documented bucket ladder.
   - `resume_site_uptime_seconds` — gauge, refreshed at scrape time.
-- [ ] **Metrics collected (deferred to later commits in this phase):**
-  - `resume_site_db_query_duration_seconds{query_name}` — needs an instrumented cursor wrapper.
+- [x] **Metrics collected (domain-specific batch):**
+  - `resume_site_photo_uploads_total` — counter incremented via event bus handler on `photo.uploaded`.
+  - `resume_site_contact_submissions_total{is_spam}` — counter incremented via event bus handler on `contact.submitted`.
+  - `resume_site_blog_posts_total{status}` — gauge refreshed at scrape time from `GROUP BY status` query.
+  - `resume_site_backup_last_success_timestamp` — gauge refreshed at scrape time from the `backup_last_success` setting (ISO-8601 → Unix epoch).
+- [ ] **Metrics collected (deferred to later commits):**
+  - `resume_site_db_query_duration_seconds{query_name}` — needs an instrumented cursor wrapper (Phase 18.3).
   - `resume_site_db_query_total{query_name}` — same.
   - `resume_site_active_sessions` — needs session tracking.
-  - `resume_site_photo_uploads_total` / `resume_site_contact_submissions_total{is_spam}` — add as counters in the respective routes.
-  - `resume_site_blog_posts_total{status}` — cheap: render at scrape time via a gauge-with-callback pattern.
-  - `resume_site_api_requests_total{method, endpoint, status, scope}` — lands with the REST API (Phase 16).
-  - `resume_site_backup_last_success_timestamp` — read from the settings row already maintained by 17.1.
+  - `resume_site_api_requests_total{method, endpoint, status, scope}` — lands with the REST API scope tracking.
 - [x] **Implementation:** Stdlib-only `app/services/metrics.py` with `MetricsRegistry` singleton, `Counter`/`Gauge`/`Histogram` primitives, and a text-exposition renderer. `/metrics` self-excludes from the request counters so a high scrape rate doesn't drown out real traffic.
 - [x] **Feature flag:** `metrics_enabled` setting (default `false`). When off, `/metrics` returns 404 — not 403, so the endpoint doesn't reveal itself.
 - [x] **Access control:** `/metrics` honours the comma-separated `metrics_allowed_networks` setting; empty falls back to admin `allowed_networks` in `config.yaml`. Disallowed clients also get 404 (same "does this exist?" ambiguity).
