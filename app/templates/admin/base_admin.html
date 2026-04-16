@@ -92,6 +92,16 @@
             }
         });
     })();
+
+    // Bulk action helper (Phase 14.3). Call from page-specific scripts.
+    window.bulkAction = function(table, action, ids, params) {
+        if (!ids.length) return Promise.resolve();
+        return fetch('{{ url_for("admin.bulk_action") }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({table: table, action: action, ids: ids, params: params || {}})
+        }).then(function(r) { return r.json(); });
+    };
     </script>
 </body>
 </html>

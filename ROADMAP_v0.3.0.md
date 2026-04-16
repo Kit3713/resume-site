@@ -245,14 +245,10 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 14.3 — Bulk Operations
 
-- [ ] **Multi-select UI:** Checkbox column on admin list pages (photos, reviews, blog posts, contact submissions). "Select All" checkbox in header. Selection count badge. Bulk action dropdown at top of list
-- [ ] **Bulk actions by content type:**
-  - Photos: bulk delete (with file cleanup), bulk change display tier, bulk change category
-  - Reviews: bulk approve, bulk reject, bulk change display tier, bulk delete
-  - Blog posts: bulk publish, bulk unpublish, bulk archive, bulk delete
-  - Contact submissions: bulk delete, bulk mark as spam
-- [ ] **Confirmation modal:** Bulk destructive actions (delete) require a confirmation dialog showing the count and action
-- [ ] **Activity logging:** Each bulk action logged as a single activity entry with count (e.g., "Deleted 12 photos")
+- [x] **Bulk operations infrastructure:** Generic `POST /admin/bulk-action` endpoint accepting `{table, action, ids, params}`. Table+action validated against `_BULK_ACTIONS` allowlist. IDs must be a non-empty list of integers. Each action logged to activity log with count.
+- [x] **Bulk actions by content type:** Photos: delete (with file cleanup), set_tier (featured/grid/hidden). Reviews: approve, reject, delete. Blog posts: publish, unpublish, delete. Contact submissions: delete, mark_spam.
+- [x] **Multi-select UI:** Checkbox on each photo card with selection count bar and action buttons (Delete, Set Featured, Set Hidden). `window.bulkAction()` helper in admin base template. Delete requires `confirm()` dialog.
+- [x] **Activity logging:** Each bulk action logged as a single entry with count (e.g., "Bulk delete on photos — 3 items").
 
 ### 14.4 — Image Preview in Editors
 

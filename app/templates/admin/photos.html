@@ -37,9 +37,16 @@
     {% if photos %}
     <div class="admin-section">
         <h2 class="admin-section__title">{{ _('All Photos') }} ({{ photos|length }})</h2>
+        <div class="bulk-actions" id="bulk-bar" style="display:none;margin-bottom:1rem">
+            <span id="bulk-count">0</span> {{ _('selected') }} —
+            <button class="btn btn--danger btn--sm" onclick="doBulk('delete')">{{ _('Delete') }}</button>
+            <button class="btn btn--secondary btn--sm" onclick="doBulk('set_tier', {tier:'featured'})">{{ _('Set Featured') }}</button>
+            <button class="btn btn--secondary btn--sm" onclick="doBulk('set_tier', {tier:'hidden'})">{{ _('Set Hidden') }}</button>
+        </div>
         <div class="admin-photos-grid" id="sortable-photos">
             {% for photo in photos %}
             <div class="admin-photo-card" data-id="{{ photo.id }}">
+                <input type="checkbox" class="bulk-check" value="{{ photo.id }}" style="position:absolute;top:4px;left:4px;z-index:2">
                 <span class="drag-handle drag-handle--photo" title="{{ _('Drag to reorder') }}">&#9776;</span>
                 <div class="admin-photo-card__img">
                     <img src="{{ url_for('public.serve_photo', storage_name=photo.storage_name) }}" alt="{{ photo.title }}" loading="lazy">
@@ -93,5 +100,25 @@
         }
     });
 })();
+
+// Bulk selection
+var checks = document.querySelectorAll('.bulk-check');
+var bar = document.getElementById('bulk-bar');
+var countEl = document.getElementById('bulk-count');
+checks.forEach(function(cb) {
+    cb.addEventListener('change', function() {
+        var n = document.querySelectorAll('.bulk-check:checked').length;
+        bar.style.display = n > 0 ? '' : 'none';
+        countEl.textContent = n;
+    });
+});
+window.doBulk = function(action, params) {
+    var ids = Array.from(document.querySelectorAll('.bulk-check:checked')).map(function(cb) {
+        return parseInt(cb.value, 10);
+    });
+    if (!ids.length) return;
+    if (action === 'delete' && !confirm('Delete ' + ids.length + ' photos?')) return;
+    bulkAction('photos', action, ids, params).then(function() { location.reload(); });
+};
 </script>
 {% endblock %}

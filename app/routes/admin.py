@@ -1152,6 +1152,101 @@ def reorder():
     return jsonify({'ok': True})
 
 
+def _in_clause(ids):
+    """Build a safe IN clause with ? placeholders from a validated int list."""
+    return ','.join('?' * len(ids))
+
+
+def _bulk_exec(db, sql_template, ids, extra_params=None):
+    """Execute a bulk SQL statement with safe IN clause. Table/column names are
+    hardcoded in the templates below — only the id count is dynamic."""
+    placeholders = _in_clause(ids)
+    sql = sql_template.format(placeholders=placeholders)  # noqa: S608 — template is hardcoded, not user input
+    params = list(extra_params or []) + list(ids)
+    db.execute(sql, params)
+
+
+_BULK_ACTIONS = {
+    'photos': {
+        'delete': lambda db, ids: _bulk_delete_photos(db, ids),
+        'set_tier': lambda db, ids, tier='grid': _bulk_set_photo_tier(db, ids, tier),
+    },
+    'reviews': {
+        'approve': lambda db, ids: _bulk_exec(db, "UPDATE reviews SET status='approved' WHERE id IN ({placeholders})", ids),
+        'reject': lambda db, ids: _bulk_exec(db, "UPDATE reviews SET status='rejected' WHERE id IN ({placeholders})", ids),
+        'delete': lambda db, ids: _bulk_exec(db, 'DELETE FROM reviews WHERE id IN ({placeholders})', ids),
+    },
+    'blog_posts': {
+        'publish': lambda db, ids: _bulk_exec(db, "UPDATE blog_posts SET status='published', published_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id IN ({placeholders})", ids),
+        'unpublish': lambda db, ids: _bulk_exec(db, "UPDATE blog_posts SET status='draft' WHERE id IN ({placeholders})", ids),
+        'delete': lambda db, ids: _bulk_exec(db, 'DELETE FROM blog_posts WHERE id IN ({placeholders})', ids),
+    },
+    'contact_submissions': {
+        'delete': lambda db, ids: _bulk_exec(db, 'DELETE FROM contact_submissions WHERE id IN ({placeholders})', ids),
+        'mark_spam': lambda db, ids: _bulk_exec(db, 'UPDATE contact_submissions SET is_spam=1 WHERE id IN ({placeholders})', ids),
+    },
+}
+
+
+def _bulk_delete_photos(db, ids):
+    """Delete photo records and their files from disk."""
+    from app.services.photos import delete_photo_file
+
+    placeholders = _in_clause(ids)
+    rows = db.execute(
+        f'SELECT id, storage_name FROM photos WHERE id IN ({placeholders})',  # noqa: S608 — placeholders are ? only
+        ids,
+    ).fetchall()
+    for row in rows:
+        delete_photo_file(row['storage_name'])
+    _bulk_exec(db, 'DELETE FROM photos WHERE id IN ({placeholders})', ids)
+
+
+def _bulk_set_photo_tier(db, ids, tier):
+    """Set display_tier for multiple photos."""
+    if tier not in ('featured', 'grid', 'hidden'):
+        return
+    _bulk_exec(db, 'UPDATE photos SET display_tier=? WHERE id IN ({placeholders})', ids, extra_params=[tier])
+
+
+@admin_bp.route('/bulk-action', methods=['POST'])
+@login_required
+def bulk_action():
+    """Execute a bulk action on selected items.
+
+    Expects JSON: {"table": "photos", "action": "delete", "ids": [1,2,3], "params": {...}}
+    """
+    data = request.get_json(silent=True) or {}
+    table = data.get('table', '')
+    action = data.get('action', '')
+    ids = data.get('ids', [])
+    params = data.get('params', {})
+
+    if table not in _BULK_ACTIONS or action not in _BULK_ACTIONS[table]:
+        return jsonify({'error': 'Invalid table or action'}), 400
+
+    if not isinstance(ids, list) or not all(isinstance(i, int) for i in ids) or not ids:
+        return jsonify({'error': 'ids must be a non-empty list of integers'}), 400
+
+    db = get_db()
+    handler = _BULK_ACTIONS[table][action]
+
+    import inspect
+
+    sig = inspect.signature(handler)
+    if len(sig.parameters) > 2:
+        handler(db, ids, **params)
+    else:
+        handler(db, ids)
+    db.commit()
+
+    from app.services.activity_log import log_activity
+
+    log_activity(db, f'Bulk {action} on {table}', category=table, detail=f'{len(ids)} items')
+
+    return jsonify({'ok': True, 'count': len(ids)})
+
+
 @admin_bp.route('/services')
 @login_required
 def services():
