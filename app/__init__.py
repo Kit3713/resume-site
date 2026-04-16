@@ -142,11 +142,13 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
     configure_logging(app)
     request_logger = get_logger('app.request')
 
-    # Session cookie hardening. SECURE defaults to True in production; a
-    # `session_cookie_secure: false` entry in config.yaml disables it for
+    # Session cookie hardening (Phase 13.6). SECURE defaults to True in
+    # production; `session_cookie_secure: false` in config.yaml disables it for
     # plain-HTTP local development. SAMESITE=Lax blocks CSRF-style cross-site
     # cookie leaks while still allowing top-level navigation (e.g., clicking a
-    # link from email).
+    # link from email). NAME is set explicitly so the cookie is identifiable
+    # in browser devtools and cookie audits.
+    app.config['SESSION_COOKIE_NAME'] = 'resume_session'
     app.config['SESSION_COOKIE_HTTPONLY'] = True
     app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
     app.config['SESSION_COOKIE_SECURE'] = bool(site_config.get('session_cookie_secure', True))

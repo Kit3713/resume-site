@@ -57,6 +57,48 @@ If you discover a security vulnerability, please report it responsibly:
 3. Include: description, reproduction steps, impact assessment
 4. Expected response: acknowledgment within 48 hours, fix timeline within 7 days
 
+### Session and Cookie Audit (Phase 13.6)
+
+**Cookies set by the application:** Only one — the Flask session cookie
+(`resume_session`).
+
+| Attribute | Value | Rationale |
+|---|---|---|
+| `Name` | `resume_session` | Explicit name for auditing; avoids the generic `session` default |
+| `HttpOnly` | `True` | Prevents JavaScript access — mitigates XSS session theft |
+| `SameSite` | `Lax` | Blocks cross-site POST-based CSRF while allowing top-level navigation |
+| `Secure` | `True` (production) | Cookie only sent over HTTPS; configurable via `session_cookie_secure: false` for local HTTP dev |
+| `Path` | `/` (Flask default) | Cookie available to all routes |
+
+**No remember-me cookie:** Flask-Login's `remember=True` is not used.
+Sessions expire when the browser closes (no persistent token on disk).
+
+**No custom `set_cookie()` calls:** Confirmed by codebase audit — no route
+or middleware sets a cookie directly.
+
+**Decision: Client-side vs. server-side sessions**
+
+Flask's default session implementation stores all session data in a signed
+(HMAC-SHA512) cookie. The cookie is tamper-proof but not encrypted — a
+user can base64-decode it and read the contents.
+
+Current session payload: `_user_id` (admin username), `_fresh` (bool),
+`csrf_token` (random string), and optionally `locale` (language code).
+None of these are secrets beyond the CSRF token, which is per-session
+and only useful with the corresponding signed cookie.
+
+**Decision: Keep client-side sessions.** Rationale:
+
+1. The session payload is small (<500 bytes) and contains no sensitive
+   data beyond the CSRF token.
+2. Server-side sessions (Flask-Session + SQLite) add a dependency, a new
+   table, and a cleanup job for expired sessions — complexity that
+   doesn't pay for itself at this scale.
+3. The single-admin model means there's at most one active session at a
+   time. Session enumeration and session fixation risks are minimal.
+4. If v0.4.0 adds multi-user auth, server-side sessions should be
+   revisited (session revocation, concurrent session limits).
+
 ## Known Limitations
 
 - SQLite does not support row-level locking — concurrent admin writes are serialized via `busy_timeout`
