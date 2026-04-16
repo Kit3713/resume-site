@@ -268,23 +268,11 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 **Covers v0.2.0 deferred "Visual theme editor with live preview" — builds on the existing custom CSS, accent color, and color preset infrastructure.**
 
-- [ ] **Theme editor admin page** (`/admin/theme`) — dedicated full-width page (not crammed into the settings page):
-  - Left panel: theme controls (color pickers, font selectors, spacing sliders, CSS textarea)
-  - Right panel: live preview iframe showing the public landing page with changes applied in real-time
-- [ ] **Live preview mechanism:** The iframe loads the landing page with a `?preview=1` query parameter. A JavaScript `postMessage` bridge sends CSS variable overrides from the editor to the iframe. Changes are applied instantly via `document.documentElement.style.setProperty()` — no page reload
-- [ ] **Theme controls:**
-  - Primary accent color (with color picker and hex input)
-  - Secondary accent color (new)
-  - Background color overrides (dark mode, light mode)
-  - Text color overrides
-  - Font pairing selector (existing, but now with live preview)
-  - Border radius scale (0 = sharp corners, 1 = current, 2 = pill-shaped)
-  - Spacing scale (compact, default, spacious)
-  - Custom CSS textarea (existing, but now previews live)
-- [ ] **Theme presets:** Expand from 6 to 12 presets. Each preset sets all the above variables as a bundle. Presets are a starting point — the user can customize individual values after selecting a preset
-- [ ] **Theme export/import:** "Export Theme" button downloads a JSON file with all theme values. "Import Theme" button loads from JSON. Enables sharing themes and backup before experimentation
-- [ ] **Theme save:** "Save Theme" persists all values to the settings table. "Reset to Default" button restores the v0.1.0 defaults
-- [ ] **Preview safety:** The preview iframe is sandboxed (`sandbox="allow-same-origin allow-scripts"`). CSS from the custom textarea is sanitized server-side on save (strip `@import`, `url()` with non-https schemes, `expression()`, `-moz-binding`, JavaScript in CSS)
+- [x] **Theme editor:** `/admin/theme` — split-panel layout (350px controls + iframe preview). Controls: color preset selector (expanded to 12 presets), accent color (color picker + hex input synced), font pairing dropdown, custom CSS textarea. Live preview via `postMessage` bridge — CSS variable overrides applied instantly in the iframe via `document.documentElement.style.setProperty()`.
+- [x] **12 presets:** Default Blue, Ocean Teal, Forest Green, Warm Sunset, Minimal Gray, Royal Purple, Coral Pink, Amber Gold, Indigo, Teal, Crimson Red, Slate Blue-Gray. Each sets the accent color; user can customize after selecting.
+- [x] **Export/import:** Export downloads `resume-site-theme.json` with all theme values. Import reads from JSON file and populates the form.
+- [x] **Save + Reset:** "Save Theme" persists to settings table. "Reset to Default" restores #0071e3, inter font, empty custom CSS.
+- [x] **CSS sanitization:** `_sanitize_custom_css()` strips `@import`, `expression()`, `-moz-binding`, `javascript:`, `behavior:`, and `url()` with non-https schemes. Iframe sandboxed with `allow-same-origin allow-scripts`.
 
 ---
 

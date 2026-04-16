@@ -1068,6 +1068,69 @@ def webhooks_deliveries(webhook_id):
 # ============================================================
 
 
+_THEME_PRESETS = {
+    'default': {'accent': '#0071e3', 'label': 'Default Blue'},
+    'ocean': {'accent': '#00897B', 'label': 'Ocean Teal'},
+    'forest': {'accent': '#2E7D32', 'label': 'Forest Green'},
+    'sunset': {'accent': '#E65100', 'label': 'Warm Sunset'},
+    'minimal': {'accent': '#616161', 'label': 'Minimal Gray'},
+    'royal': {'accent': '#6200EA', 'label': 'Royal Purple'},
+    'coral': {'accent': '#FF6B6B', 'label': 'Coral Pink'},
+    'amber': {'accent': '#FF8F00', 'label': 'Amber Gold'},
+    'indigo': {'accent': '#3F51B5', 'label': 'Indigo'},
+    'teal': {'accent': '#009688', 'label': 'Teal'},
+    'crimson': {'accent': '#D32F2F', 'label': 'Crimson Red'},
+    'slate': {'accent': '#455A64', 'label': 'Slate Blue-Gray'},
+}
+
+_DANGEROUS_CSS_PATTERNS = [
+    '@import',
+    'expression(',
+    '-moz-binding',
+    'javascript:',
+    'behavior:',
+]
+
+
+def _sanitize_custom_css(css):
+    """Strip dangerous patterns from custom CSS."""
+    import re
+
+    for pattern in _DANGEROUS_CSS_PATTERNS:
+        css = re.sub(re.escape(pattern), '', css, flags=re.IGNORECASE)
+    css = re.sub(r'url\s*\(\s*["\']?(?!https?://)', 'url(/* blocked */', css, flags=re.IGNORECASE)
+    return css
+
+
+@admin_bp.route('/theme', methods=['GET', 'POST'])
+@login_required
+def theme():
+    """Visual theme editor with live preview (Phase 14.6)."""
+    db = get_db()
+
+    if request.method == 'POST':
+        from app.services.settings_svc import save_setting
+
+        data = request.form
+        save_setting(db, 'accent_color', data.get('accent_color', '#0071e3'))
+        save_setting(db, 'color_preset', data.get('color_preset', 'default'))
+        save_setting(db, 'font_pairing', data.get('font_pairing', 'inter'))
+        custom_css = _sanitize_custom_css(data.get('custom_css', ''))
+        save_setting(db, 'custom_css', custom_css)
+        db.commit()
+        flash(_('Theme saved.'), 'success')
+        return redirect(url_for('admin.theme'))
+
+    from app.services.settings_svc import get_all_cached
+
+    settings = get_all_cached(db, current_app.config['DATABASE_PATH'])
+    return render_template(
+        'admin/theme.html',
+        current_settings=settings,
+        presets=_THEME_PRESETS,
+    )
+
+
 @admin_bp.route('/settings', methods=['GET', 'POST'])
 @login_required
 def settings():

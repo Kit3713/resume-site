@@ -51,6 +51,7 @@
                 <a href="{{ url_for('admin.api_tokens') }}" class="admin-sidebar__link {% if request.endpoint and request.endpoint.startswith('admin.api_tokens') %}admin-sidebar__link--active{% endif %}">{{ _('API Tokens') }}</a>
                 <a href="{{ url_for('admin.webhooks') }}" class="admin-sidebar__link {% if request.endpoint and request.endpoint.startswith('admin.webhooks') %}admin-sidebar__link--active{% endif %}">{{ _('Webhooks') }}</a>
                 <a href="{{ url_for('blog_admin.blog_list') }}" class="admin-sidebar__link {% if 'blog' in request.endpoint %}admin-sidebar__link--active{% endif %}">{{ _('Blog') }}</a>
+                <a href="{{ url_for('admin.theme') }}" class="admin-sidebar__link {% if request.endpoint == 'admin.theme' %}admin-sidebar__link--active{% endif %}">{{ _('Theme') }}</a>
                 <a href="{{ url_for('admin.settings') }}" class="admin-sidebar__link {% if request.endpoint == 'admin.settings' %}admin-sidebar__link--active{% endif %}">{{ _('Settings') }}</a>
             </nav>
             <form method="GET" action="{{ url_for('admin.search') }}" class="admin-sidebar__search" style="padding:0 var(--space-sm);margin-top:var(--space-sm)">
