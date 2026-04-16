@@ -37,7 +37,7 @@
     <meta property="og:site_name" content="{{ site_settings.get('site_title', 'Portfolio') }}">
 
     <!-- Prevent theme flash -->
-    <script>
+    <script nonce="{{ csp_nonce }}">
         (function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();
     </script>
 
@@ -72,7 +72,7 @@
         'dm-sans': "'DM Sans'",
         'outfit': "'Inter'",
     } %}
-    <style>
+    <style nonce="{{ csp_nonce }}">
         :root {
             --color-accent: {{ accent }};
             --color-accent-hover: {{ accent }};
@@ -92,7 +92,7 @@
     {# Custom CSS from admin settings #}
     {% set custom_css = site_settings.get('custom_css', '') %}
     {% if custom_css %}
-    <style>{{ custom_css }}</style>
+    <style nonce="{{ csp_nonce }}">{{ custom_css }}</style>
     {% endif %}
 
     {# hreflang tags for SEO when multiple locales are available #}
