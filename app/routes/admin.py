@@ -37,6 +37,7 @@ from flask import (
     current_app,
     flash,
     g,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -1103,6 +1104,52 @@ def settings():
 # ============================================================
 # SERVICES MANAGER (CRUD)
 # ============================================================
+
+
+# ============================================================
+# GENERIC REORDER (Phase 14.1 — Drag-and-Drop)
+# ============================================================
+
+_REORDER_ALLOWLIST = {
+    'services': ('services', 'id'),
+    'stats': ('stats', 'id'),
+    'photos': ('photos', 'id'),
+    'projects': ('projects', 'id'),
+}
+
+
+@admin_bp.route('/reorder', methods=['POST'])
+@login_required
+def reorder():
+    """Update sort_order for items in a table based on drag-and-drop order.
+
+    Expects JSON body: {"table": "<name>", "id_order": [1, 3, 2, ...]}
+    Table name is validated against an allowlist to prevent SQL injection.
+    """
+    data = request.get_json(silent=True) or {}
+    table_key = data.get('table', '')
+    id_order = data.get('id_order', [])
+
+    if table_key not in _REORDER_ALLOWLIST:
+        return jsonify({'error': 'Invalid table'}), 400
+
+    if not isinstance(id_order, list) or not all(isinstance(i, int) for i in id_order):
+        return jsonify({'error': 'id_order must be a list of integers'}), 400
+
+    table_name, id_col = _REORDER_ALLOWLIST[table_key]
+    db = get_db()
+    for position, item_id in enumerate(id_order):
+        db.execute(
+            f'UPDATE {table_name} SET sort_order = ? WHERE {id_col} = ?',  # noqa: S608 — table/col from allowlist, not user input
+            (position, item_id),
+        )
+    db.commit()
+
+    from app.services.activity_log import log_activity
+
+    log_activity(db, f'Reordered {table_key}', category=table_key, detail=f'{len(id_order)} items')
+
+    return jsonify({'ok': True})
 
 
 @admin_bp.route('/services')

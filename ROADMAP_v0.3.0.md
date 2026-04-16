@@ -231,10 +231,10 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 **Covers:** Nav item ordering, services, stats, photos, projects, homepage sections.
 
-- [ ] Add a lightweight drag-and-drop JS library (Sortable.js via CDN — 8KB gzipped, no dependencies, touch-friendly)
-- [ ] **Reorder API:** Generic `/admin/reorder` POST endpoint accepting `table`, `id_order` (JSON array of IDs in new order). Validates table name against an allowlist. Updates `sort_order` column in a single transaction
-- [ ] **Services page:** Replace static list with sortable cards. Drag handle on left. Save button persists order
-- [ ] **Stats page:** Same sortable pattern
+- [x] **Sortable.js:** Added via CDN (`cdn.jsdelivr.net/npm/sortablejs@1.15.6`) to `base_admin.html`.
+- [x] **Reorder API:** Generic `POST /admin/reorder` endpoint accepting `{"table": "<name>", "id_order": [1,3,2]}`. Table validated against `_REORDER_ALLOWLIST` (services, stats, photos, projects). Updates `sort_order` in a loop. Activity log records reorder events.
+- [x] **Services page:** Sortable list with drag handles. `onEnd` callback POSTs the new order to `/admin/reorder`.
+- [x] **Stats page:** Same sortable pattern on the `<tbody>` with drag handle column.
 - [ ] **Photos page:** Sortable grid with thumbnail previews
 - [ ] **Projects page:** Sortable list
 - [ ] **Nav ordering:** New admin section "Navigation" — lists all nav items with drag handles. Order saved to `nav_order` setting (JSON array of nav keys). The base template reads `nav_order` and renders links in that sequence

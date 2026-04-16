@@ -2545,6 +2545,26 @@ ul, ol {
 }
 
 /* ============================================================
+   DRAG-AND-DROP (Phase 14.1)
+   ============================================================ */
+
+.drag-handle {
+    cursor: grab;
+    color: var(--color-text-tertiary);
+    font-size: 1.2rem;
+    padding: 0 var(--space-xs);
+    user-select: none;
+}
+
+.drag-handle:active {
+    cursor: grabbing;
+}
+
+.sortable-ghost {
+    opacity: 0.4;
+}
+
+/* ============================================================
    GSAP ANIMATION TARGETS
    ============================================================ */
 

@@ -39,8 +39,10 @@
     {% if services %}
     <div class="admin-section">
         <h2 class="admin-section__title">{{ _('All Services') }} ({{ services|length }})</h2>
+        <div id="sortable-services">
         {% for service in services %}
-        <div class="admin-list-item">
+        <div class="admin-list-item" data-id="{{ service.id }}">
+            <span class="drag-handle" title="{{ _('Drag to reorder') }}">&#9776;</span>
             <form method="POST" action="{{ url_for('admin.services_edit', service_id=service.id) }}" class="admin-form admin-form--compact">
                 <div class="admin-form-grid">
                     <div class="form-group">
@@ -66,9 +68,33 @@
             </form>
         </div>
         {% endfor %}
+        </div>
     </div>
     {% else %}
     <p class="admin-empty">{{ _('No services added yet.') }}</p>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script nonce="{{ csp_nonce }}">
+(function() {
+    var el = document.getElementById('sortable-services');
+    if (!el || typeof Sortable === 'undefined') return;
+    Sortable.create(el, {
+        handle: '.drag-handle',
+        animation: 150,
+        onEnd: function() {
+            var ids = Array.from(el.querySelectorAll('[data-id]')).map(function(item) {
+                return parseInt(item.dataset.id, 10);
+            });
+            fetch('{{ url_for("admin.reorder") }}', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({table: 'services', id_order: ids})
+            });
+        }
+    });
+})();
+</script>
 {% endblock %}
