@@ -321,11 +321,16 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
         if error_category is not None and rule != '/metrics':
             errors_total.inc(label_values=(error_category, str(status)))
 
+        db_queries = g.get('db_query_count', 0)
+        db_time_ms = g.get('db_query_time_ms', 0.0)
+
         extra = {
             'method': request.method,
             'path': request.path,
             'status_code': status,
             'duration_ms': duration_ms,
+            'db_queries': db_queries,
+            'db_time_ms': round(db_time_ms, 1),
             'user_agent': (request.headers.get('User-Agent', '') or '')[:200],
         }
         if error_category is not None:
@@ -333,13 +338,26 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
 
         request_logger.log(
             level,
-            '%s %s %d %dms',
+            '%s %s %d %dms (db: %d queries, %.1fms)',
             request.method,
             request.path,
             status,
             duration_ms,
+            db_queries,
+            db_time_ms,
             extra=extra,
         )
+
+        if duration_ms > 500:
+            request_logger.warning(
+                'slow request: %s %s %dms (db: %d queries, %.1fms)',
+                request.method,
+                request.path,
+                duration_ms,
+                db_queries,
+                db_time_ms,
+            )
+
         return response
 
     # --- 8c. Unhandled-exception handler (Phase 18.9) ---

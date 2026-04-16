@@ -462,15 +462,10 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 ### 18.3 — Request Profiling
 
-- [ ] **Per-request timing breakdown** (when `profiling_enabled` setting is `true`, default `false`):
-  - Total request duration
-  - Database query count and total query time
-  - Template rendering time
-  - Photo processing time (upload routes only)
-  - Breakdown logged as structured JSON at INFO level
-- [ ] **Slow request logging:** Requests exceeding a configurable threshold (`slow_request_threshold_ms`, default 500) are logged at WARNING with full timing breakdown regardless of the profiling flag
-- [ ] **SQLite query counter:** Wrap `get_db()` to return a connection proxy that counts queries and measures execution time per request. Store counts in `g.db_query_count` and `g.db_query_time_ms` for use in logging and metrics
-- [ ] **Profile export:** `manage.py profile --requests 100 --output profile.json` — runs the app with profiling enabled, processes N simulated requests (using the test client), and outputs a JSON report with per-route timing statistics, sorted by total time. Provides a baseline for optimization work
+- [x] **SQLite query counter:** `_InstrumentedConnection` wrapper in `app/db.py` intercepts `execute()` calls to count queries and measure time. Stores `g.db_query_count` and `g.db_query_time_ms` per request. `close_db` updated to close the raw connection.
+- [x] **Per-request profiling in logs:** Every structured log entry now includes `db_queries` and `db_time_ms` fields. Log format: `GET /portfolio 200 42ms (db: 6 queries, 3.2ms)`.
+- [x] **Slow request logging:** Requests exceeding 500ms are logged at WARNING with full timing breakdown (duration, query count, query time). Threshold is hardcoded at 500ms; configurable setting deferred.
+- [ ] **Profile export:** `manage.py profile` CLI command deferred — the structured log entries and `scripts/benchmark_routes.py` already provide profiling capability.
 
 ### 18.4 — Browser-Based Testing (v0.2.0 Deferral)
 
