@@ -196,9 +196,9 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 13.7 — File Upload Hardening
 
-- [ ] **Antivirus integration hook:** Add a configurable `upload_scan_command` setting. When set, uploaded files are passed to the command (e.g., `clamdscan --fdpass`) before processing. If the scan fails or returns non-zero, the upload is rejected. Document ClamAV setup in deployment docs
-- [ ] **Upload quarantine:** Files land in a temporary directory first, are validated (magic bytes, size, dimensions, scan), and only moved to the photo storage directory on success. Failed uploads are logged and cleaned up
-- [ ] **EXIF stripping:** Strip all EXIF metadata from uploaded images by default (GPS coordinates, camera info, timestamps). Add an `upload_preserve_exif` setting for users who want to keep it (off by default)
+- [x] **Upload quarantine:** Files now save to a `tempfile.mkstemp()` quarantine file in the photo directory, go through validation + optional AV scan + Pillow optimization, and only `os.replace()` to the final UUID-named path on success. The `finally` block deletes the quarantine file if any step fails — no partial files left on disk.
+- [x] **Antivirus integration hook:** `upload_scan_command` setting (Security category, default empty). When set, the quarantined file is passed as the first argument to the configured command (e.g., `clamdscan`). Non-zero exit rejects the upload. Timeout of 30 seconds. Scan failures are logged and treated as rejections (fail-closed).
+- [x] **EXIF stripping:** Already the default — Pillow's `save()` drops EXIF metadata unless `exif=` is passed. New `upload_preserve_exif` setting (Security category, default `false`) opts in to keeping EXIF by passing the original `img.info['exif']` through to `save()`. Privacy-by-default.
 
 ### 13.8 — Fuzz Testing
 
