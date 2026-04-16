@@ -123,6 +123,8 @@ ALLOWED_COMPONENTS = {
     'performance',
     'traffic',
     'availability',
+    'backup',
+    'storage',
 }
 
 
@@ -237,9 +239,6 @@ def test_every_custom_metric_is_referenced_at_least_once(all_rules, custom_metri
         'resume_site_photo_uploads_total',
         'resume_site_contact_submissions_total',
         'resume_site_blog_posts_total',
-        # backup_last_success_timestamp will get a ResumeBackupStale rule
-        # in Phase 18.10 (Item 6). Exempt until then.
-        'resume_site_backup_last_success_timestamp',
     }
 
     all_expr_text = '\n'.join(r['expr'] for r in all_rules)

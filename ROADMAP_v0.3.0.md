@@ -669,8 +669,8 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
   Each rule carries `severity` + `component` labels and `summary` + `description` + `runbook_url` annotations.
 - [x] **Alert documentation:** `docs/alerting-rules.md` — per-alert runbook section (what it means, what to check, mitigations in order of reversibility) plus setup instructions and a severity taxonomy.
 - [x] **Metric-name drift guard:** `tests/test_alerting_rules.py` (18 tests) parses the YAML, validates the Prometheus schema, confirms every rule has the required fields, and cross-references every `resume_site_*` metric in a rule `expr` against the live registry in `app/services/metrics.py`. Every `runbook_url` anchor is verified against the actual headings in `alerting-rules.md`. A canary test fires if a shipped metric is never alerted on.
-- [ ] **Disk usage metric (`resume_site_disk_usage_bytes{path}`):** deferred — needs a gauge callback pattern and DB/photo path discovery. Alert placeholder removed until the metric ships.
-- [ ] **Stale backup alert (`ResumeBackupStale`):** deferred — needs a `resume_site_backup_last_success_timestamp` gauge that reads the settings row already maintained by Phase 17.1.
+- [x] **Disk usage metric:** `resume_site_disk_usage_bytes{path}` gauge with `database` and `photos` labels. Refreshed at scrape time by walking the photo directory and stat-ing the DB file. `ResumeDiskUsageHigh` alerting rule fires when either path exceeds 1 GB. Runbook section in `alerting-rules.md`.
+- [x] **Stale backup alert:** `ResumeBackupStale` fires when `resume_site_backup_last_success_timestamp` (gauge, from settings row) is >48 hours old. Runbook section in `alerting-rules.md`.
 - [ ] **Brute-force "endpoint" label:** deferred — `errors_total` currently has `{category, status}` only; adding `endpoint` was kept out of Phase 18.9 to avoid cardinality. A finer `ResumeBruteForce` rule can land once the label is added.
 - [ ] **In-app alerting (admin dashboard):** deferred — admin-dashboard template work.
 

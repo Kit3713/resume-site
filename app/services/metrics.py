@@ -384,6 +384,12 @@ backup_last_success_timestamp = _registry.gauge(
     'Unix epoch of the most recent successful backup (from settings table).',
 )
 
+disk_usage_bytes = _registry.gauge(
+    'resume_site_disk_usage_bytes',
+    'Disk usage in bytes for key storage paths.',
+    label_names=('path',),
+)
+
 
 # ---------------------------------------------------------------------------
 # Request instrumentation helper

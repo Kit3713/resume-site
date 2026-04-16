@@ -31,6 +31,7 @@ from app.services.metrics import (
     backup_last_success_timestamp,
     blog_posts_total,
     client_ip_in_networks,
+    disk_usage_bytes,
     get_registry,
     parse_cidr_list,
     process_uptime_seconds,
@@ -103,6 +104,7 @@ def metrics():
     # Refresh scrape-time gauges (Phase 18.2 deferred batch).
     _refresh_blog_posts_gauge(db)
     _refresh_backup_timestamp_gauge(settings)
+    _refresh_disk_usage_gauge(current_app.config)
 
     body = registry.render()
     return body, 200, {'Content-Type': CONTENT_TYPE}
@@ -130,3 +132,23 @@ def _refresh_backup_timestamp_gauge(settings):
 
         dt = datetime.fromisoformat(raw.replace('Z', '+00:00'))
         backup_last_success_timestamp.set(dt.replace(tzinfo=UTC).timestamp())
+
+
+def _refresh_disk_usage_gauge(app_config):
+    """Set disk_usage_bytes gauge for the database and photo directories."""
+    import os
+
+    with contextlib.suppress(Exception):
+        db_path = app_config.get('DATABASE_PATH', '')
+        if db_path and os.path.isfile(db_path):
+            disk_usage_bytes.set(os.path.getsize(db_path), label_values=('database',))
+
+    with contextlib.suppress(Exception):
+        photo_dir = app_config.get('PHOTO_STORAGE', '')
+        if photo_dir and os.path.isdir(photo_dir):
+            total = sum(
+                os.path.getsize(os.path.join(dirpath, f))
+                for dirpath, _dirnames, filenames in os.walk(photo_dir)
+                for f in filenames
+            )
+            disk_usage_bytes.set(total, label_values=('photos',))

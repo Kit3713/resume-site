@@ -169,6 +169,54 @@ groups:
             triggers.
           runbook_url: "./alerting-rules.md#ResumeProcessRestarted"
 
+      # -----------------------------------------------------------------
+      # ResumeBackupStale
+      # -----------------------------------------------------------------
+      # The backup_last_success_timestamp gauge is set from the settings
+      # table at scrape time. If the most recent successful backup is
+      # older than 48 hours, something is wrong — the systemd timer
+      # failed, the container mount is broken, or the backup command is
+      # erroring out.
+      - alert: ResumeBackupStale
+        expr: |
+          time() - resume_site_backup_last_success_timestamp > 172800
+        for: 5m
+        labels:
+          severity: warning
+          component: backup
+        annotations:
+          summary: No successful backup in over 48 hours
+          description: |
+            resume_site_backup_last_success_timestamp is more than 48 hours
+            old. Check the resume-site-backup.timer status, container volume
+            mounts, and manage.py backup exit codes. Run a manual backup to
+            verify: podman exec resume-site python manage.py backup
+          runbook_url: "./alerting-rules.md#ResumeBackupStale"
+
+      # -----------------------------------------------------------------
+      # ResumeDiskUsageHigh
+      # -----------------------------------------------------------------
+      # Fires when the database or photo storage exceeds 1 GB. Tune the
+      # threshold to your deployment — a site with thousands of high-res
+      # photos will naturally exceed this. The point is to notice before
+      # the disk fills up and SQLite starts returning SQLITE_FULL.
+      - alert: ResumeDiskUsageHigh
+        expr: |
+          resume_site_disk_usage_bytes > 1073741824
+        for: 10m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "Storage path exceeds 1 GB"
+          description: |
+            resume_site_disk_usage_bytes for one of the monitored paths
+            (database or photos) has exceeded 1 GB. Check disk free
+            space on the host volume. For photos: consider pruning
+            unused uploads. For the database: review page_views table
+            size and consider archiving old analytics.
+          runbook_url: "./alerting-rules.md#ResumeDiskUsageHigh"
+
   # -------------------------------------------------------------------------
   # Prometheus-generic rules (don't reference our custom metrics but are
   # useful to ship alongside). Kept in a separate group so operators who
