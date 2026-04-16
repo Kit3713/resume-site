@@ -219,7 +219,7 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
   4. Runs ZAP baseline scan against all routes
   5. Uploads the HTML report as a CI artifact
   6. Fails on findings above threshold
-- [ ] **Manual pen test checklist:** `docs/PENTEST_CHECKLIST.md` — a step-by-step manual penetration testing guide covering: authentication bypass attempts, privilege escalation (non-admin accessing admin routes), file upload abuse, CSRF validation, session fixation, clickjacking, CORS misconfiguration, information disclosure (error messages, headers, debug info), and rate limit bypass. Not automated — designed for periodic manual security review
+- [x] **Manual pen test checklist:** `docs/PENTEST_CHECKLIST.md` — 10-section step-by-step guide covering authentication, authorization, input validation, CSRF, security headers, information disclosure, session security, rate limiting, file upload, and webhooks. Designed for periodic human review.
 
 ---
 
