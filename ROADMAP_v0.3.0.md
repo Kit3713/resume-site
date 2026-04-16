@@ -394,12 +394,7 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 ### 16.6 — API Tests
 
-- [ ] Test every endpoint: correct status codes, response format, pagination boundaries
-- [ ] Auth tests: missing token → 401, invalid token → 401, expired token → 401, wrong scope → 403, revoked token → 401
-- [ ] Rate limiting tests: exceed threshold → 429 with `Retry-After` header
-- [ ] Content negotiation: request without `Accept: application/json` → still works (JSON is default)
-- [ ] Locale: `Accept-Language: es` → translated content returned (when available)
-- [ ] ETag: second identical request with `If-None-Match` → 304
+- [x] **Phase 16.6 test expansion:** 7 new tests (133 total API tests, 863 project-wide). Covers: expired token → 401 with `error: expired`, content negotiation (no Accept header → JSON, Accept: */* → JSON), ETag 304 roundtrip on `/services`, stale ETag → 200, pagination `per_page` clamping (max 100, min 1). Rate limiting 429 test deferred (requires Flask-Limiter integration test setup). Locale-based content tests deferred to Phase 15 completion.
 
 ---
 
