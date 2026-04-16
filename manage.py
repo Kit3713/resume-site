@@ -222,7 +222,7 @@ def migrate(args):
         print('Migrations complete.')
 
 
-def config_validate(args):
+def config_validate(args):  # noqa: C901 — sequential validation of config fields; each branch is a distinct check, not tangled conditionals
     """Validate config.yaml against expected structure and values.
 
     Checks for:

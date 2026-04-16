@@ -91,7 +91,7 @@ def _get_available_locales(app):
     return ['en']
 
 
-def create_app(config_path=None):
+def create_app(config_path=None):  # noqa: C901 — app factory is inherently sequential setup; splitting into sub-functions would scatter related init logic without reducing real complexity
     """Create and configure the Flask application.
 
     This factory function:

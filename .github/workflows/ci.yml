@@ -39,7 +39,7 @@ jobs:
       - name: Install quality tools
         run: |
           python -m pip install --upgrade pip
-          pip install ruff bandit
+          pip install ruff bandit vulture
 
       - name: Ruff lint
         run: ruff check .
@@ -49,6 +49,10 @@ jobs:
 
       - name: Bandit security scan
         run: bandit -r app/ -c pyproject.toml -ll
+
+      - name: Vulture dead code detection
+        run: vulture app/ manage.py vulture_allowlist.py --min-confidence 80
+        continue-on-error: true  # Advisory — ratchet to blocking in v0.4.0
 
       - name: Check for unsafe SQL patterns
         run: |
