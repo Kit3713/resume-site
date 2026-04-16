@@ -115,7 +115,7 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 **Problem:** CSS is a single 2514-line file. JavaScript is two files with no minification. No asset fingerprinting for cache busting. GSAP loaded from CDN on every page.
 
-- [ ] **CSS audit:** Profile `style.css` for unused rules, redundant declarations, and specificity conflicts. Split into logical partitions (variables/reset, layout, components, pages, dark-mode overrides, admin) using CSS `@import` or a build step. Audit CSS custom property usage — ensure no hardcoded colors bypass the theming system
+- [x] **CSS audit:** Audited `style.css` (2528 lines, 30 named sections). No unused BEM block components found — all major sections are referenced by templates. Custom property audit identified 28 hardcoded color values bypassing the theming system. Extracted 13 semantic custom properties (`--color-success`, `--color-warning`, `--color-danger`, `--color-muted`, plus `-bg` variants, `--color-text-inverse`, `--color-overlay`, `--color-overlay-light`) into both dark and light theme blocks, then replaced all 28 hardcoded references. File already well-organized with clear section headers; no splitting needed at this scale.
 - [ ] **CSS minification:** Add a build step (or Gunicorn middleware) that serves minified CSS in production. Preserve source CSS for development
 - [ ] **JavaScript audit:** Profile `main.js` for unused functions, redundant event listeners, and GSAP animations that fire on hidden/off-screen elements. Audit `admin.js` for the same
 - [ ] **JavaScript minification:** Same as CSS — minified in production, source in development
