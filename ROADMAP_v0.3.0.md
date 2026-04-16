@@ -284,27 +284,11 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 **Architecture:** Each translatable content type gets a companion `_translations` table with a locale column. The original table retains its content columns as the default-locale version. Queries fall back to the default locale when no translation exists for the requested locale.
 
-- [ ] Migration `008_content_translations.sql`:
-  ```
-  content_block_translations (block_id FK, locale, title, content, plain_text)
-  blog_post_translations     (post_id FK, locale, title, summary, content)
-  service_translations       (service_id FK, locale, title, description)
-  stat_translations          (stat_id FK, locale, label, suffix)
-  project_translations       (project_id FK, locale, title, description)
-  certification_translations (cert_id FK, locale, title, description)
-  ```
-  Each table has a UNIQUE constraint on `(parent_id, locale)` and a foreign key to the parent table with `ON DELETE CASCADE`.
+- [x] Migration `011_content_translations.sql` (originally planned as 008, but 010 was taken by FTS5): six junction tables with `(parent_id, locale)` UNIQUE constraints and `ON DELETE CASCADE` foreign keys: `content_block_translations`, `blog_post_translations`, `service_translations`, `stat_translations`, `project_translations`, `certification_translations`.
 
 ### 15.2 — Translation-Aware Query Layer
 
-- [ ] Create `app/services/translations.py`:
-  - `get_translated(db, table, id, locale, fallback_locale='en')` — returns the translation row for the given locale, falling back to the default locale, then to the parent table's values
-  - `get_all_translated(db, table, locale, **filters)` — bulk translation resolution for list pages (single JOIN query, not N+1)
-  - `save_translation(db, table, parent_id, locale, **fields)` — INSERT OR REPLACE into the translations table
-  - `delete_translation(db, table, parent_id, locale)` — remove a single locale's translation
-  - `get_available_translations(db, table, parent_id)` — list which locales have translations for a given item
-- [ ] Update every public model query function to accept an optional `locale` parameter. When provided, JOIN with the translations table and COALESCE translated fields over default values
-- [ ] The public route context (set by locale middleware) automatically passes the current locale to model queries
+- [x] `app/services/translations.py` with all five functions: `get_translated` (single item with locale fallback chain), `get_all_translated` (bulk LEFT JOIN with COALESCE — single query, not N+1), `save_translation` (INSERT or UPDATE), `delete_translation`, `get_available_translations`. Configuration-driven via `_TRANSLATION_TABLES` dict mapping source tables to their junction table, FK, and translatable fields. Public model query update and route-level locale passing deferred to Item 27.
 
 ### 15.3 — Admin Translation UI
 
