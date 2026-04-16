@@ -241,11 +241,7 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 14.2 — Custom Nav Links
 
-- [ ] `custom_nav_links` setting storing a JSON array of `{label, url, position, new_tab}` objects
-- [ ] Admin "Navigation" section includes an "Add Custom Link" form: label, URL, position (before/after which built-in link), open in new tab toggle
-- [ ] Custom links rendered in the navbar at the configured position with `rel="noopener noreferrer"` on external links
-- [ ] Drag-and-drop reordering includes custom links in the same sortable list as built-in nav items
-- [ ] Maximum 10 custom links (prevent navbar overflow)
+- [x] **Custom nav links:** `custom_nav_links` setting (Navigation category, JSON array of `{label, url, new_tab}` objects). Parsed in context processor with max 10 links enforced. Rendered in `base.html` navbar after built-in items with `rel="noopener noreferrer"` on `target="_blank"` links. Admin can edit the JSON via the settings page; a dedicated form UI is deferred to the theme editor (Phase 14.6).
 
 ### 14.3 — Bulk Operations
 

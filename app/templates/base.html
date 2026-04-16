@@ -152,6 +152,10 @@
                 <li><a href="{{ item.url }}">{{ item.label }}</a></li>
                     {% endif %}
                 {% endfor %}
+                {# Custom nav links (Phase 14.2) #}
+                {% for link in custom_nav_links %}
+                <li><a href="{{ link.url }}"{% if link.new_tab %} target="_blank" rel="noopener noreferrer"{% endif %}>{{ link.label }}</a></li>
+                {% endfor %}
                 {% block nav_extra %}{% endblock %}
                 {# Language switcher (only when multiple locales configured) #}
                 {% if available_locales|length > 1 %}

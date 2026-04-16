@@ -575,6 +575,14 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
             if raw:
                 homepage_layout = _json.loads(raw)
 
+        custom_nav_links = []
+        with contextlib.suppress(Exception):
+            raw = settings.get('custom_nav_links', '')
+            if raw:
+                parsed = _json.loads(raw)
+                if isinstance(parsed, list):
+                    custom_nav_links = parsed[:10]
+
         return {
             'site_settings': settings,
             'site_config': site_config,
@@ -583,6 +591,7 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
             'csp_nonce': g.get('csp_nonce', ''),
             'nav_order': nav_order,
             'homepage_layout': homepage_layout,
+            'custom_nav_links': custom_nav_links,
         }
 
     # --- 11. Template filters (Phase 17.2) ---

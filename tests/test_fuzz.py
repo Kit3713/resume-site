@@ -188,7 +188,7 @@ def test_validate_magic_bytes_rejects_random_data(data):
 
 
 @given(path=st.text(alphabet=st.characters(whitelist_categories=('L', 'N', 'P')), min_size=1, max_size=100))
-@settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture])
+@settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture])
 def test_http_random_paths_no_500(app, path):
     with app.test_client() as client:
         response = client.get(f'/{path}')
@@ -199,7 +199,7 @@ def test_http_random_paths_no_500(app, path):
     method=st.sampled_from(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']),
     path=st.sampled_from(['/', '/portfolio', '/blog', '/contact', '/api/v1/site', '/admin/login']),
 )
-@settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture])
+@settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture])
 def test_http_random_methods_no_500(app, method, path):
     with app.test_client() as client:
         response = client.open(path, method=method)

@@ -190,6 +190,17 @@ SETTINGS_REGISTRY = {
         'label': 'Hide Certifications',
         'category': 'Navigation',
     },
+    # --- Custom Nav Links (Phase 14.2) ---
+    'custom_nav_links': {
+        'type': 'str',
+        'default': '',
+        'label': 'Custom Navigation Links (JSON)',
+        'category': 'Navigation',
+        'description': (
+            'JSON array of custom links: [{"label":"GitHub","url":"https://github.com/me","new_tab":true}]. '
+            'Maximum 10 links. External links get rel="noopener noreferrer" automatically.'
+        ),
+    },
     # --- Layout (Phase 14.1) ---
     'nav_order': {
         'type': 'str',
