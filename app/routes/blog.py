@@ -30,8 +30,21 @@ from app.services.blog import (
     render_post_content,
 )
 from app.services.pagination import clamp_page, paginate
+from app.services.translations import (
+    get_available_post_locales,
+    og_locale,
+    overlay_post_translation,
+    overlay_posts_translations,
+)
 
 blog_bp = Blueprint('blog', __name__, template_folder='../templates')
+
+
+def _current_and_default_locale(db):
+    """Return ``(current_locale, default_locale)`` for the active request."""
+    from flask_babel import get_locale
+
+    return str(get_locale()), get_setting(db, 'default_locale', 'en')
 
 
 def _check_blog_enabled(db):
@@ -62,6 +75,8 @@ def blog_index():
     per_page = int(get_setting(db, 'posts_per_page', '10'))
 
     posts, total = get_published_posts(db, page=page, per_page=per_page)
+    locale, default = _current_and_default_locale(db)
+    posts = overlay_posts_translations(db, posts, locale, default)
     pagination = paginate(page=page, per_page=per_page, total=total)
 
     blog_title = get_setting(db, 'blog_title', 'Blog')
@@ -87,7 +102,10 @@ def blog_post(slug):
     if post is None:
         abort(404)
 
-    tags = get_tags_for_post(db, post['id'])
+    locale, default = _current_and_default_locale(db)
+    post_id = post['id']
+    post = overlay_post_translation(db, post, locale, default)
+    tags = get_tags_for_post(db, post_id)
     show_reading_time = get_setting(db, 'show_reading_time', 'true') == 'true'
     rendered_content = render_post_content(post)
 
@@ -103,6 +121,12 @@ def blog_post(slug):
         (post['published_at'],),
     ).fetchone()
 
+    # Locale coverage for og:locale:alternate (Phase 15.4). The
+    # template receives the short locale codes plus their OG-format
+    # pair so Jinja doesn't have to re-derive the mapping.
+    post_locales = get_available_post_locales(db, post_id, default)
+    post_og_alternates = [og_locale(loc) for loc in post_locales if loc != locale]
+
     return render_template(
         'public/blog_post.html',
         post=post,
@@ -111,6 +135,8 @@ def blog_post(slug):
         show_reading_time=show_reading_time,
         prev_post=prev_post,
         next_post=next_post,
+        post_locales=post_locales,
+        post_og_alternates=post_og_alternates,
     )
 
 
@@ -128,6 +154,8 @@ def blog_tag(tag_slug):
     per_page = int(get_setting(db, 'posts_per_page', '10'))
 
     posts, total = get_posts_by_tag(db, tag_slug, page=page, per_page=per_page)
+    locale, default = _current_and_default_locale(db)
+    posts = overlay_posts_translations(db, posts, locale, default)
     pagination = paginate(page=page, per_page=per_page, total=total)
 
     blog_title = get_setting(db, 'blog_title', 'Blog')
@@ -146,17 +174,40 @@ def blog_tag(tag_slug):
 
 @blog_bp.route('/blog/feed.xml')
 def blog_feed():
-    """Generate an RSS 2.0 feed of published blog posts."""
+    """Generate an RSS 2.0 feed of published blog posts.
+
+    Phase 15.4: accepts an optional ``?lang=<code>`` query string for a
+    locale-specific feed. Post titles / summaries fall through the
+    translation overlay when the requested locale has entries; untranslated
+    posts fall back to the default-locale content. The ``<language>``
+    channel element reflects the resolved locale so clients know which
+    translation they're consuming.
+    """
     db = get_db()
     _check_blog_enabled(db)
 
     if get_setting(db, 'enable_rss', 'true') != 'true':
         abort(404)
 
-    posts, _ = get_published_posts(db, page=1, per_page=20)
+    posts, _total = get_published_posts(db, page=1, per_page=20)
+    default_locale = get_setting(db, 'default_locale', 'en')
+
+    # Resolve the feed locale: ``?lang=<code>`` wins if present AND the
+    # locale is configured; otherwise fall back to the site default so
+    # operators don't have to worry about typo'd query strings.
+    available = [
+        loc.strip() for loc in get_setting(db, 'available_locales', 'en').split(',') if loc.strip()
+    ]
+    requested = request.args.get('lang', '').strip()
+    feed_locale = requested if requested in available else default_locale
+    posts = overlay_posts_translations(db, posts, feed_locale, default_locale)
+
     site_title = get_setting(db, 'site_title', 'Portfolio')
     blog_title = get_setting(db, 'blog_title', 'Blog')
     base_url = request.url_root.rstrip('/')
+    self_href = f'{base_url}/blog/feed.xml'
+    if feed_locale != default_locale:
+        self_href += f'?lang={feed_locale}'
 
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
     xml += '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">\n'
@@ -164,8 +215,8 @@ def blog_feed():
     xml += f'  <title>{escape(site_title)} — {escape(blog_title)}</title>\n'
     xml += f'  <link>{base_url}/blog</link>\n'
     xml += f'  <description>{escape(blog_title)}</description>\n'
-    xml += f'  <language>{get_setting(db, "default_locale", "en")}</language>\n'
-    xml += f'  <atom:link href="{base_url}/blog/feed.xml" rel="self" type="application/rss+xml"/>\n'
+    xml += f'  <language>{escape(feed_locale)}</language>\n'
+    xml += f'  <atom:link href="{self_href}" rel="self" type="application/rss+xml"/>\n'
 
     for post in posts:
         xml += '  <item>\n'

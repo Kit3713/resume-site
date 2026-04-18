@@ -38,6 +38,15 @@
     <meta property="og:description" content="{% block og_description %}{{ site_settings.get('site_tagline', '') }}{% endblock %}">
     <meta property="og:type" content="{% block og_type %}website{% endblock %}">
     <meta property="og:site_name" content="{{ site_settings.get('site_title', 'Portfolio') }}">
+    {# Phase 15.4: locale tags for social-media crawlers. Child templates
+       (e.g. blog_post.html) can override og_locale / og_locale_alternates
+       to emit per-post alternates based on the translations table. #}
+    <meta property="og:locale" content="{% block og_locale %}{{ current_og_locale }}{% endblock %}">
+    {% block og_locale_alternates %}
+    {% for alt in alternate_og_locales %}
+    <meta property="og:locale:alternate" content="{{ alt }}">
+    {% endfor %}
+    {% endblock %}
     {% block og_extra %}{% endblock %}
 
     <!-- JSON-LD Structured Data (Phase 12.4 SEO) -->

@@ -42,18 +42,38 @@ from app.models import (
     get_all_visible_photos,
     get_approved_reviews_by_tier,
     get_case_study_by_slug,
-    get_content_block,
     get_photo_categories,
     get_photos_by_tier,
     get_project_by_slug,
     get_setting,
     get_skill_domains_with_skills,
-    get_visible_certifications,
-    get_visible_projects,
-    get_visible_services,
-    get_visible_stats,
 )
 from app.services.blog import get_featured_posts
+from app.services.translations import (
+    get_content_block_for_locale,
+    get_visible_certifications_for_locale,
+    get_visible_projects_for_locale,
+    get_visible_services_for_locale,
+    get_visible_stats_for_locale,
+    overlay_post_translation,
+)
+
+
+def _locales():
+    """Return ``(current_locale, default_locale)`` for the request.
+
+    Flask-Babel's ``get_locale()`` gives us the active locale. The
+    fallback / "source of truth" locale comes from the ``default_locale``
+    setting (default ``en``). Extracted here so every route doesn't
+    re-implement the two-line dance.
+    """
+    from flask_babel import get_locale
+
+    db = get_db()
+    current = str(get_locale())
+    default = get_setting(db, 'default_locale', 'en')
+    return current, default
+
 
 public_bp = Blueprint('public', __name__, template_folder='../templates')
 
@@ -101,19 +121,24 @@ def index():
 
     Aggregates data from multiple tables for the single-page landing
     experience: about content, stats counters, services preview,
-    featured portfolio items, and featured testimonials.
+    featured portfolio items, and featured testimonials. Translatable
+    fields (content blocks, stats, services) go through the locale
+    overlay when the active locale differs from the default (Phase
+    15.4).
     """
     db = get_db()
-    about_block = get_content_block(db, 'about')
-    stats = get_visible_stats(db)
-    services = get_visible_services(db)
+    locale, default = _locales()
+    about_block = get_content_block_for_locale(db, 'about', locale, default)
+    stats = get_visible_stats_for_locale(db, locale, default)
+    services = get_visible_services_for_locale(db, locale, default)
     featured_photos = get_photos_by_tier(db, 'featured')[:3]  # Top 3 featured photos
     featured_reviews = get_approved_reviews_by_tier(db, 'featured')[:3]  # Top 3 featured reviews
 
     # Featured blog posts (only when blog is enabled)
     featured_blog_posts = []
     if get_setting(db, 'blog_enabled', 'false') == 'true':
-        featured_blog_posts = get_featured_posts(db, n=3)
+        raw_posts = get_featured_posts(db, n=3)
+        featured_blog_posts = [overlay_post_translation(db, p, locale, default) for p in raw_posts]
 
     return render_template(
         'public/index.html',
@@ -187,7 +212,8 @@ def services():
     details and tool tags.
     """
     db = get_db()
-    service_list = get_visible_services(db)
+    locale, default = _locales()
+    service_list = get_visible_services_for_locale(db, locale, default)
     domains = get_skill_domains_with_skills(db)
     return render_template('public/services.html', services=service_list, domains=domains)
 
@@ -224,7 +250,8 @@ def testimonials():
 def projects():
     """Render the projects listing page."""
     db = get_db()
-    project_list = get_visible_projects(db)
+    locale, default = _locales()
+    project_list = get_visible_projects_for_locale(db, locale, default)
     return render_template('public/projects.html', projects=project_list)
 
 
@@ -239,6 +266,13 @@ def project_detail(slug):
     project = get_project_by_slug(db, slug)
     if project is None:
         abort(404)
+    locale, default = _locales()
+    if locale and locale != default:
+        from app.services.translations import get_translated
+
+        translated = get_translated(db, 'projects', project['id'], locale, default)
+        if translated:
+            project = translated
     return render_template('public/project_detail.html', project=project)
 
 
@@ -251,7 +285,8 @@ def project_detail(slug):
 def certifications():
     """Render the certifications page with badge cards."""
     db = get_db()
-    cert_list = get_visible_certifications(db)
+    locale, default = _locales()
+    cert_list = get_visible_certifications_for_locale(db, locale, default)
     return render_template('public/certifications.html', certifications=cert_list)
 
 
@@ -314,7 +349,14 @@ def sitemap():
     Includes all static public pages plus dynamically-generated pages
     (project detail pages, case study pages). Priority values indicate
     relative importance to search engines (1.0 = most important).
+
+    Phase 15.4: when more than one locale is active, each ``<url>``
+    entry carries ``<xhtml:link rel="alternate" hreflang="...">``
+    children and an ``x-default`` pointer, matching Google's
+    recommended multilingual sitemap format.
     """
+    from app.models import get_visible_projects as _visible_projects
+
     db = get_db()
     base_url = request.url_root.rstrip('/')
 
@@ -330,7 +372,7 @@ def sitemap():
     ]
 
     # Add project detail pages dynamically
-    projects = get_visible_projects(db)
+    projects = _visible_projects(db)
     for p in projects:
         if p['has_detail_page']:
             pages.append((f'/projects/{p["slug"]}', '0.6'))
@@ -348,11 +390,28 @@ def sitemap():
         for bp in blog_posts:
             pages.append((f'/blog/{bp["slug"]}', '0.6'))
 
+    # Resolve the active locale list once — hreflang links are emitted
+    # only when more than one locale is configured.
+    locales_raw = get_setting(db, 'available_locales', 'en')
+    locales = [loc.strip() for loc in locales_raw.split(',') if loc.strip()]
+    emit_alternates = len(locales) > 1
+    xhtml_ns = ' xmlns:xhtml="http://www.w3.org/1999/xhtml"' if emit_alternates else ''
+
     # Build the XML response
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
-    xml += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    xml += f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"{xhtml_ns}>\n'
     for path, priority in pages:
-        xml += f'  <url><loc>{base_url}{path}</loc><priority>{priority}</priority></url>\n'
+        xml += '  <url>'
+        xml += f'<loc>{base_url}{path}</loc>'
+        xml += f'<priority>{priority}</priority>'
+        if emit_alternates:
+            for loc in locales:
+                xml += (
+                    f'<xhtml:link rel="alternate" hreflang="{loc}" '
+                    f'href="{base_url}{path}?lang={loc}"/>'
+                )
+            xml += f'<xhtml:link rel="alternate" hreflang="x-default" href="{base_url}{path}"/>'
+        xml += '</url>\n'
     xml += '</urlset>'
 
     response = make_response(xml)

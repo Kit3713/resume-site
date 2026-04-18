@@ -42,20 +42,28 @@ CREATE TABLE IF NOT EXISTS stat_translations (
     UNIQUE(stat_id, locale)
 );
 
+-- ``summary`` is what the ``/projects`` card grid displays; ``description``
+-- is the long-form body on the detail page. Both are translatable.
 CREATE TABLE IF NOT EXISTS project_translations (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     locale      TEXT NOT NULL,
     title       TEXT NOT NULL DEFAULT '',
+    summary     TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
     UNIQUE(project_id, locale)
 );
 
+-- Column name mirrors the parent ``certifications`` table (which uses
+-- ``name``, not ``title``). The translation-aware SELECT in
+-- ``get_all_translated`` emits ``COALESCE(t.name, s.name)`` — those two
+-- column names MUST match for the overlay to work. Fixed in-place
+-- during Phase 15.4 while this migration was still pre-release.
 CREATE TABLE IF NOT EXISTS certification_translations (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     cert_id  INTEGER NOT NULL REFERENCES certifications(id) ON DELETE CASCADE,
     locale   TEXT NOT NULL,
-    title    TEXT NOT NULL DEFAULT '',
+    name     TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
     UNIQUE(cert_id, locale)
 );
