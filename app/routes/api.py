@@ -68,14 +68,9 @@ from app.models import (
     get_all_visible_photos,
     get_approved_reviews_by_tier,
     get_case_study_by_slug,
-    get_content_block,
     get_photo_categories,
     get_project_by_slug,
     get_setting,
-    get_visible_certifications,
-    get_visible_projects,
-    get_visible_services,
-    get_visible_stats,
     save_contact_submission,
 )
 from app.services.activity_log import get_recent_activity, log_action
@@ -113,6 +108,16 @@ from app.services.settings_svc import (
 )
 from app.services.settings_svc import (
     save_many as save_settings,
+)
+from app.services.translations import (
+    get_content_block_for_locale,
+    get_translated,
+    get_visible_certifications_for_locale,
+    get_visible_projects_for_locale,
+    get_visible_services_for_locale,
+    get_visible_stats_for_locale,
+    overlay_post_translation,
+    overlay_posts_translations,
 )
 
 api_bp = Blueprint('api', __name__, url_prefix='/api/v1')
@@ -355,7 +360,7 @@ def _conditional_response(payload, *, status=200, extra_headers=None):
     return Response(body_bytes, status=status, headers=headers)
 
 
-def _paginated_response(items, *, page, per_page, total):
+def _paginated_response(items, *, page, per_page, total, extra_headers=None):
     """Build the standard ``{data, pagination}`` envelope."""
     pagination = paginate(page=page, per_page=per_page, total=total)
     payload = {
@@ -367,7 +372,7 @@ def _paginated_response(items, *, page, per_page, total):
             'pages': pagination.total_pages,
         },
     }
-    return _conditional_response(payload)
+    return _conditional_response(payload, extra_headers=extra_headers)
 
 
 def _parse_per_page(raw, *, default, maximum=100):
@@ -383,6 +388,68 @@ def _parse_per_page(raw, *, default, maximum=100):
     if value < 1:
         return default
     return min(value, maximum)
+
+
+# ---------------------------------------------------------------------------
+# Accept-Language resolution (Phase 16.1 deferral, unblocked by Phase 15.4)
+# ---------------------------------------------------------------------------
+#
+# Public read endpoints honour the client's ``Accept-Language`` header by
+# picking the best match against the site's ``available_locales`` setting
+# and threading that locale through the translation overlay (see
+# ``app.services.translations``). Untranslated fields fall back to the
+# default locale row, so the client always gets a complete response.
+#
+# Response hygiene:
+#   * ``Content-Language`` echoes the locale the server actually chose
+#     — not necessarily what the client preferred (e.g. client asked for
+#     ``de`` but the site only has ``en,es``, the server returned ``en``).
+#   * ``Vary: Accept-Language`` tells downstream caches / CDNs to key
+#     responses by the header so a Spanish response isn't served to an
+#     English client.
+#
+# The ETag already varies with the body (the translated payload serialises
+# differently), so 304 round-trips stay correct without further work.
+
+
+def _resolve_request_locale(db):
+    """Return ``(resolved_locale, default_locale)`` for the current request.
+
+    Parsing rules:
+      1. Read the configured ``available_locales`` list (comma-separated
+         setting, defaults to ``['en']``).
+      2. Read the ``default_locale`` setting (defaults to ``'en'``).
+      3. Use Werkzeug's ``request.accept_languages.best_match`` against
+         the available list. That helper already handles q-values,
+         case-insensitive matching, and region fallback (``es-MX`` →
+         ``es``).
+      4. Fall back to ``default_locale`` when there's no match OR when
+         the header is absent.
+
+    Returns the two locales as a tuple so callers can pass them to the
+    overlay helpers without a second settings read.
+    """
+    available = [
+        loc.strip() for loc in get_setting(db, 'available_locales', 'en').split(',') if loc.strip()
+    ] or ['en']
+    default_locale = get_setting(db, 'default_locale', 'en') or 'en'
+
+    # ``best_match`` returns None if the client sent a header with no
+    # overlap. Empty / missing header is handled by accept_languages
+    # itself — it returns None too, which collapses to the default.
+    picked = request.accept_languages.best_match(available) if request.accept_languages else None
+    return (picked or default_locale, default_locale)
+
+
+def _locale_headers(locale):
+    """Build the response headers that mark a locale-aware reply.
+
+    ``Content-Language`` tells the client which locale the body is in.
+    ``Vary: Accept-Language`` signals to caches that the response
+    depends on the request header so they don't serve the wrong
+    translation.
+    """
+    return {'Content-Language': locale, 'Vary': 'Accept-Language'}
 
 
 # ---------------------------------------------------------------------------
@@ -438,11 +505,22 @@ def _truthy(raw):
 
 @api_bp.route('/content/<slug>')
 def content_block(slug):
-    """Return a single content block by slug, or 404 if not found."""
-    row = get_content_block(get_db(), slug)
+    """Return a single content block by slug, or 404 if not found.
+
+    Respects ``Accept-Language`` (Phase 15.4): when the requested locale
+    has a translation row, the translated title / content / plain_text
+    overlay the default-locale values. Missing fields fall back to the
+    default so the payload is always complete.
+    """
+    db = get_db()
+    locale, default = _resolve_request_locale(db)
+    row = get_content_block_for_locale(db, slug, locale, default)
     if row is None:
         return _error(f'No content block with slug {slug!r}', 'NOT_FOUND', 404)
-    return _conditional_response({'data': _row_to_dict(row, _CONTENT_BLOCK_PUBLIC_FIELDS)})
+    return _conditional_response(
+        {'data': _row_to_dict(row, _CONTENT_BLOCK_PUBLIC_FIELDS)},
+        extra_headers=_locale_headers(locale),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -452,10 +530,12 @@ def content_block(slug):
 
 @api_bp.route('/services')
 def services_list():
-    """Return every visible service in sort order."""
-    rows = get_visible_services(get_db())
+    """Return every visible service in sort order (Accept-Language aware)."""
+    db = get_db()
+    locale, default = _resolve_request_locale(db)
+    rows = get_visible_services_for_locale(db, locale, default)
     items = [_row_to_dict(r, _SERVICE_PUBLIC_FIELDS) for r in rows]
-    return _conditional_response({'data': items})
+    return _conditional_response({'data': items}, extra_headers=_locale_headers(locale))
 
 
 # ---------------------------------------------------------------------------
@@ -465,10 +545,12 @@ def services_list():
 
 @api_bp.route('/stats')
 def stats_list():
-    """Return every visible stat (animated landing-page counter) in order."""
-    rows = get_visible_stats(get_db())
+    """Return every visible stat counter in order (Accept-Language aware)."""
+    db = get_db()
+    locale, default = _resolve_request_locale(db)
+    rows = get_visible_stats_for_locale(db, locale, default)
     items = [_row_to_dict(r, _STAT_PUBLIC_FIELDS) for r in rows]
-    return _conditional_response({'data': items})
+    return _conditional_response({'data': items}, extra_headers=_locale_headers(locale))
 
 
 # ---------------------------------------------------------------------------
@@ -575,10 +657,12 @@ def testimonials_list():
 
 @api_bp.route('/certifications')
 def certifications_list():
-    """Return every visible certification in sort order."""
-    rows = get_visible_certifications(get_db())
+    """Return every visible certification in order (Accept-Language aware)."""
+    db = get_db()
+    locale, default = _resolve_request_locale(db)
+    rows = get_visible_certifications_for_locale(db, locale, default)
     items = [_row_to_dict(r, _CERT_PUBLIC_FIELDS) for r in rows]
-    return _conditional_response({'data': items})
+    return _conditional_response({'data': items}, extra_headers=_locale_headers(locale))
 
 
 # ---------------------------------------------------------------------------
@@ -620,15 +704,17 @@ def case_study_detail(slug):
 
 @api_bp.route('/projects')
 def projects_list():
-    """Return every visible project in sort order."""
-    rows = get_visible_projects(get_db())
+    """Return every visible project in sort order (Accept-Language aware)."""
+    db = get_db()
+    locale, default = _resolve_request_locale(db)
+    rows = get_visible_projects_for_locale(db, locale, default)
     items = [_row_to_dict(r, _PROJECT_PUBLIC_FIELDS) for r in rows]
-    return _conditional_response({'data': items})
+    return _conditional_response({'data': items}, extra_headers=_locale_headers(locale))
 
 
 @api_bp.route('/projects/<slug>')
 def project_detail(slug):
-    """Return a single visible project by slug.
+    """Return a single visible project by slug (Accept-Language aware).
 
     Only projects with ``has_detail_page = 1`` have a detail surface —
     the rest are GitHub-link cards only. A slug that doesn't match a
@@ -636,10 +722,23 @@ def project_detail(slug):
     GitHub URL, which keeps the API path-stable and lets clients decide
     how to handle external links.
     """
-    row = get_project_by_slug(get_db(), slug)
+    db = get_db()
+    locale, default = _resolve_request_locale(db)
+    row = get_project_by_slug(db, slug)
     if row is None:
         return _error(f'No project with slug {slug!r}', 'NOT_FOUND', 404)
-    return _conditional_response({'data': _row_to_dict(row, _PROJECT_PUBLIC_FIELDS)})
+    # Apply the translation overlay when the requested locale differs
+    # from the default. ``get_translated`` returns None if the row
+    # vanished between the two queries — fall back to the raw row in
+    # that rare race.
+    if locale != default:
+        translated = get_translated(db, 'projects', row['id'], locale, default)
+        if translated:
+            row = translated
+    return _conditional_response(
+        {'data': _row_to_dict(row, _PROJECT_PUBLIC_FIELDS)},
+        extra_headers=_locale_headers(locale),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -673,7 +772,7 @@ def _blog_post_to_dict(row, *, fields, include_tags=False, include_rendered=Fals
 
 @api_bp.route('/blog')
 def blog_list():
-    """Return paginated published blog posts.
+    """Return paginated published blog posts (Accept-Language aware).
 
     Query parameters:
         page (int, default 1)
@@ -691,17 +790,22 @@ def blog_list():
     page = clamp_page(request.args.get('page'))
     per_page = _parse_per_page(request.args.get('per_page'), default=10)
     tag = (request.args.get('tag') or '').strip()
+    locale, default = _resolve_request_locale(db)
 
     if tag:
         posts, total = get_posts_by_tag(db, tag, page=page, per_page=per_page)
     else:
         posts, total = get_published_posts(db, page=page, per_page=per_page)
 
+    posts = overlay_posts_translations(db, posts, locale, default)
+
     items = [
         _blog_post_to_dict(p, fields=_BLOG_POST_LIST_FIELDS, include_tags=True, db=db)
         for p in posts
     ]
-    return _paginated_response(items, page=page, per_page=per_page, total=total)
+    return _paginated_response(
+        items, page=page, per_page=per_page, total=total, extra_headers=_locale_headers(locale)
+    )
 
 
 @api_bp.route('/blog/tags')
@@ -743,10 +847,11 @@ def blog_tags():
 
 @api_bp.route('/blog/<slug>')
 def blog_detail(slug):
-    """Return a single published blog post with its tags + rendered HTML.
+    """Return a single published blog post (Accept-Language aware).
 
     Draft / archived posts return 404 (not 403) to avoid leaking their
-    existence.
+    existence. ``rendered_html`` reflects the overlaid content so
+    clients don't have to re-render Markdown themselves.
     """
     db = get_db()
     gate = _require_blog_enabled(db)
@@ -757,6 +862,9 @@ def blog_detail(slug):
     if row is None:
         return _error(f'No published blog post with slug {slug!r}', 'NOT_FOUND', 404)
 
+    locale, default = _resolve_request_locale(db)
+    row = overlay_post_translation(db, row, locale, default)
+
     data = _blog_post_to_dict(
         row,
         fields=_BLOG_POST_DETAIL_FIELDS,
@@ -764,7 +872,7 @@ def blog_detail(slug):
         include_rendered=True,
         db=db,
     )
-    return _conditional_response({'data': data})
+    return _conditional_response({'data': data}, extra_headers=_locale_headers(locale))
 
 
 # ===========================================================================
