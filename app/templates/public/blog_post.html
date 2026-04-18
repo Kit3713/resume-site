@@ -18,6 +18,15 @@
 
 {% block canonical %}<link rel="canonical" href="{{ url_for('blog.blog_post', slug=post.slug, _external=True) }}">{% endblock %}
 
+{# Phase 15.4: emit alternates only for locales that actually have a
+   translation row for this post. ``post_og_alternates`` is pre-mapped
+   to Open Graph form (en_US, es_ES, etc.) by the blog route. #}
+{% block og_locale_alternates %}
+{% for alt in post_og_alternates %}
+<meta property="og:locale:alternate" content="{{ alt }}">
+{% endfor %}
+{% endblock %}
+
 {% block og_extra %}
 {% if post.cover_image %}
 <meta property="og:image" content="{{ post.cover_image }}">

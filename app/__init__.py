@@ -532,7 +532,7 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
             "font-src 'self' https://fonts.gstatic.com; "
             "img-src 'self' data: https:; "
             "connect-src 'self'; "
-            "report-uri /csp-report"
+            'report-uri /csp-report'
         )
         response.headers['Content-Security-Policy'] = csp
 
@@ -577,6 +577,15 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
             loc.strip() for loc in settings.get('available_locales', 'en').split(',') if loc.strip()
         ]
         current_locale = str(get_locale())
+        # Open Graph locale codes (Phase 15.4). Social-media crawlers
+        # expect the BCP 47 form (``en_US``) rather than the short
+        # Flask-Babel ``en`` form.
+        from app.services.translations import og_locale
+
+        current_og_locale = og_locale(current_locale)
+        alternate_og_locales = [
+            og_locale(loc) for loc in available_locales if loc != current_locale
+        ]
 
         # Parse JSON layout settings (Phase 14.1)
         import json as _json
@@ -606,6 +615,8 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
             'site_config': site_config,
             'available_locales': available_locales,
             'current_locale': current_locale,
+            'current_og_locale': current_og_locale,
+            'alternate_og_locales': alternate_og_locales,
             'csp_nonce': g.get('csp_nonce', ''),
             'nav_order': nav_order,
             'homepage_layout': homepage_layout,

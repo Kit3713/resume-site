@@ -299,10 +299,10 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 ### 15.4 — Public Translation Rendering
 
-- [ ] All public templates updated to use the translation-aware query results. No changes to template logic — the query layer handles locale resolution transparently
-- [ ] Blog RSS feed: include `<language>` tag, and optionally generate per-locale feeds
-- [ ] Sitemap: include `hreflang` alternate links for pages with translations
-- [ ] Open Graph: `og:locale` tag set to current locale, `og:locale:alternate` for available translations
+- [x] **Public templates updated:** Locale-aware wrappers (`get_visible_services_for_locale`, `get_visible_stats_for_locale`, `get_visible_projects_for_locale`, `get_visible_certifications_for_locale`, `get_content_block_for_locale`, `overlay_post_translation`, `overlay_posts_translations`) live in `app/services/translations.py`. Each short-circuits to the original model query when `locale == default_locale` so single-locale deployments pay no JOIN cost. Wired into `/`, `/services`, `/projects`, `/projects/<slug>`, `/certifications`, `/blog`, `/blog/<slug>`, and `/blog/tag/<slug>`. Templates are unchanged — the wrappers return the same shape the original queries did (with translated fields overlaid), so no Jinja conditionals were needed.
+- [x] **Blog RSS per-locale:** `/blog/feed.xml?lang=<code>` returns a locale-specific feed with overlaid titles / summaries / content. The `<language>` channel element and the self-referential `<atom:link>` both reflect the resolved locale. Unknown `?lang` values fall back to the default locale (no 500, no silent confusion).
+- [x] **Sitemap hreflang:** `/sitemap.xml` emits `xmlns:xhtml` plus per-url `<xhtml:link rel="alternate" hreflang="...">` entries (one per configured locale) and an `x-default` pointer when more than one locale is active. Single-locale deployments stay clean — no xmlns declaration, no alternates.
+- [x] **Open Graph `og:locale` + alternates:** `base.html` emits `<meta property="og:locale">` for the active locale and `<meta property="og:locale:alternate">` for every other configured locale via new template blocks (`og_locale`, `og_locale_alternates`). `og_locale()` helper maps ISO 639-1 codes to the BCP 47 form social-media crawlers expect (`en_US`, `es_ES`, …). Blog-post pages override the alternate block to list only locales with translation rows for that specific post — so a post available only in English + Spanish doesn't advertise every other site-wide locale as an alternate.
 
 ---
 
