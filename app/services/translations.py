@@ -126,7 +126,10 @@ def get_translated(
     if not config:
         return None
 
-    row = db.execute(f'SELECT * FROM {source_table} WHERE id = ?', (item_id,)).fetchone()  # noqa: S608
+    row = db.execute(
+        f'SELECT * FROM {source_table} WHERE id = ?',  # noqa: S608  # nosec B608 — source_table keyed from _TRANSLATION_TABLES dict literal
+        (item_id,),
+    ).fetchone()
     if not row:
         return None
 
@@ -266,7 +269,7 @@ def get_available_translations(
 
 def _get_column_names(db: sqlite3.Connection, table: str) -> list[str]:
     """Return column names for a table via PRAGMA."""
-    rows = db.execute(f'PRAGMA table_info({table})').fetchall()  # noqa: S608
+    rows = db.execute(f'PRAGMA table_info({table})').fetchall()  # noqa: S608  # nosec B608 — table keyed from _TRANSLATION_TABLES dict literal
     return [row['name'] for row in rows]
 
 

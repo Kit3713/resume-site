@@ -58,7 +58,7 @@ def _apply_pragmas(conn):
     for name, value in _PER_CONNECTION_PRAGMAS:
         # Both `name` and `value` come from the module-level constant tuple;
         # they're never caller-supplied. f-string is safe here.
-        conn.execute(f'PRAGMA {name}={value}')
+        conn.execute(f'PRAGMA {name}={value}')  # noqa: S608  # nosec B608 — name/value from hardcoded tuple, not user input
 
 
 class _InstrumentedConnection:

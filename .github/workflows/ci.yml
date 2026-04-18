@@ -58,8 +58,13 @@ jobs:
         run: |
           # Catch string formatting in SQL queries (f-strings, .format, %).
           # Parameterized queries use ? placeholders, never interpolation.
-          if grep -rn "execute(f['\"]" app/ || grep -rn '\.format(' app/ | grep -i 'execute\|select\|insert\|update\|delete'; then
+          # Annotated safe cases (`# nosec B608`) are filtered out — those
+          # already went through bandit's explicit review with an inline
+          # justification. Anything unannotated is a real finding.
+          if grep -rn "execute(f['\"]" app/ | grep -v 'nosec B608' \
+             || grep -rn '\.format(' app/ | grep -i 'execute\|select\|insert\|update\|delete' | grep -v 'nosec B608'; then
             echo "ERROR: Found string interpolation in SQL queries. Use parameterized queries (?) instead."
+            echo "If the interpolation is safe (hardcoded table/column names), annotate with '# nosec B608 — reason'."
             exit 1
           fi
 

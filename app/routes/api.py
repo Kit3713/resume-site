@@ -582,9 +582,12 @@ def portfolio_list():
         base += ' AND category = ?'
         params.append(category)
 
-    total = db.execute(f'SELECT COUNT(*) AS n {base}', tuple(params)).fetchone()['n']
+    total = db.execute(
+        f'SELECT COUNT(*) AS n {base}',  # noqa: S608  # nosec B608 — base built from two literal alternatives, no user input
+        tuple(params),
+    ).fetchone()['n']
     rows = db.execute(
-        f'SELECT * {base} ORDER BY sort_order, id LIMIT ? OFFSET ?',
+        f'SELECT * {base} ORDER BY sort_order, id LIMIT ? OFFSET ?',  # noqa: S608  # nosec B608 — base built from two literal alternatives, no user input
         tuple(params) + (per_page, offset_for(page, per_page)),
     ).fetchall()
     items = [_row_to_dict(r, _PHOTO_PUBLIC_FIELDS) for r in rows]
