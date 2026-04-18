@@ -69,11 +69,10 @@ podman run -d \
   ghcr.io/kit3713/resume-site:latest
 ```
 
-Initialize the database:
-
-```bash
-podman exec resume-site python manage.py init-db
-```
+The container entrypoint applies any pending migrations and seeds default
+content automatically on every start — no separate `init-db` step needed.
+Upgrades to a newer image tag are the same `pull` + `restart` cycle; new
+migrations apply on the next boot.
 
 ### Option B: Podman Compose
 
@@ -83,8 +82,10 @@ cd resume-site
 cp config.example.yaml config.yaml
 # Edit config.yaml
 podman compose up -d
-podman compose exec resume-site python manage.py init-db
 ```
+
+Migrations and seeds run automatically on container start; no manual
+`init-db` needed.
 
 ### Option C: Podman Quadlet (systemd)
 
