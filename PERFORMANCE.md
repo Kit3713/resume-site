@@ -150,14 +150,35 @@ and fails the build if any endpoint's p95 exceeds its threshold by >20%.
 
 ## Failure Modes (Phase 18.7)
 
-| Failure | Expected Behavior | Tested |
+These are the infrastructure failure modes we've tested and the
+behaviour they're locked in to produce. Regression guards live in
+`tests/test_resilience.py` — each row below has at least one asserting
+test.
+
+| Failure | Expected Behaviour | Test |
 |---|---|---|
-| SMTP unreachable | Contact form saves to DB, user-friendly error | Pending |
-| Database locked (busy_timeout) | Retries within 5s, graceful error if exceeded | Pending |
-| Disk full on upload | Upload rejected, partial files cleaned up | Pending |
-| Disk full on DB write | 503 Service Unavailable | Pending |
-| Corrupted upload | No partial file saved, DB unchanged | Pending |
-| Malformed session cookie | New session created, no crash | Pending |
+| SMTP unreachable (`send_contact_email` returns False) | Contact form persists the submission to `contact_submissions` and redirects to the success page. No traceback in the body. | `test_smtp_failure_still_saves_submission_and_redirects` |
+| `smtplib.SMTP` raises `ConnectionRefusedError` | The mail service's outer `except Exception` swallows it and returns `False`. Never propagates into the route. | `test_smtp_exception_is_swallowed_by_mail_service` |
+| Two writers contend for the DB lock | `PRAGMA busy_timeout = 5000` is in effect; a writer that briefly holds the lock doesn't error the next writer — it waits and completes. | `test_busy_timeout_pragma_is_5_seconds`, `test_db_write_succeeds_when_prior_writer_finishes_within_timeout` |
+| `os.replace` raises `ENOSPC` during photo upload | The `finally` block in `process_upload` cleans up the quarantine file. No partial file on disk. No DB row inserted. Response does not crash the process. | `test_disk_full_on_upload_leaves_no_partial_files` |
+| `INSERT` raises `database or disk is full` on contact form | The app-level `errorhandler(Exception)` returns a minimal safe body (request id only). No `sqlite3`, no "disk is full" string, no traceback reaches the client. | `test_disk_full_on_db_write_does_not_leak_traceback` |
+| Upload has valid magic bytes but truncated content | `Image.open` raises `OSError`; `process_upload` returns the user-facing error `"Image file is corrupt or truncated."` and the quarantine file is deleted. No promotion to the final path. Phase 18.7 change: previously we silently accepted these. | `test_truncated_image_is_rejected_cleanly` |
+| Jinja2 template references an undefined variable | `errorhandler(Exception)` returns a 500 with no traceback, no `UndefinedError`, no Jinja2 internals in the body. | `test_template_rendering_failure_does_not_leak_traceback` |
+| Tampered / malformed session cookie | Flask's session deserialiser rejects the signature; a fresh session is created. Request still returns 200. | `test_malformed_session_cookie_creates_new_session` |
+| Oversized session cookie (3 KB, hand-crafted) | No 500 — server responds 200/400/431. | `test_oversized_session_cookie_does_not_crash` |
+| Database file exists but is truncated (< 100 bytes) | `manage.py migrate` aborts with a non-zero exit code and a clear "truncated or corrupt" message. Does NOT silently apply migrations on top of the damaged file. Phase 18.7 change — previously we would have treated it as a fresh DB. | `test_migrate_aborts_on_truncated_database_file` |
+| Database file contains random bytes (not a SQLite file) | `manage.py migrate` aborts with a non-zero exit code and mentions corruption / integrity / not-a-database. | `test_migrate_aborts_on_corrupt_database` |
+| Database file doesn't exist | `manage.py migrate` creates it fresh — regression guard for the corruption check so it can't accidentally reject a legitimate new install. | `test_migrate_allows_nonexistent_database` |
+| Any handler raises an unhandled exception | The 500 handler returns a minimal safe body — no traceback, no exception class name, no exception message. | `test_500_does_not_leak_traceback` |
+
+**Not tested (deferred):**
+
+* Full disk exhaustion during SQLite write that leaves the DB in a
+  recoverable state — subsequent requests working once space is freed.
+  Requires filesystem fault injection (e.g. loopback device with a
+  quota). Manual test procedure lives in the pen-test checklist.
+* CDN unavailability (GSAP CDN down) — deferred to Phase 18.4
+  Playwright work; exercised there with a blocked-request setup.
 
 ## Not yet covered
 

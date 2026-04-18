@@ -78,7 +78,12 @@ COPY --from=builder /install /usr/local
 
 # Copy application code (respects .containerignore)
 COPY app/ ./app/
-COPY app.py manage.py schema.sql babel.cfg ./
+# babel.cfg is a *build-time* artifact (used by `manage.py translations
+# extract` to scan source for translatable strings). The runtime image
+# ships the compiled .mo catalogs under translations/ instead, so we
+# don't need the extraction config.
+COPY app.py manage.py schema.sql docker-entrypoint.sh ./
+RUN chmod +x /app/docker-entrypoint.sh
 
 # Copy migrations, seeds, and translations (v0.2.0+)
 COPY migration[s]/ ./migrations/
@@ -105,14 +110,9 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/healthz || exit 1
 
-# Run with Gunicorn
-# - 2 workers: optimal for SQLite (limited by single-writer constraint)
-# - 120s timeout: accommodates slow photo uploads
-# - Logs to stdout/stderr for container log collection
-ENTRYPOINT ["gunicorn", \
-    "--bind", "0.0.0.0:8080", \
-    "--workers", "2", \
-    "--timeout", "120", \
-    "--access-logfile", "-", \
-    "--error-logfile", "-", \
-    "app:create_app()"]
+# Entrypoint runs migrations + seeds before handing off to Gunicorn.
+# See docker-entrypoint.sh for the rationale — in short, fresh volumes
+# should come up ready to serve without the operator remembering to
+# ``podman exec ... manage.py init-db``. Both operations are
+# idempotent so container restarts are safe.
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

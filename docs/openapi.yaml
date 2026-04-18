@@ -97,6 +97,29 @@ info:
     The public `/contact` endpoint additionally enforces a per-IP cap of
     5 non-spam submissions per hour on top of Flask-Limiter's 10/min
     burst cap.
+
+    ## Content negotiation (`Accept-Language`)
+
+    Every public read endpoint that serves translatable content
+    (`/content/:slug`, `/services`, `/stats`, `/projects`,
+    `/projects/:slug`, `/certifications`, `/blog`, `/blog/:slug`)
+    honours the `Accept-Language` request header. The server matches
+    the best available locale from `available_locales` (see
+    `GET /site`) and overlays translated fields via the translation
+    junction tables. Untranslated fields fall back to the default-locale
+    row so the payload is always complete.
+
+    Responses carry:
+
+    * `Content-Language: <locale>` — the locale the server actually
+      chose (may differ from what the client preferred when the
+      requested locale isn't configured).
+    * `Vary: Accept-Language` — signals to caches that the response
+      is keyed by the header, so a Spanish response isn't served to an
+      English client.
+
+    The ETag already varies with the body, so 304 round-trips stay
+    correct across locales automatically.
   license:
     name: GPL-3.0-or-later
     identifier: GPL-3.0-or-later
@@ -764,6 +787,21 @@ components:
       name: per_page
       in: query
       schema: { type: integer, minimum: 1, maximum: 100 }
+    AcceptLanguage:
+      name: Accept-Language
+      in: header
+      required: false
+      description: |
+        Standard RFC 7231 language-preference header (e.g. `es,en;q=0.8`).
+        The server matches the best available locale from
+        `available_locales` (see `GET /site`) and overlays translated
+        content. Untranslated fields fall back to the default locale so
+        the payload is always complete. The response carries
+        `Content-Language` (the locale actually served) and
+        `Vary: Accept-Language` (so downstream caches key by the header).
+      schema:
+        type: string
+        example: es,en;q=0.8
 
 paths:
   # =====================================================================
@@ -798,6 +836,7 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - $ref: '#/components/parameters/AcceptLanguage'
       responses:
         '200':
           description: OK
@@ -816,6 +855,8 @@ paths:
       tags: [Public]
       operationId: listServices
       summary: List visible services in sort order.
+      parameters:
+        - $ref: '#/components/parameters/AcceptLanguage'
       responses:
         '200':
           description: OK
@@ -835,6 +876,8 @@ paths:
       tags: [Public]
       operationId: listStats
       summary: List animated landing-page counters in sort order.
+      parameters:
+        - $ref: '#/components/parameters/AcceptLanguage'
       responses:
         '200':
           description: OK
@@ -1051,6 +1094,8 @@ paths:
       tags: [Public]
       operationId: listCertifications
       summary: List visible certifications in sort order.
+      parameters:
+        - $ref: '#/components/parameters/AcceptLanguage'
       responses:
         '200':
           description: OK
@@ -1096,6 +1141,8 @@ paths:
       tags: [Public]
       operationId: listProjects
       summary: List visible projects in sort order.
+      parameters:
+        - $ref: '#/components/parameters/AcceptLanguage'
       responses:
         '200':
           description: OK
@@ -1124,6 +1171,7 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - $ref: '#/components/parameters/AcceptLanguage'
       responses:
         '200':
           description: OK
@@ -1154,6 +1202,7 @@ paths:
           in: query
           schema: { type: string }
           description: Filter by tag slug.
+        - $ref: '#/components/parameters/AcceptLanguage'
       responses:
         '200':
           description: OK
@@ -1229,6 +1278,7 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - $ref: '#/components/parameters/AcceptLanguage'
       responses:
         '200':
           description: OK

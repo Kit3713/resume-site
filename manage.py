@@ -144,6 +144,78 @@ def init_db(args):
     _run_seeds(db_path)
 
 
+def _check_db_not_corrupt(db_path):
+    """Abort with a clear error when the DB file is corrupt or truncated.
+
+    SQLite's on-disk format puts a 16-byte magic string (``SQLite format 3\\000``)
+    at byte 0 of every database file. A file that exists but is smaller than
+    the 100-byte header is malformed — ``sqlite3.connect`` would still open
+    it, and a fresh schema would be applied silently. That's worse than any
+    explicit failure: the old data is gone and the operator doesn't know.
+
+    For files at least 100 bytes long we additionally run
+    ``PRAGMA integrity_check`` which walks the pages and reports any
+    corruption. Clean DBs return a single ``ok`` row.
+
+    Raises ``SystemExit`` with a non-zero exit code on failure.
+    """
+    if not os.path.exists(db_path):
+        return  # Fresh DB, migrate will create it.
+
+    try:
+        size = os.path.getsize(db_path)
+    except OSError as exc:
+        print(f'ERROR: cannot stat database at {db_path}: {exc}', file=sys.stderr)
+        sys.exit(1)
+
+    # A zero-byte or near-empty file is almost certainly a failed backup
+    # restore / truncation. sqlite3 tolerates it but produces a brand new
+    # DB, which silently erases any intent to preserve the old one.
+    if 0 < size < 100:
+        print(
+            f'ERROR: database file at {db_path} is {size} bytes '
+            f'(SQLite header requires ≥ 100). File is truncated or corrupt. '
+            f'Refusing to apply migrations — restore from backup first.',
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if size == 0:
+        # Truly empty. sqlite3.connect will create the schema from scratch.
+        # This is only surprising if the operator expected data to be there;
+        # we warn but do not abort (a fresh install starts here).
+        return
+
+    # Size ≥ 100 bytes — run the integrity check. Open with
+    # ``PRAGMA integrity_check`` and look for the ``ok`` sentinel.
+    probe = sqlite3.connect(db_path)
+    try:
+        try:
+            result = probe.execute('PRAGMA integrity_check').fetchall()
+        except sqlite3.DatabaseError as exc:
+            print(
+                f'ERROR: database at {db_path} failed to open for '
+                f'integrity check: {exc}. Refusing to apply migrations — '
+                f'restore from backup first.',
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    finally:
+        probe.close()
+
+    # The PRAGMA returns a single row with value ``ok`` on healthy DBs.
+    # Any other output (error descriptions) means corruption.
+    ok = len(result) == 1 and str(result[0][0]).lower() == 'ok'
+    if not ok:
+        details = '; '.join(str(r[0]) for r in result[:5])
+        print(
+            f'ERROR: database at {db_path} failed PRAGMA integrity_check: '
+            f'{details}. Refusing to apply migrations — restore from backup first.',
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def migrate(args):
     """Apply pending database migrations in order.
 
@@ -151,6 +223,12 @@ def migrate(args):
     table tracks which migrations have been applied. Existing v0.1.0 databases
     are detected by the presence of the settings table and are auto-marked as
     having migration 001 applied (since schema.sql created those tables).
+
+    Before any write, the function runs ``_check_db_not_corrupt`` against
+    the database file. A truncated or corrupt DB aborts the run with a
+    non-zero exit code rather than silently creating a fresh schema on
+    top of the damaged file (which would obliterate any recoverable
+    data). See Phase 18.7.
 
     Flags:
         --status:   Print applied/pending status for all migrations and exit.
@@ -160,6 +238,7 @@ def migrate(args):
     migrations_dir = _get_migrations_dir()
 
     os.makedirs(os.path.dirname(db_path) or '.', exist_ok=True)
+    _check_db_not_corrupt(db_path)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
@@ -424,15 +503,29 @@ def rebuild_search_index(args):
 
     sources = [
         ('content_block', 'content_blocks', 'id', 'title', 'plain_text'),
-        ('blog_post', 'blog_posts', 'id', 'title', "COALESCE(summary,'') || ' ' || COALESCE(content,'')"),
+        (
+            'blog_post',
+            'blog_posts',
+            'id',
+            'title',
+            "COALESCE(summary,'') || ' ' || COALESCE(content,'')",
+        ),
         ('review', 'reviews', 'id', 'reviewer_name', 'message'),
-        ('photo', 'photos', 'id', 'title', "COALESCE(description,'') || ' ' || COALESCE(category,'')"),
+        (
+            'photo',
+            'photos',
+            'id',
+            'title',
+            "COALESCE(description,'') || ' ' || COALESCE(category,'')",
+        ),
         ('service', 'services', 'id', 'title', 'description'),
     ]
 
     total = 0
     for content_type, table, id_col, title_col, body_expr in sources:
-        rows = db.execute(f'SELECT {id_col}, {title_col}, {body_expr} AS body FROM {table}').fetchall()  # noqa: S608 — hardcoded table/column names
+        rows = db.execute(
+            f'SELECT {id_col}, {title_col}, {body_expr} AS body FROM {table}'  # noqa: S608 — hardcoded table/column names
+        ).fetchall()
         for row in rows:
             db.execute(
                 'INSERT INTO search_index(content_type, content_id, title, body) VALUES (?,?,?,?)',
@@ -1461,16 +1554,24 @@ def main():
 
     # Secret key generation / rotation
     subparsers.add_parser('generate-secret', help='Generate a secure secret_key')
-    subparsers.add_parser('rotate-secret-key', help='Rotate secret_key in config.yaml (invalidates sessions)')
+    subparsers.add_parser(
+        'rotate-secret-key', help='Rotate secret_key in config.yaml (invalidates sessions)'
+    )
     subparsers.add_parser('rebuild-search-index', help='Rebuild FTS5 search index from all content')
 
     # Translation export/import (Phase 15.3)
-    export_parser = subparsers.add_parser('translations-export', help='Export translatable content as JSON')
+    export_parser = subparsers.add_parser(
+        'translations-export', help='Export translatable content as JSON'
+    )
     export_parser.add_argument('--locale', required=True, help='Target locale code (e.g., es, fr)')
     export_parser.add_argument('--output', '-o', help='Output file path (default: stdout)')
 
-    import_parser = subparsers.add_parser('translations-import', help='Import translations from JSON')
-    import_parser.add_argument('--locale', required=True, help='Locale code for the imported translations')
+    import_parser = subparsers.add_parser(
+        'translations-import', help='Import translations from JSON'
+    )
+    import_parser.add_argument(
+        '--locale', required=True, help='Locale code for the imported translations'
+    )
     import_parser.add_argument('file', help='Path to the JSON file to import')
 
     # Mutation testing (Phase 18.8)

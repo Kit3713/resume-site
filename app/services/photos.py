@@ -179,6 +179,13 @@ def process_upload(file_storage: FileStorage) -> dict[str, Any] | str | None:
         # setting opts in to keeping it.
         preserve_exif = _should_preserve_exif()
 
+        # Phase 18.7 — we reject uploads Pillow can't fully parse.
+        # Historically we swallowed ``OSError`` and set ``width=height=None``,
+        # letting the file promote anyway. That left corrupt / truncated
+        # images in storage, broke responsive-variant generation, and
+        # surfaced as missing thumbnails on the public site. Cleaner to
+        # reject up front — the caller returns a user-friendly error
+        # and the ``finally`` block deletes the quarantine file.
         try:
             with Image.open(quarantine_path) as img:
                 width, height = img.size
@@ -193,7 +200,14 @@ def process_upload(file_storage: FileStorage) -> dict[str, Any] | str | None:
                     save_kwargs['exif'] = exif_data
 
                 if ext in ('.jpg', '.jpeg'):
-                    img.save(quarantine_path, 'JPEG', quality=85, optimize=True, progressive=True, **save_kwargs)
+                    img.save(
+                        quarantine_path,
+                        'JPEG',
+                        quality=85,
+                        optimize=True,
+                        progressive=True,
+                        **save_kwargs,
+                    )
                 elif ext == '.png':
                     img.save(quarantine_path, 'PNG', optimize=True)
                 elif ext == '.webp':
@@ -201,8 +215,13 @@ def process_upload(file_storage: FileStorage) -> dict[str, Any] | str | None:
 
                 width, height = img.size
                 file_size = os.path.getsize(quarantine_path)
-        except (OSError, ValueError, Image.DecompressionBombError):
-            width, height = None, None
+        except (OSError, ValueError, Image.DecompressionBombError) as exc:
+            _log.warning(
+                'rejecting corrupt/truncated upload %r: %s',
+                filename,
+                exc,
+            )
+            return 'Image file is corrupt or truncated.'
 
         # Quarantine passed — promote to final location
         os.replace(quarantine_path, file_path)
@@ -236,7 +255,9 @@ def process_upload(file_storage: FileStorage) -> dict[str, Any] | str | None:
 _RESPONSIVE_WIDTHS = (640, 1024)
 
 
-def _generate_responsive_variants(file_path: str, storage_name: str, ext: str, photo_dir: str) -> None:
+def _generate_responsive_variants(
+    file_path: str, storage_name: str, ext: str, photo_dir: str
+) -> None:
     """Generate smaller responsive variants and a WebP version of the uploaded image.
 
     Creates ``<uuid>_640w.<ext>``, ``<uuid>_1024w.<ext>`` and
@@ -287,7 +308,12 @@ def get_srcset_urls(storage_name: str) -> dict[str, str | None]:
     photo_dir = _get_photo_dir()
     base, ext = os.path.splitext(storage_name)
 
-    result: dict[str, str | None] = {'original': storage_name, 'webp': None, 'w640': None, 'w1024': None}
+    result: dict[str, str | None] = {
+        'original': storage_name,
+        'webp': None,
+        'w640': None,
+        'w1024': None,
+    }
 
     webp_name = f'{base}.webp'
     if ext != '.webp' and os.path.isfile(os.path.join(photo_dir, webp_name)):
@@ -352,7 +378,10 @@ def _should_preserve_exif() -> bool:
         settings = get_all_cached(db, current_app.config['DATABASE_PATH'])
 
     return str(settings.get('upload_preserve_exif', 'false')).lower() in {
-        '1', 'true', 'yes', 'on',
+        '1',
+        'true',
+        'yes',
+        'on',
     }
 
 
