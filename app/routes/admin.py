@@ -1283,7 +1283,7 @@ def reorder():
     db = get_db()
     for position, item_id in enumerate(id_order):
         db.execute(
-            f'UPDATE {table_name} SET sort_order = ? WHERE {id_col} = ?',  # noqa: S608 — table/col from allowlist, not user input
+            f'UPDATE {table_name} SET sort_order = ? WHERE {id_col} = ?',  # noqa: S608  # nosec B608 — table/col from allowlist, not user input
             (position, item_id),
         )
     db.commit()
@@ -1394,7 +1394,7 @@ def _bulk_delete_photos(db, ids):
 
     placeholders = _in_clause(ids)
     rows = db.execute(
-        f'SELECT id, storage_name FROM photos WHERE id IN ({placeholders})',  # noqa: S608 — placeholders are ? only
+        f'SELECT id, storage_name FROM photos WHERE id IN ({placeholders})',  # noqa: S608  # nosec B608 — placeholders are ? only
         ids,
     ).fetchall()
     for row in rows:
