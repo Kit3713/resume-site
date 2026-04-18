@@ -14,7 +14,8 @@
         <h2 class="admin-section__title">{{ _('Upload New Photo') }}</h2>
         <form method="POST" action="{{ url_for('admin.photos_upload') }}" enctype="multipart/form-data" class="admin-form admin-form--inline">
             <div class="form-group">
-                <input type="file" name="photo" accept="image/*" class="form-input" required>
+                <input type="file" name="photo" accept="image/*" class="form-input" required id="photo-input">
+                <img id="photo-preview" style="display:none;max-height:120px;margin-top:0.5rem;border-radius:8px" alt="Preview">
             </div>
             <div class="form-group">
                 <input type="text" name="title" class="form-input" placeholder="Title (optional)">
@@ -37,9 +38,17 @@
     {% if photos %}
     <div class="admin-section">
         <h2 class="admin-section__title">{{ _('All Photos') }} ({{ photos|length }})</h2>
-        <div class="admin-photos-grid">
+        <div class="bulk-actions" id="bulk-bar" style="display:none;margin-bottom:1rem">
+            <span id="bulk-count">0</span> {{ _('selected') }} —
+            <button class="btn btn--danger btn--sm" onclick="doBulk('delete')">{{ _('Delete') }}</button>
+            <button class="btn btn--secondary btn--sm" onclick="doBulk('set_tier', {tier:'featured'})">{{ _('Set Featured') }}</button>
+            <button class="btn btn--secondary btn--sm" onclick="doBulk('set_tier', {tier:'hidden'})">{{ _('Set Hidden') }}</button>
+        </div>
+        <div class="admin-photos-grid" id="sortable-photos">
             {% for photo in photos %}
-            <div class="admin-photo-card">
+            <div class="admin-photo-card" data-id="{{ photo.id }}">
+                <input type="checkbox" class="bulk-check" value="{{ photo.id }}" style="position:absolute;top:4px;left:4px;z-index:2">
+                <span class="drag-handle drag-handle--photo" title="{{ _('Drag to reorder') }}">&#9776;</span>
                 <div class="admin-photo-card__img">
                     <img src="{{ url_for('public.serve_photo', storage_name=photo.storage_name) }}" alt="{{ photo.title }}" loading="lazy">
                     <span class="admin-photo-card__tier">{{ photo.display_tier }}</span>
@@ -70,4 +79,62 @@
     <p class="admin-empty">{{ _('No photos uploaded yet.') }}</p>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script nonce="{{ csp_nonce }}">
+(function() {
+    var el = document.getElementById('sortable-photos');
+    if (!el || typeof Sortable === 'undefined') return;
+    Sortable.create(el, {
+        handle: '.drag-handle',
+        animation: 150,
+        onEnd: function() {
+            var ids = Array.from(el.querySelectorAll('[data-id]')).map(function(item) {
+                return parseInt(item.dataset.id, 10);
+            });
+            fetch('{{ url_for("admin.reorder") }}', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({table: 'photos', id_order: ids})
+            });
+        }
+    });
+})();
+
+// Bulk selection
+var checks = document.querySelectorAll('.bulk-check');
+var bar = document.getElementById('bulk-bar');
+var countEl = document.getElementById('bulk-count');
+checks.forEach(function(cb) {
+    cb.addEventListener('change', function() {
+        var n = document.querySelectorAll('.bulk-check:checked').length;
+        bar.style.display = n > 0 ? '' : 'none';
+        countEl.textContent = n;
+    });
+});
+// Image preview on file select
+var photoInput = document.getElementById('photo-input');
+var preview = document.getElementById('photo-preview');
+if (photoInput && preview) {
+    photoInput.addEventListener('change', function() {
+        var file = this.files[0];
+        if (file && file.type.startsWith('image/')) {
+            preview.src = URL.createObjectURL(file);
+            preview.style.display = 'block';
+        } else {
+            preview.style.display = 'none';
+        }
+    });
+}
+
+window.doBulk = function(action, params) {
+    var ids = Array.from(document.querySelectorAll('.bulk-check:checked')).map(function(cb) {
+        return parseInt(cb.value, 10);
+    });
+    if (!ids.length) return;
+    if (action === 'delete' && !confirm('Delete ' + ids.length + ' photos?')) return;
+    bulkAction('photos', action, ids, params).then(function() { location.reload(); });
+};
+</script>
 {% endblock %}

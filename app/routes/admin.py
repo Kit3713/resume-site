@@ -37,6 +37,7 @@ from flask import (
     current_app,
     flash,
     g,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -1067,6 +1068,149 @@ def webhooks_deliveries(webhook_id):
 # ============================================================
 
 
+# ============================================================
+# CONTENT TRANSLATIONS (Phase 15.3)
+# ============================================================
+
+_TRANSLATABLE_TABLES = {
+    'content_blocks': 'Content Block',
+    'blog_posts': 'Blog Post',
+    'services': 'Service',
+    'stats': 'Stat',
+    'projects': 'Project',
+    'certifications': 'Certification',
+}
+
+
+@admin_bp.route('/translations/<table>/<int:item_id>', methods=['GET', 'POST'])
+@login_required
+def translations(table, item_id):
+    """View and save translations for a content item (Phase 15.3)."""
+    if table not in _TRANSLATABLE_TABLES:
+        abort(404)
+
+    db = get_db()
+    from app.services.settings_svc import get_all_cached
+    from app.services.translations import (
+        get_available_translations,
+        get_translated,
+        save_translation,
+    )
+
+    settings = get_all_cached(db, current_app.config['DATABASE_PATH'])
+    available_locales = [
+        loc.strip() for loc in settings.get('available_locales', 'en').split(',') if loc.strip()
+    ]
+
+    original = get_translated(db, table, item_id, 'en')
+    if not original:
+        abort(404)
+
+    if request.method == 'POST':
+        locale = request.form.get('locale', '').strip()
+        if locale and locale in available_locales:
+            from app.services.translations import _TRANSLATION_TABLES
+
+            config = _TRANSLATION_TABLES.get(table, {})
+            fields = {}
+            for field in config.get('fields', ()):
+                val = request.form.get(field, '').strip()
+                if val:
+                    fields[field] = val
+            if fields:
+                save_translation(db, table, item_id, locale, **fields)
+                db.commit()
+                flash(_('Translation saved.'), 'success')
+        return redirect(url_for('admin.translations', table=table, item_id=item_id))
+
+    existing_locales = get_available_translations(db, table, item_id)
+    locale_translations = {}
+    for loc in available_locales:
+        if loc == 'en':
+            continue
+        trans = get_translated(db, table, item_id, loc, fallback_locale='')
+        locale_translations[loc] = trans
+
+    from app.services.translations import _TRANSLATION_TABLES
+
+    fields = _TRANSLATION_TABLES.get(table, {}).get('fields', ())
+
+    return render_template(
+        'admin/translations.html',
+        table=table,
+        table_label=_TRANSLATABLE_TABLES[table],
+        item_id=item_id,
+        original=original,
+        available_locales=[loc for loc in available_locales if loc != 'en'],
+        existing_locales=existing_locales,
+        locale_translations=locale_translations,
+        fields=fields,
+    )
+
+
+_THEME_PRESETS = {
+    'default': {'accent': '#0071e3', 'label': 'Default Blue'},
+    'ocean': {'accent': '#00897B', 'label': 'Ocean Teal'},
+    'forest': {'accent': '#2E7D32', 'label': 'Forest Green'},
+    'sunset': {'accent': '#E65100', 'label': 'Warm Sunset'},
+    'minimal': {'accent': '#616161', 'label': 'Minimal Gray'},
+    'royal': {'accent': '#6200EA', 'label': 'Royal Purple'},
+    'coral': {'accent': '#FF6B6B', 'label': 'Coral Pink'},
+    'amber': {'accent': '#FF8F00', 'label': 'Amber Gold'},
+    'indigo': {'accent': '#3F51B5', 'label': 'Indigo'},
+    'teal': {'accent': '#009688', 'label': 'Teal'},
+    'crimson': {'accent': '#D32F2F', 'label': 'Crimson Red'},
+    'slate': {'accent': '#455A64', 'label': 'Slate Blue-Gray'},
+}
+
+_DANGEROUS_CSS_PATTERNS = [
+    '@import',
+    'expression(',
+    '-moz-binding',
+    'javascript:',
+    'behavior:',
+]
+
+
+def _sanitize_custom_css(css):
+    """Strip dangerous patterns from custom CSS."""
+    import re
+
+    for pattern in _DANGEROUS_CSS_PATTERNS:
+        css = re.sub(re.escape(pattern), '', css, flags=re.IGNORECASE)
+    css = re.sub(r'url\s*\(\s*["\']?(?!https?://)', 'url(/* blocked */', css, flags=re.IGNORECASE)
+    return css
+
+
+@admin_bp.route('/theme', methods=['GET', 'POST'])
+@login_required
+def theme():
+    """Visual theme editor with live preview (Phase 14.6)."""
+    db = get_db()
+
+    if request.method == 'POST':
+        from app.services.settings_svc import save_setting
+
+        data = request.form
+        save_setting(db, 'accent_color', data.get('accent_color', '#0071e3'))
+        save_setting(db, 'color_preset', data.get('color_preset', 'default'))
+        save_setting(db, 'font_pairing', data.get('font_pairing', 'inter'))
+        custom_css = _sanitize_custom_css(data.get('custom_css', ''))
+        save_setting(db, 'custom_css', custom_css)
+        db.commit()
+        flash(_('Theme saved.'), 'success')
+        return redirect(url_for('admin.theme'))
+
+    from app.services.settings_svc import get_all_cached
+
+    settings = get_all_cached(db, current_app.config['DATABASE_PATH'])
+    return render_template(
+        'admin/theme.html',
+        current_settings=settings,
+        presets=_THEME_PRESETS,
+    )
+
+
 @admin_bp.route('/settings', methods=['GET', 'POST'])
 @login_required
 def settings():
@@ -1103,6 +1247,182 @@ def settings():
 # ============================================================
 # SERVICES MANAGER (CRUD)
 # ============================================================
+
+
+# ============================================================
+# GENERIC REORDER (Phase 14.1 — Drag-and-Drop)
+# ============================================================
+
+_REORDER_ALLOWLIST = {
+    'services': ('services', 'id'),
+    'stats': ('stats', 'id'),
+    'photos': ('photos', 'id'),
+    'projects': ('projects', 'id'),
+}
+
+
+@admin_bp.route('/reorder', methods=['POST'])
+@login_required
+def reorder():
+    """Update sort_order for items in a table based on drag-and-drop order.
+
+    Expects JSON body: {"table": "<name>", "id_order": [1, 3, 2, ...]}
+    Table name is validated against an allowlist to prevent SQL injection.
+    """
+    data = request.get_json(silent=True) or {}
+    table_key = data.get('table', '')
+    id_order = data.get('id_order', [])
+
+    if table_key not in _REORDER_ALLOWLIST:
+        return jsonify({'error': 'Invalid table'}), 400
+
+    if not isinstance(id_order, list) or not all(isinstance(i, int) for i in id_order):
+        return jsonify({'error': 'id_order must be a list of integers'}), 400
+
+    table_name, id_col = _REORDER_ALLOWLIST[table_key]
+    db = get_db()
+    for position, item_id in enumerate(id_order):
+        db.execute(
+            f'UPDATE {table_name} SET sort_order = ? WHERE {id_col} = ?',  # noqa: S608 — table/col from allowlist, not user input
+            (position, item_id),
+        )
+    db.commit()
+
+    from app.services.activity_log import log_activity
+
+    log_activity(db, f'Reordered {table_key}', category=table_key, detail=f'{len(id_order)} items')
+
+    return jsonify({'ok': True})
+
+
+_SEARCH_TYPE_URLS = {
+    'content_block': 'admin.content_edit',
+    'blog_post': 'admin.blog_edit',
+    'review': 'admin.reviews',
+    'photo': 'admin.photos',
+    'service': 'admin.services',
+}
+
+
+@admin_bp.route('/search')
+@login_required
+def search():
+    """Full-text search across all admin content types (Phase 14.5)."""
+    q = request.args.get('q', '').strip()
+    results = []
+    if q:
+        db = get_db()
+        try:
+            rows = db.execute(
+                'SELECT content_type, content_id, title, snippet(search_index, 3, "<mark>", "</mark>", "…", 32) AS snippet '
+                'FROM search_index WHERE search_index MATCH ? ORDER BY rank LIMIT 50',
+                (q,),
+            ).fetchall()
+            for row in rows:
+                results.append({
+                    'type': row['content_type'],
+                    'id': row['content_id'],
+                    'title': row['title'],
+                    'snippet': row['snippet'],
+                })
+        except Exception:  # noqa: BLE001, S110 — FTS5 table may not exist yet
+            pass
+    return render_template('admin/search.html', query=q, results=results, type_urls=_SEARCH_TYPE_URLS)
+
+
+def _in_clause(ids):
+    """Build a safe IN clause with ? placeholders from a validated int list."""
+    return ','.join('?' * len(ids))
+
+
+def _bulk_exec(db, sql_template, ids, extra_params=None):
+    """Execute a bulk SQL statement with safe IN clause. Table/column names are
+    hardcoded in the templates below — only the id count is dynamic."""
+    placeholders = _in_clause(ids)
+    sql = sql_template.format(placeholders=placeholders)  # noqa: S608 — template is hardcoded, not user input
+    params = list(extra_params or []) + list(ids)
+    db.execute(sql, params)
+
+
+_BULK_ACTIONS = {
+    'photos': {
+        'delete': lambda db, ids: _bulk_delete_photos(db, ids),
+        'set_tier': lambda db, ids, tier='grid': _bulk_set_photo_tier(db, ids, tier),
+    },
+    'reviews': {
+        'approve': lambda db, ids: _bulk_exec(db, "UPDATE reviews SET status='approved' WHERE id IN ({placeholders})", ids),
+        'reject': lambda db, ids: _bulk_exec(db, "UPDATE reviews SET status='rejected' WHERE id IN ({placeholders})", ids),
+        'delete': lambda db, ids: _bulk_exec(db, 'DELETE FROM reviews WHERE id IN ({placeholders})', ids),
+    },
+    'blog_posts': {
+        'publish': lambda db, ids: _bulk_exec(db, "UPDATE blog_posts SET status='published', published_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id IN ({placeholders})", ids),
+        'unpublish': lambda db, ids: _bulk_exec(db, "UPDATE blog_posts SET status='draft' WHERE id IN ({placeholders})", ids),
+        'delete': lambda db, ids: _bulk_exec(db, 'DELETE FROM blog_posts WHERE id IN ({placeholders})', ids),
+    },
+    'contact_submissions': {
+        'delete': lambda db, ids: _bulk_exec(db, 'DELETE FROM contact_submissions WHERE id IN ({placeholders})', ids),
+        'mark_spam': lambda db, ids: _bulk_exec(db, 'UPDATE contact_submissions SET is_spam=1 WHERE id IN ({placeholders})', ids),
+    },
+}
+
+
+def _bulk_delete_photos(db, ids):
+    """Delete photo records and their files from disk."""
+    from app.services.photos import delete_photo_file
+
+    placeholders = _in_clause(ids)
+    rows = db.execute(
+        f'SELECT id, storage_name FROM photos WHERE id IN ({placeholders})',  # noqa: S608 — placeholders are ? only
+        ids,
+    ).fetchall()
+    for row in rows:
+        delete_photo_file(row['storage_name'])
+    _bulk_exec(db, 'DELETE FROM photos WHERE id IN ({placeholders})', ids)
+
+
+def _bulk_set_photo_tier(db, ids, tier):
+    """Set display_tier for multiple photos."""
+    if tier not in ('featured', 'grid', 'hidden'):
+        return
+    _bulk_exec(db, 'UPDATE photos SET display_tier=? WHERE id IN ({placeholders})', ids, extra_params=[tier])
+
+
+@admin_bp.route('/bulk-action', methods=['POST'])
+@login_required
+def bulk_action():
+    """Execute a bulk action on selected items.
+
+    Expects JSON: {"table": "photos", "action": "delete", "ids": [1,2,3], "params": {...}}
+    """
+    data = request.get_json(silent=True) or {}
+    table = data.get('table', '')
+    action = data.get('action', '')
+    ids = data.get('ids', [])
+    params = data.get('params', {})
+
+    if table not in _BULK_ACTIONS or action not in _BULK_ACTIONS[table]:
+        return jsonify({'error': 'Invalid table or action'}), 400
+
+    if not isinstance(ids, list) or not all(isinstance(i, int) for i in ids) or not ids:
+        return jsonify({'error': 'ids must be a non-empty list of integers'}), 400
+
+    db = get_db()
+    handler = _BULK_ACTIONS[table][action]
+
+    import inspect
+
+    sig = inspect.signature(handler)
+    if len(sig.parameters) > 2:
+        handler(db, ids, **params)
+    else:
+        handler(db, ids)
+    db.commit()
+
+    from app.services.activity_log import log_activity
+
+    log_activity(db, f'Bulk {action} on {table}', category=table, detail=f'{len(ids)} items')
+
+    return jsonify({'ok': True, 'count': len(ids)})
 
 
 @admin_bp.route('/services')

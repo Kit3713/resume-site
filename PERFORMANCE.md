@@ -107,12 +107,61 @@ Things we tested and did not do:
   and not captured by per-request benchmarks. See the deployment doc
   (`Containerfile`) for our recommended worker setup.
 
+## Load Testing (Phase 18.6)
+
+### Setup
+
+```bash
+pip install locust
+locust -f tests/loadtests/locustfile.py --headless -u 50 -r 5 -t 5m --host http://localhost:8080
+```
+
+Three user behaviors are defined in `tests/loadtests/locustfile.py`:
+
+| Behavior | Weight | Wait Time | Focus |
+|---|---|---|---|
+| PublicUserBehavior | 5 | 1-3s | Landing (40%), portfolio (20%), blog (20%), rest (20%) |
+| APIConsumerBehavior | 2 | 0.5-2s | Public API reads with pagination |
+| AdminBehavior | 1 | 2-5s | Dashboard, photos, blog admin, settings |
+
+### Baseline (to be recorded after v0.3.0 stabilization)
+
+| Endpoint | p50 | p95 | p99 | Queries | Size |
+|---|---|---|---|---|---|
+| `GET /` | — | — | — | — | — |
+| `GET /portfolio` | — | — | — | — | — |
+| `GET /blog` | — | — | — | — | — |
+| `GET /api/v1/site` | — | — | — | — | — |
+| `GET /admin/` | — | — | — | — | — |
+
+### CI Regression Gate
+
+Thresholds in `tests/loadtests/thresholds.json` (to be populated after
+baseline). CI `perf-regression` job runs locust with 20 users for 60s
+and fails the build if any endpoint's p95 exceeds its threshold by >20%.
+
+### Container Startup Time
+
+| Metric | Value |
+|---|---|
+| Cold start to first 200 OK | — (to be measured) |
+| Image size (amd64) | — |
+| Image size (arm64) | — |
+
+## Failure Modes (Phase 18.7)
+
+| Failure | Expected Behavior | Tested |
+|---|---|---|
+| SMTP unreachable | Contact form saves to DB, user-friendly error | Pending |
+| Database locked (busy_timeout) | Retries within 5s, graceful error if exceeded | Pending |
+| Disk full on upload | Upload rejected, partial files cleaned up | Pending |
+| Disk full on DB write | 503 Service Unavailable | Pending |
+| Corrupted upload | No partial file saved, DB unchanged | Pending |
+| Malformed session cookie | New session created, no crash | Pending |
+
 ## Not yet covered
 
-These are worth adding once the relevant deliverables land:
-
-* Photo upload latency (Phase 12.2 Pillow pipeline changed — progressive JPEG
-  + EXIF strip adds one re-encode per upload, so we expect +Nms per MB).
-* Admin dashboard render time — high-cardinality activity log queries need
-  their own baseline once Phase 13 observability is in place.
-* Cold-start time — container boot to first 200 OK (Phase 21.5 deliverable).
+* Lighthouse scores for the landing page (Performance, Accessibility, Best
+  Practices, SEO) — requires a running browser.
+* Memory usage at idle and under load (50 concurrent users) — requires
+  process monitoring during locust run.

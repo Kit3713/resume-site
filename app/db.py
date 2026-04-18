@@ -36,6 +36,7 @@ Usage:
 """
 
 import sqlite3
+import time
 
 from flask import current_app, g
 
@@ -60,19 +61,48 @@ def _apply_pragmas(conn):
         conn.execute(f'PRAGMA {name}={value}')
 
 
+class _InstrumentedConnection:
+    """Wraps a sqlite3.Connection to count queries and measure time.
+
+    Stores running totals in ``flask.g.db_query_count`` and
+    ``flask.g.db_query_time_ms`` so the request-logging hook and
+    metrics system can access them.
+    """
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=()):
+        """Execute with timing instrumentation."""
+        start = time.monotonic()
+        result = self._conn.execute(sql, params)
+        elapsed = (time.monotonic() - start) * 1000
+        g.db_query_count = getattr(g, 'db_query_count', 0) + 1
+        g.db_query_time_ms = getattr(g, 'db_query_time_ms', 0.0) + elapsed
+        return result
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
 def get_db():
     """Get or create a SQLite database connection for the current request.
 
     Connections are stored in Flask's `g` object and reused within a single
-    request. See module docstring for the PRAGMA strategy.
+    request. See module docstring for the PRAGMA strategy. Wrapped in
+    ``_InstrumentedConnection`` for query counting (Phase 18.3).
 
     Returns:
-        sqlite3.Connection: The active database connection for this request.
+        _InstrumentedConnection: Instrumented database connection.
     """
     if 'db' not in g:
-        g.db = sqlite3.connect(current_app.config['DATABASE_PATH'])
-        g.db.row_factory = sqlite3.Row
-        _apply_pragmas(g.db)
+        conn = sqlite3.connect(current_app.config['DATABASE_PATH'])
+        conn.row_factory = sqlite3.Row
+        _apply_pragmas(conn)
+        g._raw_db = conn
+        g.db = _InstrumentedConnection(conn)
+        g.db_query_count = 0
+        g.db_query_time_ms = 0.0
     return g.db
 
 
@@ -83,6 +113,7 @@ def close_db(exception=None):
     The exception parameter is provided by Flask but not used here — we
     close the connection regardless of whether the request succeeded.
     """
-    db = g.pop('db', None)
-    if db is not None:
-        db.close()
+    g.pop('db', None)
+    raw = g.pop('_raw_db', None)
+    if raw is not None:
+        raw.close()

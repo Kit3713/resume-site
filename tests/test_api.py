@@ -2103,3 +2103,81 @@ def test_swagger_ui_template_has_no_inline_script_bodies(client, app):
         assert not inline.strip(), (
             f'docs.html has an inline script body — move it to /static/js/: {inline[:120]!r}'
         )
+
+
+# ============================================================
+# Phase 16.6 — API Test Expansion
+# ============================================================
+
+
+def test_expired_token_returns_401(client, no_rate_limits, app):
+    """An expired API token should be rejected with 401."""
+    from app.services.api_tokens import generate_token
+
+    with app.app_context():
+        from app.db import get_db
+
+        token = generate_token(
+            get_db(),
+            name='expired-bot',
+            scope='read,write',
+            expires_at='2020-01-01T00:00:00Z',
+        )
+
+    response = client.post(
+        '/api/v1/blog',
+        json={'title': 'test'},
+        headers={'Authorization': f'Bearer {token.raw}'},
+    )
+    assert response.status_code == 401
+    data = response.get_json()
+    assert data['error'] == 'expired'
+
+
+def test_content_negotiation_defaults_to_json(client):
+    """Requests without an Accept header should still get JSON."""
+    response = client.get('/api/v1/site')
+    assert response.status_code == 200
+    assert response.content_type.startswith('application/json')
+    data = response.get_json()
+    assert data is not None
+
+
+def test_content_negotiation_accepts_wildcard(client):
+    """Accept: */* should return JSON."""
+    response = client.get('/api/v1/site', headers={'Accept': '*/*'})
+    assert response.status_code == 200
+    assert response.content_type.startswith('application/json')
+
+
+def test_etag_304_roundtrip_on_services(client):
+    """Second identical request with If-None-Match should return 304."""
+    first = client.get('/api/v1/services')
+    assert first.status_code == 200
+    etag = first.headers.get('ETag')
+    assert etag
+
+    second = client.get('/api/v1/services', headers={'If-None-Match': etag})
+    assert second.status_code == 304
+
+
+def test_etag_stale_returns_200(client):
+    """A mismatched ETag should return fresh 200."""
+    response = client.get('/api/v1/services', headers={'If-None-Match': '"stale-hash"'})
+    assert response.status_code == 200
+
+
+def test_pagination_per_page_clamped_to_max(client, app):
+    """per_page above 100 should be clamped to 100."""
+    response = client.get('/api/v1/portfolio?per_page=999')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['pagination']['per_page'] <= 100
+
+
+def test_pagination_per_page_clamped_to_min(client):
+    """per_page below 1 should be clamped to 1."""
+    response = client.get('/api/v1/portfolio?per_page=0')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['pagination']['per_page'] >= 1

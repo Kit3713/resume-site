@@ -207,6 +207,9 @@ def process_upload(file_storage: FileStorage) -> dict[str, Any] | str | None:
         # Quarantine passed — promote to final location
         os.replace(quarantine_path, file_path)
         quarantine_path = None  # prevent cleanup
+
+        # Phase 12.3: Generate responsive variants (640w, 1024w) + WebP
+        _generate_responsive_variants(file_path, storage_name, ext, photo_dir)
     finally:
         if quarantine_path and os.path.exists(quarantine_path):
             os.unlink(quarantine_path)
@@ -228,6 +231,74 @@ def process_upload(file_storage: FileStorage) -> dict[str, Any] | str | None:
         'height': height,
         'file_size': file_size,
     }
+
+
+_RESPONSIVE_WIDTHS = (640, 1024)
+
+
+def _generate_responsive_variants(file_path: str, storage_name: str, ext: str, photo_dir: str) -> None:
+    """Generate smaller responsive variants and a WebP version of the uploaded image.
+
+    Creates ``<uuid>_640w.<ext>``, ``<uuid>_1024w.<ext>`` and
+    ``<uuid>.webp`` (if the source isn't already WebP).
+    Failures are logged but never propagate — the full-size original
+    is always available as a fallback.
+    """
+    if ext == '.gif':
+        return
+
+    base = os.path.splitext(storage_name)[0]
+
+    try:
+        with Image.open(file_path) as img:
+            src_width = img.size[0]
+
+            for w in _RESPONSIVE_WIDTHS:
+                if src_width <= w:
+                    continue
+                variant = img.copy()
+                ratio = w / src_width
+                new_h = int(img.size[1] * ratio)
+                variant = variant.resize((w, new_h), Image.LANCZOS)
+
+                variant_name = f'{base}_{w}w{ext}'
+                variant_path = os.path.join(photo_dir, variant_name)
+                if ext in ('.jpg', '.jpeg'):
+                    variant.save(variant_path, 'JPEG', quality=80, optimize=True, progressive=True)
+                elif ext == '.png':
+                    variant.save(variant_path, 'PNG', optimize=True)
+                elif ext == '.webp':
+                    variant.save(variant_path, 'WebP', quality=80)
+
+            if ext != '.webp':
+                webp_name = f'{base}.webp'
+                webp_path = os.path.join(photo_dir, webp_name)
+                img.save(webp_path, 'WebP', quality=80)
+    except Exception:  # noqa: BLE001 — variants are optional; never break the upload
+        _log.warning('failed to generate responsive variants for %s', storage_name)
+
+
+def get_srcset_urls(storage_name: str) -> dict[str, str | None]:
+    """Return URLs for responsive variants of a photo.
+
+    Returns a dict with keys: ``original``, ``webp``, ``w640``, ``w1024``.
+    Missing variants return None.
+    """
+    photo_dir = _get_photo_dir()
+    base, ext = os.path.splitext(storage_name)
+
+    result: dict[str, str | None] = {'original': storage_name, 'webp': None, 'w640': None, 'w1024': None}
+
+    webp_name = f'{base}.webp'
+    if ext != '.webp' and os.path.isfile(os.path.join(photo_dir, webp_name)):
+        result['webp'] = webp_name
+
+    for w in _RESPONSIVE_WIDTHS:
+        variant_name = f'{base}_{w}w{ext}'
+        if os.path.isfile(os.path.join(photo_dir, variant_name)):
+            result[f'w{w}'] = variant_name
+
+    return result
 
 
 def _run_antivirus_scan(file_path: str) -> str | None:
@@ -304,7 +375,7 @@ def serve_photo(storage_name: str) -> Response:
 
 
 def delete_photo_file(storage_name: str) -> None:
-    """Delete a photo file from the storage directory.
+    """Delete a photo file and its responsive variants from the storage directory.
 
     Called by the admin photo delete route after removing the database record.
     Silently handles the case where the file doesn't exist (already deleted
@@ -313,6 +384,15 @@ def delete_photo_file(storage_name: str) -> None:
     Args:
         storage_name: The UUID-based filename to delete.
     """
-    file_path = os.path.join(_get_photo_dir(), storage_name)
-    if os.path.exists(file_path):
-        os.remove(file_path)
+    photo_dir = _get_photo_dir()
+    base, ext = os.path.splitext(storage_name)
+
+    candidates = [
+        storage_name,
+        f'{base}.webp',
+        *[f'{base}_{w}w{ext}' for w in _RESPONSIVE_WIDTHS],
+    ]
+    for name in candidates:
+        path = os.path.join(photo_dir, name)
+        if os.path.exists(path):
+            os.remove(path)

@@ -164,6 +164,7 @@ def blog_feed():
     xml += f'  <title>{escape(site_title)} — {escape(blog_title)}</title>\n'
     xml += f'  <link>{base_url}/blog</link>\n'
     xml += f'  <description>{escape(blog_title)}</description>\n'
+    xml += f'  <language>{get_setting(db, "default_locale", "en")}</language>\n'
     xml += f'  <atom:link href="{base_url}/blog/feed.xml" rel="self" type="application/rss+xml"/>\n'
 
     for post in posts:

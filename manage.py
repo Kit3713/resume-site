@@ -405,6 +405,157 @@ def rotate_secret_key(args):
     print('The admin must log in again.\n')
 
 
+def rebuild_search_index(args):
+    """Rebuild the FTS5 search index from scratch.
+
+    Clears and re-populates the search_index virtual table from all
+    content sources: content_blocks, blog_posts, reviews, photos, services.
+    """
+    import sqlite3
+
+    db_path = _get_db_path()
+    db = sqlite3.connect(db_path)
+    db.row_factory = sqlite3.Row
+    try:
+        db.execute('DELETE FROM search_index')
+    except Exception:
+        print('search_index table not found — run migrations first.', file=sys.stderr)
+        sys.exit(1)
+
+    sources = [
+        ('content_block', 'content_blocks', 'id', 'title', 'plain_text'),
+        ('blog_post', 'blog_posts', 'id', 'title', "COALESCE(summary,'') || ' ' || COALESCE(content,'')"),
+        ('review', 'reviews', 'id', 'reviewer_name', 'message'),
+        ('photo', 'photos', 'id', 'title', "COALESCE(description,'') || ' ' || COALESCE(category,'')"),
+        ('service', 'services', 'id', 'title', 'description'),
+    ]
+
+    total = 0
+    for content_type, table, id_col, title_col, body_expr in sources:
+        rows = db.execute(f'SELECT {id_col}, {title_col}, {body_expr} AS body FROM {table}').fetchall()  # noqa: S608 — hardcoded table/column names
+        for row in rows:
+            db.execute(
+                'INSERT INTO search_index(content_type, content_id, title, body) VALUES (?,?,?,?)',
+                (content_type, row[0], row[1], row[2]),
+            )
+            total += 1
+
+    db.commit()
+    db.close()
+    print(f'Search index rebuilt: {total} items indexed.')
+
+
+def translations_export(args):
+    """Export translatable content as JSON for external translation tools."""
+    import json as _json
+
+    locale = args.locale
+    db = _connect_db()
+
+    from app.services.translations import _TRANSLATION_TABLES
+
+    export = {}
+    for source_table, config in _TRANSLATION_TABLES.items():
+        rows = db.execute(f'SELECT * FROM {source_table}').fetchall()  # noqa: S608
+        items = []
+        for row in rows:
+            item = {'id': row['id']}
+            for field in config['fields']:
+                item[field] = row[field]
+            # Include existing translation if any
+            trans = db.execute(
+                f'SELECT * FROM {config["table"]} WHERE {config["fk"]} = ? AND locale = ?',  # noqa: S608
+                (row['id'], locale),
+            ).fetchone()
+            if trans:
+                for field in config['fields']:
+                    item[f'{field}_translated'] = trans[field]
+            items.append(item)
+        export[source_table] = items
+
+    db.close()
+    output = _json.dumps(export, indent=2, ensure_ascii=False)
+
+    if args.output:
+        with open(args.output, 'w') as f:
+            f.write(output)
+        print(f'Exported to {args.output}')
+    else:
+        print(output)
+
+
+def translations_import(args):
+    """Import translations from a JSON file."""
+    import json as _json
+
+    locale = args.locale
+    db = _connect_db()
+
+    from app.services.translations import save_translation
+
+    with open(args.file) as f:
+        data = _json.load(f)
+
+    count = 0
+    for source_table, items in data.items():
+        from app.services.translations import _TRANSLATION_TABLES
+
+        config = _TRANSLATION_TABLES.get(source_table)
+        if not config:
+            continue
+        for item in items:
+            fields = {}
+            for field in config['fields']:
+                val = item.get(f'{field}_translated', '').strip()
+                if val:
+                    fields[field] = val
+            if fields:
+                save_translation(db, source_table, item['id'], locale, **fields)
+                count += 1
+
+    db.commit()
+    db.close()
+    print(f'Imported {count} translations for locale "{locale}".')
+
+
+def mutation_report(args):
+    """Run mutmut and generate a summary report.
+
+    Requires mutmut to be installed (pip install mutmut). Runs mutation
+    testing against the configured paths_to_mutate in pyproject.toml and
+    prints a summary of killed/survived/timeout mutants.
+    """
+    import subprocess as _sp
+
+    print('Running mutmut... (this may take several minutes)')
+    result = _sp.run(
+        ['mutmut', 'run', '--no-progress'],  # noqa: S603, S607
+        capture_output=True,
+        text=True,
+    )
+    print(result.stdout)
+    if result.stderr:
+        print(result.stderr, file=sys.stderr)
+
+    print('\n=== Mutation Testing Results ===')
+    results = _sp.run(
+        ['mutmut', 'results'],  # noqa: S603, S607
+        capture_output=True,
+        text=True,
+    )
+    print(results.stdout)
+
+
+def _connect_db():
+    """Open a direct sqlite3 connection to the configured database."""
+    import sqlite3
+
+    db_path = _get_db_path()
+    db = sqlite3.connect(db_path)
+    db.row_factory = sqlite3.Row
+    return db
+
+
 def hash_password(args):
     """Generate a secure password hash for the admin account.
 
@@ -1311,6 +1462,19 @@ def main():
     # Secret key generation / rotation
     subparsers.add_parser('generate-secret', help='Generate a secure secret_key')
     subparsers.add_parser('rotate-secret-key', help='Rotate secret_key in config.yaml (invalidates sessions)')
+    subparsers.add_parser('rebuild-search-index', help='Rebuild FTS5 search index from all content')
+
+    # Translation export/import (Phase 15.3)
+    export_parser = subparsers.add_parser('translations-export', help='Export translatable content as JSON')
+    export_parser.add_argument('--locale', required=True, help='Target locale code (e.g., es, fr)')
+    export_parser.add_argument('--output', '-o', help='Output file path (default: stdout)')
+
+    import_parser = subparsers.add_parser('translations-import', help='Import translations from JSON')
+    import_parser.add_argument('--locale', required=True, help='Locale code for the imported translations')
+    import_parser.add_argument('file', help='Path to the JSON file to import')
+
+    # Mutation testing (Phase 18.8)
+    subparsers.add_parser('mutation-report', help='Run mutmut and print a summary report')
 
     # Password hash generation
     subparsers.add_parser('hash-password', help='Generate an admin password hash')
@@ -1432,6 +1596,10 @@ def main():
         'config': config_validate,
         'generate-secret': generate_secret,
         'rotate-secret-key': rotate_secret_key,
+        'rebuild-search-index': rebuild_search_index,
+        'translations-export': translations_export,
+        'translations-import': translations_import,
+        'mutation-report': mutation_report,
         'hash-password': hash_password,
         'generate-token': generate_token,
         'generate-api-token': generate_api_token,

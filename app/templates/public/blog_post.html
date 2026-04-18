@@ -13,16 +13,47 @@
 {% block title %}{{ post.title }} — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
 {% block meta_description %}{{ post.meta_description or post.summary }}{% endblock %}
 {% block og_title %}{{ post.title }}{% endblock %}
+{% block og_description %}{{ post.meta_description or post.summary }}{% endblock %}
+{% block og_type %}article{% endblock %}
 
-{% block head_extra %}
+{% block canonical %}<link rel="canonical" href="{{ url_for('blog.blog_post', slug=post.slug, _external=True) }}">{% endblock %}
+
+{% block og_extra %}
 {% if post.cover_image %}
 <meta property="og:image" content="{{ post.cover_image }}">
 {% endif %}
-<meta property="og:type" content="article">
 {% if post.published_at %}
 <meta property="article:published_time" content="{{ post.published_at }}">
 {% endif %}
+{% if post.author %}
+<meta property="article:author" content="{{ post.author }}">
+{% endif %}
+{% for tag in tags %}
+<meta property="article:tag" content="{{ tag.name }}">
+{% endfor %}
 {% endblock %}
+
+{% block jsonld %}
+<script nonce="{{ csp_nonce }}" type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    "headline": "{{ post.title | e }}",
+    "description": "{{ (post.meta_description or post.summary or '') | e }}",
+    {% if post.cover_image %}"image": "{{ post.cover_image }}",{% endif %}
+    "datePublished": "{{ post.published_at or post.created_at }}",
+    "dateModified": "{{ post.updated_at or post.published_at or post.created_at }}",
+    {% if post.author %}"author": {"@type": "Person", "name": "{{ post.author | e }}"},{% endif %}
+    "publisher": {
+        "@type": "Organization",
+        "name": "{{ site_settings.get('site_title', 'Portfolio') | e }}"
+    },
+    "mainEntityOfPage": "{{ url_for('blog.blog_post', slug=post.slug, _external=True) }}"
+}
+</script>
+{% endblock %}
+
+{% block head_extra %}{% endblock %}
 
 {% block content %}
 <article class="blog-article">

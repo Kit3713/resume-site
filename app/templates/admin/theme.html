@@ -1,0 +1,180 @@
+{# Visual Theme Editor — Phase 14.6 #}
+{% extends "admin/base_admin.html" %}
+
+{% block title %}{{ _('Theme Editor') }}{% endblock %}
+
+{% block content %}
+<div class="admin-page" style="display:grid;grid-template-columns:350px 1fr;gap:var(--space-lg);height:calc(100vh - var(--navbar-height) - var(--space-lg))">
+
+    {# Left panel: Theme controls #}
+    <div style="overflow-y:auto;padding-right:var(--space-sm)">
+        <h1 class="admin-page__title" style="margin-bottom:var(--space-md)">{{ _('Theme Editor') }}</h1>
+
+        <form method="POST" action="{{ url_for('admin.theme') }}" id="theme-form">
+
+            {# Color Preset #}
+            <div class="form-group">
+                <label class="form-label">{{ _('Color Preset') }}</label>
+                <select name="color_preset" id="preset-select" class="form-input">
+                    {% for key, preset in presets.items() %}
+                    <option value="{{ key }}" data-accent="{{ preset.accent }}" {{ 'selected' if current_settings.get('color_preset', 'default') == key }}>
+                        {{ preset.label }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            {# Accent Color #}
+            <div class="form-group">
+                <label class="form-label">{{ _('Accent Color') }}</label>
+                <div style="display:flex;gap:var(--space-xs);align-items:center">
+                    <input type="color" name="accent_color" id="accent-color" value="{{ current_settings.get('accent_color', '#0071e3') }}" style="width:50px;height:36px;border:none;cursor:pointer">
+                    <input type="text" id="accent-hex" value="{{ current_settings.get('accent_color', '#0071e3') }}" class="form-input" style="width:120px" pattern="#[0-9a-fA-F]{6}">
+                </div>
+            </div>
+
+            {# Font Pairing #}
+            <div class="form-group">
+                <label class="form-label">{{ _('Font Pairing') }}</label>
+                <select name="font_pairing" id="font-select" class="form-input">
+                    <option value="inter" {{ 'selected' if current_settings.get('font_pairing', 'inter') == 'inter' }}>Inter (default)</option>
+                    <option value="space-grotesk" {{ 'selected' if current_settings.get('font_pairing') == 'space-grotesk' }}>Space Grotesk + Inter</option>
+                    <option value="plus-jakarta" {{ 'selected' if current_settings.get('font_pairing') == 'plus-jakarta' }}>Plus Jakarta Sans</option>
+                    <option value="dm-sans" {{ 'selected' if current_settings.get('font_pairing') == 'dm-sans' }}>DM Sans</option>
+                    <option value="outfit" {{ 'selected' if current_settings.get('font_pairing') == 'outfit' }}>Outfit + Inter</option>
+                </select>
+            </div>
+
+            {# Custom CSS #}
+            <div class="form-group">
+                <label class="form-label">{{ _('Custom CSS') }}</label>
+                <textarea name="custom_css" id="custom-css" class="form-input form-textarea" rows="8" style="font-family:monospace;font-size:var(--fs-sm)">{{ current_settings.get('custom_css', '') }}</textarea>
+            </div>
+
+            <div style="display:flex;gap:var(--space-sm);margin-top:var(--space-md)">
+                <button type="submit" class="btn btn--primary">{{ _('Save Theme') }}</button>
+                <button type="button" class="btn btn--secondary" onclick="resetDefaults()">{{ _('Reset to Default') }}</button>
+            </div>
+
+            {# Theme Export/Import #}
+            <div style="margin-top:var(--space-lg);border-top:1px solid var(--color-border);padding-top:var(--space-md)">
+                <h3 style="font-size:var(--fs-sm);margin-bottom:var(--space-xs)">{{ _('Export / Import') }}</h3>
+                <div style="display:flex;gap:var(--space-xs)">
+                    <button type="button" class="btn btn--secondary btn--sm" onclick="exportTheme()">{{ _('Export JSON') }}</button>
+                    <label class="btn btn--secondary btn--sm" style="cursor:pointer">
+                        {{ _('Import JSON') }}
+                        <input type="file" accept=".json" onchange="importTheme(this)" style="display:none">
+                    </label>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    {# Right panel: Live preview iframe #}
+    <div style="border:1px solid var(--color-border);border-radius:var(--radius-md);overflow:hidden">
+        <iframe id="preview-frame" src="{{ url_for('public.index') }}?preview=1" style="width:100%;height:100%;border:none" sandbox="allow-same-origin allow-scripts"></iframe>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script nonce="{{ csp_nonce }}">
+(function() {
+    var frame = document.getElementById('preview-frame');
+    var accentInput = document.getElementById('accent-color');
+    var accentHex = document.getElementById('accent-hex');
+    var presetSelect = document.getElementById('preset-select');
+    var customCss = document.getElementById('custom-css');
+
+    function sendToPreview(prop, value) {
+        if (frame.contentWindow) {
+            frame.contentWindow.postMessage({type: 'theme-update', property: prop, value: value}, '*');
+        }
+    }
+
+    // Sync color picker and hex input
+    accentInput.addEventListener('input', function() {
+        accentHex.value = this.value;
+        sendToPreview('--color-accent', this.value);
+        sendToPreview('--color-accent-hover', this.value);
+    });
+    accentHex.addEventListener('change', function() {
+        if (/^#[0-9a-fA-F]{6}$/.test(this.value)) {
+            accentInput.value = this.value;
+            sendToPreview('--color-accent', this.value);
+            sendToPreview('--color-accent-hover', this.value);
+        }
+    });
+
+    // Preset selector
+    presetSelect.addEventListener('change', function() {
+        var opt = this.options[this.selectedIndex];
+        var accent = opt.dataset.accent;
+        if (accent) {
+            accentInput.value = accent;
+            accentHex.value = accent;
+            sendToPreview('--color-accent', accent);
+            sendToPreview('--color-accent-hover', accent);
+        }
+    });
+
+    // Export theme as JSON
+    window.exportTheme = function() {
+        var theme = {
+            accent_color: accentInput.value,
+            color_preset: presetSelect.value,
+            font_pairing: document.getElementById('font-select').value,
+            custom_css: customCss.value
+        };
+        var blob = new Blob([JSON.stringify(theme, null, 2)], {type: 'application/json'});
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'resume-site-theme.json';
+        a.click();
+    };
+
+    // Import theme from JSON
+    window.importTheme = function(input) {
+        var file = input.files[0];
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                var theme = JSON.parse(e.target.result);
+                if (theme.accent_color) { accentInput.value = theme.accent_color; accentHex.value = theme.accent_color; }
+                if (theme.color_preset) presetSelect.value = theme.color_preset;
+                if (theme.font_pairing) document.getElementById('font-select').value = theme.font_pairing;
+                if (theme.custom_css !== undefined) customCss.value = theme.custom_css;
+                sendToPreview('--color-accent', accentInput.value);
+            } catch(err) { alert('Invalid theme file'); }
+        };
+        reader.readAsText(file);
+    };
+
+    // Reset to defaults
+    window.resetDefaults = function() {
+        accentInput.value = '#0071e3';
+        accentHex.value = '#0071e3';
+        presetSelect.value = 'default';
+        document.getElementById('font-select').value = 'inter';
+        customCss.value = '';
+        sendToPreview('--color-accent', '#0071e3');
+        sendToPreview('--color-accent-hover', '#0071e3');
+    };
+
+    // Listen for postMessage in the preview iframe
+    frame.addEventListener('load', function() {
+        // Inject the message listener into the iframe
+        try {
+            var script = frame.contentDocument.createElement('script');
+            script.textContent = 'window.addEventListener("message", function(e) {' +
+                'if (e.data && e.data.type === "theme-update") {' +
+                '  document.documentElement.style.setProperty(e.data.property, e.data.value);' +
+                '}' +
+            '});';
+            frame.contentDocument.head.appendChild(script);
+        } catch(e) { /* cross-origin blocked in production — postMessage still works */ }
+    });
+})();
+</script>
+{% endblock %}

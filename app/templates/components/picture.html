@@ -1,0 +1,29 @@
+{#
+  Responsive <picture> macro — Phase 12.3
+
+  Usage:
+    {% from "components/picture.html" import responsive_img %}
+    {{ responsive_img(photo.storage_name, alt=photo.title, css_class='portfolio__img') }}
+
+  Generates a <picture> element with WebP source and srcset for responsive
+  variants when they exist, falling back to a plain <img> otherwise.
+#}
+
+{% macro responsive_img(storage_name, alt='', css_class='', loading='lazy') %}
+{%- set base = storage_name.rsplit('.', 1)[0] -%}
+{%- set ext = '.' + storage_name.rsplit('.', 1)[1] if '.' in storage_name else '.jpg' -%}
+{%- set src = url_for('public.serve_photo', storage_name=storage_name) -%}
+<picture>
+    {%- if ext != '.webp' %}
+    <source type="image/webp"
+            srcset="{{ url_for('public.serve_photo', storage_name=base + '.webp') }}"
+            onerror="this.remove()">
+    {%- endif %}
+    <img class="{{ css_class }}"
+         src="{{ src }}"
+         srcset="{{ url_for('public.serve_photo', storage_name=base + '_640w' + ext) }} 640w, {{ url_for('public.serve_photo', storage_name=base + '_1024w' + ext) }} 1024w, {{ src }} 2000w"
+         sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+         alt="{{ alt }}"
+         loading="{{ loading }}">
+</picture>
+{%- endmacro %}

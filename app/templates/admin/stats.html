@@ -35,12 +35,13 @@
         <h2 class="admin-section__title">{{ _('All Stats') }}</h2>
         <table class="admin-table">
             <thead>
-                <tr><th>{{ _('Label') }}</th><th>{{ _('Value') }}</th><th>{{ _('Suffix') }}</th><th>{{ _('Order') }}</th><th>{{ _('Visible') }}</th><th>{{ _('Actions') }}</th></tr>
+                <tr><th></th><th>{{ _('Label') }}</th><th>{{ _('Value') }}</th><th>{{ _('Suffix') }}</th><th>{{ _('Order') }}</th><th>{{ _('Visible') }}</th><th>{{ _('Actions') }}</th></tr>
             </thead>
-            <tbody>
+            <tbody id="sortable-stats">
                 {% for stat in stats %}
-                <tr>
+                <tr data-id="{{ stat.id }}">
                     <form method="POST" action="{{ url_for('admin.stats_edit', stat_id=stat.id) }}">
+                    <td class="drag-handle" title="{{ _('Drag to reorder') }}" style="cursor:grab;width:30px">&#9776;</td>
                     <td><input type="text" name="label" value="{{ stat.label }}" class="form-input"></td>
                     <td><input type="number" name="value" value="{{ stat.value }}" class="form-input" style="width:100px"></td>
                     <td><input type="text" name="suffix" value="{{ stat.suffix }}" class="form-input" style="width:60px"></td>
@@ -62,4 +63,27 @@
     <p class="admin-empty">{{ _('No stats yet. Add counters to display on the landing page.') }}</p>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script nonce="{{ csp_nonce }}">
+(function() {
+    var el = document.getElementById('sortable-stats');
+    if (!el || typeof Sortable === 'undefined') return;
+    Sortable.create(el, {
+        handle: '.drag-handle',
+        animation: 150,
+        onEnd: function() {
+            var ids = Array.from(el.querySelectorAll('[data-id]')).map(function(item) {
+                return parseInt(item.dataset.id, 10);
+            });
+            fetch('{{ url_for("admin.reorder") }}', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({table: 'stats', id_order: ids})
+            });
+        }
+    });
+})();
+</script>
 {% endblock %}

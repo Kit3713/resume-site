@@ -1,0 +1,56 @@
+{# Admin Translation Editor — Phase 15.3 #}
+{% extends "admin/base_admin.html" %}
+
+{% block title %}{{ _('Translations') }} — {{ table_label }}{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+    <h1 class="admin-page__title">{{ _('Translations') }}: {{ table_label }} #{{ item_id }}</h1>
+
+    {# Original (default locale) content as reference #}
+    <div class="admin-section">
+        <h2 class="admin-section__title">{{ _('Original (English)') }}</h2>
+        <div class="admin-list-item" style="padding:var(--space-sm)">
+            {% for field in fields %}
+            <div style="margin-bottom:var(--space-xs)">
+                <strong>{{ field }}:</strong>
+                <span style="color:var(--color-text-secondary)">{{ original.get(field, '') | truncate(200) }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    {# Translation forms per locale #}
+    {% for locale in available_locales %}
+    <div class="admin-section">
+        <h2 class="admin-section__title">
+            {{ locale | upper }}
+            {% if locale in existing_locales %}
+            <span class="admin-badge admin-badge--success" style="font-size:var(--fs-xs)">{{ _('translated') }}</span>
+            {% else %}
+            <span class="admin-badge admin-badge--muted" style="font-size:var(--fs-xs)">{{ _('not translated') }}</span>
+            {% endif %}
+        </h2>
+        <form method="POST" action="{{ url_for('admin.translations', table=table, item_id=item_id) }}" class="admin-form">
+            <input type="hidden" name="locale" value="{{ locale }}">
+            {% set trans = locale_translations.get(locale, {}) %}
+            {% for field in fields %}
+            <div class="form-group">
+                <label class="form-label">{{ field | title }}</label>
+                {% if field in ('content', 'description', 'plain_text') %}
+                <textarea name="{{ field }}" class="form-input form-textarea" rows="4">{{ trans.get(field, '') if trans.get('_locale') == locale else '' }}</textarea>
+                {% else %}
+                <input type="text" name="{{ field }}" value="{{ trans.get(field, '') if trans.get('_locale') == locale else '' }}" class="form-input">
+                {% endif %}
+            </div>
+            {% endfor %}
+            <button type="submit" class="btn btn--primary btn--sm">{{ _('Save') }} {{ locale | upper }}</button>
+        </form>
+    </div>
+    {% endfor %}
+
+    {% if not available_locales %}
+    <p class="admin-empty">{{ _('Configure additional locales in Settings > available_locales to enable translations.') }}</p>
+    {% endif %}
+</div>
+{% endblock %}

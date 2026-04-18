@@ -39,7 +39,8 @@
                      data-category="{{ photo.category }}"
                      data-has-meta="{{ '1' if photo.title or photo.description else '0' }}"
                      data-has-case-study="{{ photo.has_case_study }}">
-                    <img class="portfolio__img" src="{{ url_for('public.serve_photo', storage_name=photo.storage_name) }}" alt="{{ photo.title or _('Portfolio image') }}" loading="lazy">
+                    {% from "components/picture.html" import responsive_img %}
+                    {{ responsive_img(photo.storage_name, alt=photo.title or _('Portfolio image'), css_class='portfolio__img') }}
                     {% if photo.title or photo.description or photo.has_case_study %}
                     <div class="portfolio__overlay">
                         {% if photo.title %}<h3 class="portfolio__overlay-title">{{ photo.title }}</h3>{% endif %}
@@ -66,7 +67,8 @@
                      data-has-meta="{{ '1' if photo.title or photo.description else '0' }}"
                      data-has-case-study="{{ photo.has_case_study }}"
                      data-full-src="{{ url_for('public.serve_photo', storage_name=photo.storage_name) }}">
-                    <img class="portfolio__img" src="{{ url_for('public.serve_photo', storage_name=photo.storage_name) }}" alt="{{ photo.title or _('Portfolio image') }}" loading="lazy">
+                    {% from "components/picture.html" import responsive_img %}
+                    {{ responsive_img(photo.storage_name, alt=photo.title or _('Portfolio image'), css_class='portfolio__img') }}
                     {% if photo.title or photo.description or photo.has_case_study %}
                     <div class="portfolio__overlay">
                         {% if photo.title %}<h3 class="portfolio__overlay-title">{{ photo.title }}</h3>{% endif %}
