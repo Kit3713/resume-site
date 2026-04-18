@@ -109,9 +109,7 @@ class _Metric:
 
     TYPE = 'untyped'
 
-    def __init__(
-        self, name: str, help_text: str, label_names: Iterable[str] = ()
-    ) -> None:
+    def __init__(self, name: str, help_text: str, label_names: Iterable[str] = ()) -> None:
         """Store the metric identity; subclasses own the value semantics."""
         self.name = name
         self.help = help_text
@@ -249,15 +247,11 @@ class MetricsRegistry:
         self._metrics: dict[str, _Metric] = {}
         self._lock = threading.Lock()
 
-    def counter(
-        self, name: str, help_text: str, label_names: Iterable[str] = ()
-    ) -> Counter:
+    def counter(self, name: str, help_text: str, label_names: Iterable[str] = ()) -> Counter:
         """Declare or return the :class:`Counter` registered under ``name``."""
         return self._get_or_create(name, help_text, label_names, Counter)
 
-    def gauge(
-        self, name: str, help_text: str, label_names: Iterable[str] = ()
-    ) -> Gauge:
+    def gauge(self, name: str, help_text: str, label_names: Iterable[str] = ()) -> Gauge:
         """Declare or return the :class:`Gauge` registered under ``name``."""
         return self._get_or_create(name, help_text, label_names, Gauge)
 

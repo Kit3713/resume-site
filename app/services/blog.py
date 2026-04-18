@@ -113,9 +113,7 @@ def get_post_by_id(db: sqlite3.Connection, post_id: int) -> sqlite3.Row | None:
     return db.execute('SELECT * FROM blog_posts WHERE id = ?', (post_id,)).fetchone()
 
 
-def get_all_posts(
-    db: sqlite3.Connection, status_filter: str | None = None
-) -> list[sqlite3.Row]:
+def get_all_posts(db: sqlite3.Connection, status_filter: str | None = None) -> list[sqlite3.Row]:
     """Return all posts, optionally filtered by status (admin use).
 
     Args:

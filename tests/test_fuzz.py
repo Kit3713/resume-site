@@ -124,7 +124,9 @@ def test_sanitize_html_xss_payloads():
     for payload in XSS_PAYLOADS:
         result = sanitize_html(payload)
         assert '<script' not in result.lower(), f'XSS survived: {payload!r} -> {result!r}'
-        assert 'onerror=' not in result.lower(), f'Event handler survived: {payload!r} -> {result!r}'
+        assert 'onerror=' not in result.lower(), (
+            f'Event handler survived: {payload!r} -> {result!r}'
+        )
         assert 'onload=' not in result.lower(), f'Event handler survived: {payload!r} -> {result!r}'
 
 
@@ -187,8 +189,16 @@ def test_validate_magic_bytes_rejects_random_data(data):
 # ============================================================
 
 
-@given(path=st.text(alphabet=st.characters(whitelist_categories=('L', 'N', 'P')), min_size=1, max_size=100))
-@settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture])
+@given(
+    path=st.text(
+        alphabet=st.characters(whitelist_categories=('L', 'N', 'P')), min_size=1, max_size=100
+    )
+)
+@settings(
+    max_examples=50,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+)
 def test_http_random_paths_no_500(app, path):
     with app.test_client() as client:
         response = client.get(f'/{path}')
@@ -199,7 +209,11 @@ def test_http_random_paths_no_500(app, path):
     method=st.sampled_from(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']),
     path=st.sampled_from(['/', '/portfolio', '/blog', '/contact', '/api/v1/site', '/admin/login']),
 )
-@settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture])
+@settings(
+    max_examples=50,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+)
 def test_http_random_methods_no_500(app, method, path):
     with app.test_client() as client:
         response = client.open(path, method=method)

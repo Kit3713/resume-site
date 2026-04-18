@@ -69,4 +69,5 @@ def init_app(app: Flask) -> None:
     def _inject_static_hashed():
         def static_hashed(filename):
             return hashed_static_url(filename, app)
+
         return {'static_hashed': static_hashed}

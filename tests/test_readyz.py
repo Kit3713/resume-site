@@ -182,7 +182,9 @@ def test_readyz_min_free_env_override(client, app, monkeypatch):
 
     # Mock a filesystem with 2MB free. Default threshold (100MB) would
     # fail, but env override of 1MB should pass.
-    monkeypatch.setattr(shutil, 'disk_usage', lambda _path: _DiskUsage(10_000_000, 8_000_000, 2_000_000))
+    monkeypatch.setattr(
+        shutil, 'disk_usage', lambda _path: _DiskUsage(10_000_000, 8_000_000, 2_000_000)
+    )
     monkeypatch.setenv('RESUME_SITE_READYZ_MIN_FREE_MB', '1')
 
     response = client.get('/readyz')
@@ -216,9 +218,7 @@ def test_readyz_not_recorded_in_page_views(client, app):
 
     conn = sqlite3.connect(app.config['DATABASE_PATH'])
     try:
-        rows = conn.execute(
-            "SELECT COUNT(*) FROM page_views WHERE path LIKE '/readyz%'"
-        ).fetchone()
+        rows = conn.execute("SELECT COUNT(*) FROM page_views WHERE path LIKE '/readyz%'").fetchone()
     finally:
         conn.close()
     assert rows[0] == 0

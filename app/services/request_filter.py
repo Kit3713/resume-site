@@ -33,6 +33,7 @@ _SQL_INJECTION = re.compile(
     re.IGNORECASE,
 )
 
+
 def check_request(settings: dict) -> None:
     """Inspect the current request and abort(400) on suspicious patterns.
 
@@ -40,12 +41,18 @@ def check_request(settings: dict) -> None:
         settings: The cached settings dict (from ``get_all_cached``).
     """
     if str(settings.get('request_filter_enabled', 'true')).lower() not in {
-        '1', 'true', 'yes', 'on',
+        '1',
+        'true',
+        'yes',
+        'on',
     }:
         return
 
     log_only = str(settings.get('request_filter_log_only', 'false')).lower() in {
-        '1', 'true', 'yes', 'on',
+        '1',
+        'true',
+        'yes',
+        'on',
     }
 
     reason = _detect_violation()

@@ -151,9 +151,7 @@ def test_admin_routes_require_auth(client, path, method):
 def test_admin_webhooks_ip_restriction(app):
     """IP gate inherited from the admin blueprint applies here too."""
     client = app.test_client()
-    response = client.get(
-        '/admin/webhooks', headers={'X-Forwarded-For': '203.0.113.42'}
-    )
+    response = client.get('/admin/webhooks', headers={'X-Forwarded-For': '203.0.113.42'})
     assert response.status_code == 403
 
 
@@ -297,9 +295,7 @@ def test_admin_webhooks_test_button_records_success(auth_client, db, app, monkey
         'app.services.webhooks.urlopen',
         lambda req, timeout=None: _StubResponse(204),
     )
-    response = auth_client.post(
-        f'/admin/webhooks/{wh_id}/test', follow_redirects=True
-    )
+    response = auth_client.post(f'/admin/webhooks/{wh_id}/test', follow_redirects=True)
     assert response.status_code == 200
     assert b'Test delivery succeeded' in response.data
     # One delivery row written + counter still 0.
@@ -309,9 +305,7 @@ def test_admin_webhooks_test_button_records_success(auth_client, db, app, monkey
         rows = fresh.execute(
             'SELECT * FROM webhook_deliveries WHERE webhook_id = ?', (wh_id,)
         ).fetchall()
-        wh = fresh.execute(
-            'SELECT failure_count FROM webhooks WHERE id = ?', (wh_id,)
-        ).fetchone()
+        wh = fresh.execute('SELECT failure_count FROM webhooks WHERE id = ?', (wh_id,)).fetchone()
     finally:
         fresh.close()
     assert len(rows) == 1
@@ -327,9 +321,7 @@ def test_admin_webhooks_test_button_records_failure(auth_client, db, app, monkey
         'app.services.webhooks.urlopen',
         lambda req, timeout=None: (_ for _ in ()).throw(URLError('boom')),
     )
-    response = auth_client.post(
-        f'/admin/webhooks/{wh_id}/test', follow_redirects=True
-    )
+    response = auth_client.post(f'/admin/webhooks/{wh_id}/test', follow_redirects=True)
     assert response.status_code == 200
     assert b'Test delivery failed' in response.data
     assert _webhook_row(app, wh_id)['failure_count'] == 1
@@ -349,9 +341,7 @@ def test_admin_webhooks_deliveries_page_shows_log(auth_client, db, app):
 
 
 def test_admin_webhooks_deliveries_404_for_missing_id(auth_client):
-    response = auth_client.get(
-        '/admin/webhooks/9999/deliveries', follow_redirects=True
-    )
+    response = auth_client.get('/admin/webhooks/9999/deliveries', follow_redirects=True)
     assert response.status_code == 200
     assert b'Webhook not found' in response.data
 
@@ -390,9 +380,7 @@ def test_api_admin_webhooks_rejects_write_scope(client, no_rate_limits, app):
 
 def test_api_admin_webhooks_list_returns_no_secrets(client, no_rate_limits, api_admin_token, db):
     _seed_webhook(db, name='Slack', secret='very-secret')
-    response = client.get(
-        '/api/v1/admin/webhooks', headers=_admin_headers(api_admin_token)
-    )
+    response = client.get('/api/v1/admin/webhooks', headers=_admin_headers(api_admin_token))
     assert response.status_code == 200
     body = response.get_json()
     assert len(body['data']) == 1
@@ -433,9 +421,7 @@ def test_api_admin_webhooks_create_round_trip(client, no_rate_limits, api_admin_
     assert 'secret' not in detail.get_json()['data']
 
 
-def test_api_admin_webhooks_create_accepts_csv_events(
-    client, no_rate_limits, api_admin_token, app
-):
+def test_api_admin_webhooks_create_accepts_csv_events(client, no_rate_limits, api_admin_token, app):
     response = client.post(
         '/api/v1/admin/webhooks',
         json={
@@ -461,9 +447,7 @@ def test_api_admin_webhooks_create_uses_supplied_secret(
     assert response.get_json()['data']['secret'] == 'pinned'
 
 
-def test_api_admin_webhooks_create_rejects_missing_url(
-    client, no_rate_limits, api_admin_token
-):
+def test_api_admin_webhooks_create_rejects_missing_url(client, no_rate_limits, api_admin_token):
     response = client.post(
         '/api/v1/admin/webhooks',
         json={'name': 'X'},
@@ -475,9 +459,7 @@ def test_api_admin_webhooks_create_rejects_missing_url(
     assert body['details']['field'] == 'url'
 
 
-def test_api_admin_webhooks_create_rejects_bad_scheme(
-    client, no_rate_limits, api_admin_token
-):
+def test_api_admin_webhooks_create_rejects_bad_scheme(client, no_rate_limits, api_admin_token):
     response = client.post(
         '/api/v1/admin/webhooks',
         json={'name': 'X', 'url': 'ftp://example/'},
@@ -487,19 +469,13 @@ def test_api_admin_webhooks_create_rejects_bad_scheme(
     assert response.get_json()['details']['field'] == 'url'
 
 
-def test_api_admin_webhooks_get_404_for_missing(
-    client, no_rate_limits, api_admin_token
-):
-    response = client.get(
-        '/api/v1/admin/webhooks/9999', headers=_admin_headers(api_admin_token)
-    )
+def test_api_admin_webhooks_get_404_for_missing(client, no_rate_limits, api_admin_token):
+    response = client.get('/api/v1/admin/webhooks/9999', headers=_admin_headers(api_admin_token))
     assert response.status_code == 404
     assert response.get_json()['code'] == 'NOT_FOUND'
 
 
-def test_api_admin_webhooks_update_partial(
-    client, no_rate_limits, api_admin_token, db, app
-):
+def test_api_admin_webhooks_update_partial(client, no_rate_limits, api_admin_token, db, app):
     wh_id = _seed_webhook(db, name='Old', secret='orig')
     response = client.put(
         f'/api/v1/admin/webhooks/{wh_id}',
@@ -514,9 +490,7 @@ def test_api_admin_webhooks_update_partial(
     assert _webhook_row(app, wh_id)['secret'] == 'orig'
 
 
-def test_api_admin_webhooks_update_rotates_secret(
-    client, no_rate_limits, api_admin_token, db, app
-):
+def test_api_admin_webhooks_update_rotates_secret(client, no_rate_limits, api_admin_token, db, app):
     wh_id = _seed_webhook(db, secret='orig')
     client.put(
         f'/api/v1/admin/webhooks/{wh_id}',
@@ -526,9 +500,7 @@ def test_api_admin_webhooks_update_rotates_secret(
     assert _webhook_row(app, wh_id)['secret'] == 'rotated'
 
 
-def test_api_admin_webhooks_update_reset_failures(
-    client, no_rate_limits, api_admin_token, db, app
-):
+def test_api_admin_webhooks_update_reset_failures(client, no_rate_limits, api_admin_token, db, app):
     from app.services.webhooks import increment_failures
 
     wh_id = _seed_webhook(db)
@@ -558,9 +530,7 @@ def test_api_admin_webhooks_update_rejects_empty_secret(
     assert response.get_json()['details']['field'] == 'secret'
 
 
-def test_api_admin_webhooks_delete_returns_204(
-    client, no_rate_limits, api_admin_token, db, app
-):
+def test_api_admin_webhooks_delete_returns_204(client, no_rate_limits, api_admin_token, db, app):
     wh_id = _seed_webhook(db)
     response = client.delete(
         f'/api/v1/admin/webhooks/{wh_id}', headers=_admin_headers(api_admin_token)
@@ -610,9 +580,7 @@ def test_api_admin_webhooks_test_failure_path_increments_counter(
     assert _webhook_row(app, wh_id)['failure_count'] == 1
 
 
-def test_api_admin_webhooks_deliveries_returns_log(
-    client, no_rate_limits, api_admin_token, db
-):
+def test_api_admin_webhooks_deliveries_returns_log(client, no_rate_limits, api_admin_token, db):
     from app.services.webhooks import DeliveryResult, record_delivery
 
     wh_id = _seed_webhook(db)
@@ -631,9 +599,7 @@ def test_api_admin_webhooks_deliveries_returns_log(
     assert rows[1]['event'] == 'blog.published'
 
 
-def test_api_admin_webhooks_deliveries_404_for_missing_id(
-    client, no_rate_limits, api_admin_token
-):
+def test_api_admin_webhooks_deliveries_404_for_missing_id(client, no_rate_limits, api_admin_token):
     response = client.get(
         '/api/v1/admin/webhooks/9999/deliveries',
         headers=_admin_headers(api_admin_token),
@@ -641,14 +607,10 @@ def test_api_admin_webhooks_deliveries_404_for_missing_id(
     assert response.status_code == 404
 
 
-def test_api_admin_webhooks_list_etag_round_trip(
-    client, no_rate_limits, api_admin_token, db
-):
+def test_api_admin_webhooks_list_etag_round_trip(client, no_rate_limits, api_admin_token, db):
     """Read endpoints share the canonical ETag/If-None-Match contract."""
     _seed_webhook(db, name='ETag-able')
-    first = client.get(
-        '/api/v1/admin/webhooks', headers=_admin_headers(api_admin_token)
-    )
+    first = client.get('/api/v1/admin/webhooks', headers=_admin_headers(api_admin_token))
     assert first.status_code == 200
     etag = first.headers.get('ETag')
     assert etag

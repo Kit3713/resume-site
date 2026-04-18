@@ -82,9 +82,7 @@ def _init_db(db_path: Path) -> None:
         conn.commit()
 
         # Seed: turn the blog on and create content the routes will hit.
-        conn.execute(
-            "INSERT OR REPLACE INTO settings (key, value) VALUES ('blog_enabled', 'true')"
-        )
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('blog_enabled', 'true')")
         for i in range(1, 21):
             conn.execute(
                 'INSERT INTO blog_posts '

@@ -1319,15 +1319,19 @@ def search():
                 (q,),
             ).fetchall()
             for row in rows:
-                results.append({
-                    'type': row['content_type'],
-                    'id': row['content_id'],
-                    'title': row['title'],
-                    'snippet': row['snippet'],
-                })
+                results.append(
+                    {
+                        'type': row['content_type'],
+                        'id': row['content_id'],
+                        'title': row['title'],
+                        'snippet': row['snippet'],
+                    }
+                )
         except Exception:  # noqa: BLE001, S110 — FTS5 table may not exist yet
             pass
-    return render_template('admin/search.html', query=q, results=results, type_urls=_SEARCH_TYPE_URLS)
+    return render_template(
+        'admin/search.html', query=q, results=results, type_urls=_SEARCH_TYPE_URLS
+    )
 
 
 def _in_clause(ids):
@@ -1350,18 +1354,36 @@ _BULK_ACTIONS = {
         'set_tier': lambda db, ids, tier='grid': _bulk_set_photo_tier(db, ids, tier),
     },
     'reviews': {
-        'approve': lambda db, ids: _bulk_exec(db, "UPDATE reviews SET status='approved' WHERE id IN ({placeholders})", ids),
-        'reject': lambda db, ids: _bulk_exec(db, "UPDATE reviews SET status='rejected' WHERE id IN ({placeholders})", ids),
-        'delete': lambda db, ids: _bulk_exec(db, 'DELETE FROM reviews WHERE id IN ({placeholders})', ids),
+        'approve': lambda db, ids: _bulk_exec(
+            db, "UPDATE reviews SET status='approved' WHERE id IN ({placeholders})", ids
+        ),
+        'reject': lambda db, ids: _bulk_exec(
+            db, "UPDATE reviews SET status='rejected' WHERE id IN ({placeholders})", ids
+        ),
+        'delete': lambda db, ids: _bulk_exec(
+            db, 'DELETE FROM reviews WHERE id IN ({placeholders})', ids
+        ),
     },
     'blog_posts': {
-        'publish': lambda db, ids: _bulk_exec(db, "UPDATE blog_posts SET status='published', published_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id IN ({placeholders})", ids),
-        'unpublish': lambda db, ids: _bulk_exec(db, "UPDATE blog_posts SET status='draft' WHERE id IN ({placeholders})", ids),
-        'delete': lambda db, ids: _bulk_exec(db, 'DELETE FROM blog_posts WHERE id IN ({placeholders})', ids),
+        'publish': lambda db, ids: _bulk_exec(
+            db,
+            "UPDATE blog_posts SET status='published', published_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id IN ({placeholders})",
+            ids,
+        ),
+        'unpublish': lambda db, ids: _bulk_exec(
+            db, "UPDATE blog_posts SET status='draft' WHERE id IN ({placeholders})", ids
+        ),
+        'delete': lambda db, ids: _bulk_exec(
+            db, 'DELETE FROM blog_posts WHERE id IN ({placeholders})', ids
+        ),
     },
     'contact_submissions': {
-        'delete': lambda db, ids: _bulk_exec(db, 'DELETE FROM contact_submissions WHERE id IN ({placeholders})', ids),
-        'mark_spam': lambda db, ids: _bulk_exec(db, 'UPDATE contact_submissions SET is_spam=1 WHERE id IN ({placeholders})', ids),
+        'delete': lambda db, ids: _bulk_exec(
+            db, 'DELETE FROM contact_submissions WHERE id IN ({placeholders})', ids
+        ),
+        'mark_spam': lambda db, ids: _bulk_exec(
+            db, 'UPDATE contact_submissions SET is_spam=1 WHERE id IN ({placeholders})', ids
+        ),
     },
 }
 
@@ -1384,7 +1406,12 @@ def _bulk_set_photo_tier(db, ids, tier):
     """Set display_tier for multiple photos."""
     if tier not in ('featured', 'grid', 'hidden'):
         return
-    _bulk_exec(db, 'UPDATE photos SET display_tier=? WHERE id IN ({placeholders})', ids, extra_params=[tier])
+    _bulk_exec(
+        db,
+        'UPDATE photos SET display_tier=? WHERE id IN ({placeholders})',
+        ids,
+        extra_params=[tier],
+    )
 
 
 @admin_bp.route('/bulk-action', methods=['POST'])

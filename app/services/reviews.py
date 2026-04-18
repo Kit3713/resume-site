@@ -35,9 +35,7 @@ def get_reviews_by_status(db: sqlite3.Connection, status: str) -> list[sqlite3.R
     ).fetchall()
 
 
-def approve_review(
-    db: sqlite3.Connection, review_id: int, display_tier: str = 'standard'
-) -> None:
+def approve_review(db: sqlite3.Connection, review_id: int, display_tier: str = 'standard') -> None:
     """Approve a review and set its display tier.
 
     Args:

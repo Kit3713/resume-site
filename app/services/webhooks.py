@@ -334,9 +334,7 @@ def reset_failures(db: sqlite3.Connection, webhook_id: int) -> None:
     db.commit()
 
 
-def increment_failures(
-    db: sqlite3.Connection, webhook_id: int, *, threshold: int = 10
-) -> bool:
+def increment_failures(db: sqlite3.Connection, webhook_id: int, *, threshold: int = 10) -> bool:
     """Bump ``failure_count`` and auto-disable when it crosses ``threshold``.
 
     Returns ``True`` when the row was just disabled by this call (so
