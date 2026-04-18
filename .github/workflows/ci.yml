@@ -189,7 +189,25 @@ jobs:
             -t ${{ env.IMAGE_NAME }}:scan \
             -f Containerfile .
 
-      - name: Trivy vulnerability + secret scan
+      # Informational table-format pass first — always runs, always
+      # prints to the job log so an operator can see exactly which
+      # CVEs landed without having to download a SARIF artifact.
+      # `exit-code: 0` here means this step never fails the build on
+      # its own; the follow-up SARIF pass is the actual gate.
+      - name: Trivy scan (human-readable, advisory)
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:scan
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+          ignore-unfixed: true
+          scanners: 'vuln,secret'
+          cache: 'true'
+
+      # Gate: SARIF output (for GitHub Security tab + artifact upload)
+      # AND exit-code 1 on HIGH/CRITICAL findings.
+      - name: Trivy vulnerability + secret scan (gate)
         uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:scan
@@ -199,7 +217,6 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           scanners: 'vuln,secret'
-          # Cache the vuln database between runs to keep scans fast.
           cache: 'true'
 
       - name: Upload SARIF for inspection
