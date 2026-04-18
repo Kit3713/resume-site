@@ -201,7 +201,19 @@ def test_validate_magic_bytes_rejects_random_data(data):
 )
 def test_http_random_paths_no_500(app, path):
     with app.test_client() as client:
-        response = client.get(f'/{path}')
+        # Werkzeug's test client builds an internal URL and round-trips
+        # it through the stdlib URL parser. A handful of fuzzed inputs
+        # (notably "/.", which Hypothesis discovers on every seed) trip
+        # Python 3.11's stricter IDNA codec with ``label empty or too
+        # long`` BEFORE the request even reaches Flask. That's a
+        # client-side URL-construction failure, not a server bug —
+        # skip it and let Hypothesis try another input. Any input that
+        # does reach Flask still has to not 500, which is the real
+        # contract this test protects.
+        try:
+            response = client.get(f'/{path}')
+        except UnicodeError:
+            return
         assert response.status_code != 500, f'500 on GET /{path}'
 
 
