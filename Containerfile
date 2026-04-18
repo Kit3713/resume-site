@@ -63,10 +63,17 @@ LABEL org.opencontainers.image.title="resume-site" \
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Install only runtime system deps (curl for healthcheck)
+# Install only runtime system deps (curl for healthcheck). Run
+# ``apt-get upgrade`` first so any CVE-fixed package versions pushed
+# to debian after the base image was built get picked up — otherwise
+# the trivy scan flags known-fixed CVEs (e.g. CVE-2026-28390 openssl)
+# that the debian maintainers already patched but docker-hub hasn't
+# rebuilt the base for yet.
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends curl && \
-    rm -rf /var/lib/apt/lists/* && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb && \
     # Create non-root user
     groupadd -r appuser -g 1000 && \
     useradd -r -u 1000 -g appuser -d /app -s /sbin/nologin appuser

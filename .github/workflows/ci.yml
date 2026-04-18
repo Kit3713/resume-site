@@ -14,7 +14,13 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # IMPORTANT: lowercased literal. ``${{ github.repository }}`` evaluates
+  # to ``Kit3713/resume-site`` which trivy's image-ref parser rejects
+  # (OCI / Docker Distribution spec requires lowercase names). GHCR
+  # already stores every push under the lowercased namespace, so
+  # keeping this lowercase keeps the local build tag consistent with
+  # what gets pushed.
+  IMAGE_NAME: kit3713/resume-site
 
 permissions:
   contents: read
