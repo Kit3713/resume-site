@@ -189,42 +189,22 @@ jobs:
             -t ${{ env.IMAGE_NAME }}:scan \
             -f Containerfile .
 
-      # Informational table-format pass first — always runs, always
-      # prints to the job log so an operator can see exactly which
-      # CVEs landed without having to download a SARIF artifact.
-      # `exit-code: 0` here means this step never fails the build on
-      # its own; the follow-up SARIF pass is the actual gate.
-      - name: Trivy scan (human-readable, advisory)
+      # Single gate step: table output to stdout (so the CVE list is
+      # visible in the job log) AND exit-code 1 on HIGH/CRITICAL.
+      # SARIF artifact upload was removed — without gh auth the
+      # artifact download is useless, and the table output is easier
+      # to read in the UI anyway. Can be reintroduced later if we
+      # want the GitHub Security tab integration.
+      - name: Trivy vulnerability + secret scan
         uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:scan
           format: 'table'
           severity: 'CRITICAL,HIGH'
-          exit-code: '0'
-          ignore-unfixed: true
-          scanners: 'vuln,secret'
-          cache: 'true'
-
-      # Gate: SARIF output (for GitHub Security tab + artifact upload)
-      # AND exit-code 1 on HIGH/CRITICAL findings.
-      - name: Trivy vulnerability + secret scan (gate)
-        uses: aquasecurity/trivy-action@v0.35.0
-        with:
-          image-ref: ${{ env.IMAGE_NAME }}:scan
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
           exit-code: '1'
           ignore-unfixed: true
           scanners: 'vuln,secret'
           cache: 'true'
-
-      - name: Upload SARIF for inspection
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-results
-          path: trivy-results.sarif
 
   # -----------------------------------------------------------
   # Publish to GHCR (tags only)
