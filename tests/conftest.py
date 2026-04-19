@@ -157,6 +157,10 @@ def auth_client(app):
         # Manually set the Flask-Login session cookie
         sess['_user_id'] = 'admin'
         sess['_fresh'] = True
+        # Match the epoch stamp the real login handler writes so
+        # ``check_session_epoch`` accepts the synthetic session.
+        # Zero is the default for a never-bumped admin_session_epoch.
+        sess['_admin_epoch'] = 0
 
     return client
 

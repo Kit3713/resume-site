@@ -161,6 +161,40 @@ def check_session_timeout():
             pass  # Malformed timestamp — let the request proceed
 
 
+@admin_bp.before_request
+def check_session_epoch():
+    """Reject sessions older than the current admin session epoch.
+
+    Flask's default itsdangerous-signed cookie sessions cannot be revoked
+    server-side — a captured pre-logout cookie keeps deserialising to the
+    original ``{_user_id: 'admin'}`` dict forever. To fix the cookie-replay
+    finding documented in the 2026-04-18 pentest we compare a per-session
+    epoch stamp (written at login) against the current epoch stored in the
+    ``settings`` table; logout bumps the stored epoch so every
+    previously-issued cookie becomes invalid.
+
+    Runs after ``check_session_timeout`` so the activity-timeout path still
+    applies. No-ops for unauthenticated requests.
+    """
+    if not current_user.is_authenticated:
+        return
+
+    from app.services.settings_svc import get_all_cached
+
+    db = get_db()
+    settings = get_all_cached(db, current_app.config['DATABASE_PATH'])
+    try:
+        current_epoch = int(settings.get('_admin_session_epoch', '0'))
+    except (TypeError, ValueError):
+        current_epoch = 0
+
+    session_epoch = session.get('_admin_epoch')
+    if session_epoch != current_epoch:
+        logout_user()
+        session.clear()
+        return redirect(url_for('admin.login'))
+
+
 # ============================================================
 # AUTHENTICATION
 # ============================================================
@@ -251,6 +285,16 @@ def login():
             record_successful_login(db, ip_hash)
             user = AdminUser(username)
             login_user(user)
+            # Stamp the session with the current epoch so the
+            # ``check_session_epoch`` guard accepts it. ``_admin_session_epoch``
+            # is an integer counter in the settings table; it's bumped on
+            # logout (see ``logout``) so every pre-logout cookie becomes
+            # invalid. Fresh logins always adopt the current value.
+            try:
+                current_epoch = int(settings.get('_admin_session_epoch', '0'))
+            except (TypeError, ValueError):
+                current_epoch = 0
+            session['_admin_epoch'] = current_epoch
             # Redirect to the page they were trying to access, or the dashboard.
             # Only accept same-origin relative paths — reject absolute URLs,
             # scheme-relative URLs (//evil.com), and anything with a netloc to
@@ -278,8 +322,34 @@ def login():
 @admin_bp.route('/logout')
 @login_required
 def logout():
-    """Log out the admin and redirect to the public landing page."""
+    """Log out the admin and redirect to the public landing page.
+
+    Bumps ``_admin_session_epoch`` in the settings table so every
+    previously-issued admin session cookie (including any captured
+    before this logout) fails the ``check_session_epoch`` guard on
+    its next request. This is the server-side revocation needed
+    because Flask's default cookie sessions can't be invalidated
+    just by clearing the jar.
+    """
+    from app.services.settings_svc import get_all_cached, invalidate_cache
+
+    db = get_db()
+    settings = get_all_cached(db, current_app.config['DATABASE_PATH'])
+    try:
+        current_epoch = int(settings.get('_admin_session_epoch', '0'))
+    except (TypeError, ValueError):
+        current_epoch = 0
+    # ``set_one`` refuses keys outside SETTINGS_REGISTRY; write directly.
+    db.execute(
+        'INSERT INTO settings (key, value) VALUES (?, ?) '
+        'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+        ('_admin_session_epoch', str(current_epoch + 1)),
+    )
+    db.commit()
+    invalidate_cache()
+
     logout_user()
+    session.clear()
     return redirect(url_for('public.index'))
 
 

@@ -904,6 +904,19 @@ def _json_body():
     return raw if isinstance(raw, dict) else {}
 
 
+def _str_field(value, default=''):
+    """Coerce a JSON body field to a stripped string safely.
+
+    Non-string JSON values (bools, numbers, lists, dicts, None) all collapse
+    to ``default`` instead of crashing the handler with ``AttributeError``
+    on ``.strip()``. Closes the pen-test finding in §11 of
+    docs/PENTEST_CHECKLIST.md.
+    """
+    if isinstance(value, str):
+        return value.strip()
+    return default
+
+
 def _serialize_post_detail(db, post_row):
     """Build the standard blog detail payload for a POST / PUT response."""
     return _blog_post_to_dict(
@@ -943,21 +956,30 @@ def blog_create():
     in the response so the caller can follow up with PUT / DELETE.
     """
     body = _json_body()
-    title = (body.get('title') or '').strip()
+    title = _str_field(body.get('title'))
     if not title:
         return _error('Title is required', 'VALIDATION_ERROR', 400, details={'field': 'title'})
+
+    content_format = body.get('content_format', 'html') or 'html'
+    if content_format not in ('html', 'markdown'):
+        return _error(
+            f'Invalid content_format {content_format!r}',
+            'VALIDATION_ERROR',
+            400,
+            details={'field': 'content_format', 'allowed': ['html', 'markdown']},
+        )
 
     db = get_db()
     post_id = create_post(
         db,
         title=title,
-        summary=body.get('summary', '') or '',
-        content=body.get('content', '') or '',
-        content_format=body.get('content_format', 'html') or 'html',
-        cover_image=body.get('cover_image', '') or '',
-        author=body.get('author', '') or '',
-        tags=body.get('tags', '') or '',
-        meta_description=body.get('meta_description', '') or '',
+        summary=_str_field(body.get('summary')),
+        content=_str_field(body.get('content')),
+        content_format=content_format,
+        cover_image=_str_field(body.get('cover_image')),
+        author=_str_field(body.get('author')),
+        tags=_str_field(body.get('tags')),
+        meta_description=_str_field(body.get('meta_description')),
         featured=bool(body.get('featured', False)),
     )
 
@@ -1001,27 +1023,47 @@ def blog_update(slug):
 
     body = _json_body()
     # Title is the one field `update_post` requires. Keep the current
-    # value when the caller omits it.
-    title = body.get('title', existing['title']) or existing['title']
-    if not title.strip():
-        return _error('Title cannot be empty', 'VALIDATION_ERROR', 400, details={'field': 'title'})
+    # value when the caller omits it — but if the caller explicitly
+    # sends an empty/whitespace title, that's a validation error.
+    if 'title' in body:
+        title = _str_field(body.get('title'))
+        if not title:
+            return _error(
+                'Title cannot be empty',
+                'VALIDATION_ERROR',
+                400,
+                details={'field': 'title'},
+            )
+    else:
+        title = existing['title']
+
+    content_format = body.get('content_format', existing['content_format']) or 'html'
+    if content_format not in ('html', 'markdown'):
+        return _error(
+            f'Invalid content_format {content_format!r}',
+            'VALIDATION_ERROR',
+            400,
+            details={'field': 'content_format', 'allowed': ['html', 'markdown']},
+        )
 
     update_post(
         db,
         post_id=existing['id'],
         title=title.strip(),
-        summary=body.get('summary', existing['summary']) or '',
-        content=body.get('content', existing['content']) or '',
-        content_format=body.get('content_format', existing['content_format']) or 'html',
-        cover_image=body.get('cover_image', existing['cover_image']) or '',
-        author=body.get('author', existing['author']) or '',
+        summary=_str_field(body.get('summary')) or existing['summary'] or '',
+        content=_str_field(body.get('content')) or existing['content'] or '',
+        content_format=content_format,
+        cover_image=_str_field(body.get('cover_image')) or existing['cover_image'] or '',
+        author=_str_field(body.get('author')) or existing['author'] or '',
         # tags=None means "leave untouched"; tags='' means "remove all".
         # We can't distinguish "omitted" from "set to empty" in JSON, so
         # only resync tags when the key is present.
-        tags=body.get('tags', '') if 'tags' in body else '',
-        meta_description=body.get('meta_description', existing['meta_description']) or '',
+        tags=_str_field(body.get('tags')) if 'tags' in body else '',
+        meta_description=(
+            _str_field(body.get('meta_description')) or existing['meta_description'] or ''
+        ),
         featured=bool(body.get('featured', bool(existing['featured']))),
-        slug=body.get('slug'),
+        slug=body.get('slug') if isinstance(body.get('slug'), str) else None,
     )
     updated = get_post_by_id(db, existing['id'])
     emit(
@@ -1384,10 +1426,10 @@ def contact_submit():
         return _error('Contact form is disabled on this site', 'NOT_FOUND', 404)
 
     body = _json_body()
-    name = (body.get('name') or '').strip()
-    email = (body.get('email') or '').strip()
-    message = (body.get('message') or '').strip()
-    honeypot = (body.get('website') or '').strip()
+    name = _str_field(body.get('name'))
+    email = _str_field(body.get('email'))
+    message = _str_field(body.get('message'))
+    honeypot = _str_field(body.get('website'))
 
     missing = [f for f, v in (('name', name), ('email', email), ('message', message)) if not v]
     if missing:
@@ -1741,8 +1783,8 @@ def admin_review_update(review_id):
         return _error(f'No review with id {review_id}', 'NOT_FOUND', 404)
 
     body = _json_body()
-    action = (body.get('action') or '').strip()
-    tier = (body.get('display_tier') or 'standard').strip()
+    action = _str_field(body.get('action'))
+    tier = _str_field(body.get('display_tier')) or 'standard'
 
     if action == 'approve':
         approve_review(db, review_id, display_tier=tier)
@@ -1796,8 +1838,8 @@ def admin_review_token_create():
 
     db = get_db()
     body = _json_body()
-    name = (body.get('name') or '').strip()
-    token_type = (body.get('type') or 'recommendation').strip()
+    name = _str_field(body.get('name'))
+    token_type = _str_field(body.get('type')) or 'recommendation'
     if token_type not in ('recommendation', 'client_review'):
         return _error(
             f'Invalid token type {token_type!r}',
@@ -2077,9 +2119,9 @@ def admin_webhooks_create():
     from app.services.webhooks import create_webhook, get_webhook
 
     body = _json_body()
-    name = (body.get('name') or '').strip()
-    url = (body.get('url') or '').strip()
-    secret = (body.get('secret') or '').strip() or _secrets.token_urlsafe(32)
+    name = _str_field(body.get('name'))
+    url = _str_field(body.get('url'))
+    secret = _str_field(body.get('secret')) or _secrets.token_urlsafe(32)
     enabled = bool(body.get('enabled', True))
     events_list = _coerce_events_field(body.get('events'))
 
@@ -2146,14 +2188,14 @@ def admin_webhooks_update(webhook_id):
     body = _json_body()
     fields = {}
     if 'name' in body:
-        new_name = (body.get('name') or '').strip()
+        new_name = _str_field(body.get('name'))
         if not new_name:
             return _error(
                 'name cannot be empty', 'VALIDATION_ERROR', 400, details={'field': 'name'}
             )
         fields['name'] = new_name
     if 'url' in body:
-        new_url = (body.get('url') or '').strip()
+        new_url = _str_field(body.get('url'))
         ok, msg = _validate_webhook_url(new_url)
         if not ok:
             return _error(msg, 'VALIDATION_ERROR', 400, details={'field': 'url'})
@@ -2163,7 +2205,7 @@ def admin_webhooks_update(webhook_id):
     if 'enabled' in body:
         fields['enabled'] = bool(body.get('enabled'))
     if 'secret' in body:
-        new_secret = (body.get('secret') or '').strip()
+        new_secret = _str_field(body.get('secret'))
         if not new_secret:
             return _error(
                 'secret cannot be empty', 'VALIDATION_ERROR', 400, details={'field': 'secret'}
