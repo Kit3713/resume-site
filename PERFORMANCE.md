@@ -67,6 +67,49 @@ batched IN-clause loaders, migration 005 indexes).
 
 _Measured over 100 iterations per route after one warm-up hit each._
 
+## Phase 18.14 Baseline (v0.3.0-beta)
+
+Captured 2026-04-18 on the same test rig listed above, against the
+current main branch (after the observability + admin / i18n / webhook
+/ backup / container-maturity phases shipped). Use this row as the
+regression floor for Phase 18.6's CI gate.
+
+| Route       | Path                 | p50 (ms) | p95 (ms) | Queries | Bytes  |
+| ----------- | -------------------- | -------: | -------: | ------: | -----: |
+| landing     | `/`                  |     2.28 |     2.43 |      11 |  8,215 |
+| portfolio   | `/portfolio`         |     2.64 |     2.95 |       6 | 16,854 |
+| blog_index  | `/blog`              |     2.54 |     2.72 |      11 | 14,806 |
+| blog_post   | `/blog/seed-post-1`  |     2.08 |     2.25 |      11 |  7,888 |
+| contact     | `/contact`           |     2.09 |     2.26 |       3 |  8,050 |
+
+_Measured over 200 iterations per route after one warm-up hit each
+(`RESUME_SITE_LOG_LEVEL=WARNING python scripts/benchmark_routes.py 200`).
+The log-level env var silences the per-request INFO JSON line so the
+stderr sink isn't the bottleneck — a visible effect on the
+sub-5ms range we're now in._
+
+**What changed since the Phase 12.1 baseline:**
+
+* **p50/p95 dropped by ~10×.** Python 3.14 + Flask 3.1 are materially
+  faster than the 3.12 line the original measurement was taken on,
+  and the CPython 3.14 JIT (whose defaults now apply to the
+  hot request path) accounts for most of the reduction. The
+  ordering between routes is unchanged — blog / portfolio stay the
+  heaviest, contact stays the lightest.
+* **Landing / blog_index / blog_post all picked up +1 query vs.
+  the 12.1 row.** Counted against the query-count strict-monotonic
+  regression rule, so this was a known code change rather than
+  drift — Phase 15.4's translation overlay adds a per-route
+  translation lookup when the session locale differs from the
+  default, and Phase 17.2 added a `backup_last_success` settings
+  read. The numbers above are the new floor; tighter PR-time
+  enforcement kicks in going forward.
+* **Response bytes up ~15-35% per route.** Phase 15.4 added OG
+  `<meta property="og:locale*">` tags and sitemap `hreflang`
+  wiring; Phase 18.1 added `X-Request-ID` to every response — not
+  in the body, but Content-Length accounting across the response
+  envelope shifts a bit. Not alarming at this absolute size.
+
 ---
 
 ## What the query counts mean
@@ -124,7 +167,25 @@ Three user behaviors are defined in `tests/loadtests/locustfile.py`:
 | APIConsumerBehavior | 2 | 0.5-2s | Public API reads with pagination |
 | AdminBehavior | 1 | 2-5s | Dashboard, photos, blog admin, settings |
 
-### Baseline (to be recorded after v0.3.0 stabilization)
+### Baseline (to be recorded during v0.3.0 release prep)
+
+The table below is intentionally empty pending a run against the
+published GHCR image with the 50-user / 5-minute protocol that matches
+the roadmap's 18.6 "baseline load test" bullet. Capturing these from
+an in-process test client (like the benchmark_routes.py numbers
+above) would be misleading — locust exists specifically to measure
+the realistic network + gunicorn + reverse-proxy path that a real
+user hits, and that path doesn't exist under `flask test_client`.
+
+Procedure (copy-paste once the v0.3.0-rc image is published):
+
+```bash
+pip install locust
+# Start the app (Quadlet, compose, or a quick `podman run`).
+locust -f tests/loadtests/locustfile.py --headless \
+    -u 50 -r 5 -t 5m --host http://localhost:8080 --csv locust-baseline
+# Drop the numbers from locust-baseline_stats.csv below.
+```
 
 | Endpoint | p50 | p95 | p99 | Queries | Size |
 |---|---|---|---|---|---|
@@ -142,11 +203,43 @@ and fails the build if any endpoint's p95 exceeds its threshold by >20%.
 
 ### Container Startup Time
 
-| Metric | Value |
-|---|---|
-| Cold start to first 200 OK | — (to be measured) |
-| Image size (amd64) | — |
-| Image size (arm64) | — |
+Captured 2026-04-18 against the `ghcr.io/kit3713/resume-site:0.3.2-beta`
+image, running under rootless Podman 5.x on the test rig listed above.
+Each measurement wipes the three volumes (`data`, `photos`, `backups`)
+between runs so we exercise the full cold-start path — `docker-entrypoint.sh`
+runs `init-db` (schema + migrations + seeds) on an empty DB before
+handing off to Gunicorn, and `/readyz` verifies the migration state
+before responding 200.
+
+| Metric                                  | Value                                             |
+|-----------------------------------------|---------------------------------------------------|
+| Cold start to first 200 on `/readyz`    | 2.20 – 2.30 s (median 2.26 s across three runs)   |
+| Image size (amd64)                      | 217 MB (uncompressed, `podman image inspect`)     |
+| Image size (arm64)                      | Built by the same CI job — not locally measured; use the GHCR manifest size for the arm64 variant of the published tag |
+
+Repro:
+
+```bash
+# Fresh cold start timed via `podman run` + curl /readyz:
+podman volume create resume-bench-data
+podman volume create resume-bench-photos
+podman volume create resume-bench-backups
+t0=$(date +%s.%N)
+podman run -d --name resume-bench -p 18080:8080 \
+  -v config.yaml:/app/config.yaml:Z \
+  -v resume-bench-data:/app/data \
+  -v resume-bench-photos:/app/photos \
+  -v resume-bench-backups:/app/backups \
+  ghcr.io/kit3713/resume-site:latest
+until curl -fsS http://127.0.0.1:18080/readyz; do sleep 0.25; done
+t1=$(date +%s.%N)
+awk -v a="$t0" -v b="$t1" 'BEGIN { printf "%.2fs\n", b - a }'
+```
+
+The 2.3 s cold start comfortably undersigns the `HEALTHCHECK
+--start-period=10s` budget in `Containerfile` — Phase 21.1's open
+question "tighten if v0.3.0-rc1 measurements show consistent sub-5s
+startup" is now answerable with "yes, tighten" (v0.4.0 concern).
 
 ## Failure Modes (Phase 18.7)
 
