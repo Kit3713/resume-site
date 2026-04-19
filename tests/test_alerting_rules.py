@@ -31,6 +31,7 @@ yaml = pytest.importorskip('yaml')  # stdlib doesn't include it — available vi
 PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 RULES_YAML = os.path.join(PROJECT_ROOT, 'docs', 'alerting-rules.yaml')
 RUNBOOK_MD = os.path.join(PROJECT_ROOT, 'docs', 'alerting-rules.md')
+GRAFANA_JSON = os.path.join(PROJECT_ROOT, 'docs', 'grafana-dashboard.json')
 
 
 # ---------------------------------------------------------------------------
@@ -277,3 +278,117 @@ def test_runbook_has_severity_and_setup_sections(runbook_headings):
     # Presence of the general sections operators need on first open.
     assert any(h in runbook_headings for h in ('setup',))
     assert any(h in runbook_headings for h in ('severity taxonomy',))
+
+
+# ---------------------------------------------------------------------------
+# Grafana dashboard (Phase 18.11) — drift guard
+# ---------------------------------------------------------------------------
+#
+# The dashboard references resume_site_* metrics by name in panel targets.
+# If someone renames or removes a metric in app/services/metrics.py, the
+# dashboard needs a matching update. These tests catch that drift at CI
+# time rather than at import time in Grafana.
+
+
+@pytest.fixture(scope='module')
+def dashboard_document():
+    import json
+
+    with open(GRAFANA_JSON) as f:
+        return json.load(f)
+
+
+@pytest.fixture(scope='module')
+def dashboard_panels(dashboard_document):
+    return dashboard_document['panels']
+
+
+def _panel_metric_expressions(panels):
+    """Yield every ``targets[].expr`` string from every panel.
+
+    Handles nested row panels (Grafana's row container) by walking
+    ``panels`` keys recursively.
+    """
+    for panel in panels:
+        for target in panel.get('targets', []) or []:
+            expr = target.get('expr')
+            if expr:
+                yield panel.get('title', '<unnamed>'), expr
+        # Recurse into nested panels (row containers) if present.
+        nested = panel.get('panels')
+        if nested:
+            yield from _panel_metric_expressions(nested)
+
+
+def test_dashboard_file_is_valid_json(dashboard_document):
+    """Parses cleanly. Top-level required keys are present."""
+    for key in ('title', 'uid', 'panels', 'schemaVersion', 'templating'):
+        assert key in dashboard_document, f'dashboard missing top-level key: {key!r}'
+    assert dashboard_document['panels'], 'dashboard has no panels'
+
+
+def test_dashboard_exposes_prometheus_datasource_variable(dashboard_document):
+    """The dashboard must offer a $DS_PROMETHEUS variable so operators pick their DS on import."""
+    variables = dashboard_document['templating']['list']
+    names = {v['name'] for v in variables}
+    assert 'DS_PROMETHEUS' in names, f'expected DS_PROMETHEUS variable, got {sorted(names)}'
+    ds = next(v for v in variables if v['name'] == 'DS_PROMETHEUS')
+    assert ds['type'] == 'datasource'
+    assert ds['query'] == 'prometheus'
+
+
+def test_dashboard_declares_prometheus_input(dashboard_document):
+    """__inputs declaration is required for Grafana's import-from-JSON UI."""
+    inputs = dashboard_document.get('__inputs', [])
+    assert inputs, '__inputs missing — Grafana import UI will not offer a datasource picker'
+    prom = next((i for i in inputs if i.get('pluginId') == 'prometheus'), None)
+    assert prom is not None, 'no Prometheus input declared'
+    assert prom['name'] == 'DS_PROMETHEUS'
+
+
+def test_every_panel_references_datasource_variable(dashboard_panels):
+    """Each target must point at ${DS_PROMETHEUS} — not a hardcoded uid."""
+    for panel in dashboard_panels:
+        for target in panel.get('targets', []) or []:
+            ds = target.get('datasource', {})
+            if isinstance(ds, dict):
+                assert ds.get('uid') == '${DS_PROMETHEUS}', (
+                    f'panel {panel.get("title")!r} target has non-variable '
+                    f'datasource uid {ds.get("uid")!r}'
+                )
+
+
+def test_every_dashboard_metric_exists_in_registry(dashboard_panels, custom_metric_names):
+    """Every resume_site_* name in a panel query must be a registered metric.
+
+    Catches "renamed a metric without updating the dashboard JSON" bugs at
+    CI time. The same base-name normalisation used for alerting rules
+    applies: histogram suffixes (_bucket, _sum, _count) strip back to
+    the declared metric name.
+    """
+    missing = []
+    for title, expr in _panel_metric_expressions(dashboard_panels):
+        for name in set(METRIC_RE.findall(expr)):
+            base = _base_metric_name(name)
+            if base not in custom_metric_names:
+                missing.append((title, name, base))
+    assert not missing, (
+        'dashboard references metrics not registered in app.services.metrics:\n'
+        + '\n'.join(f'  panel={t!r} referenced={n!r} base={b!r}' for (t, n, b) in missing)
+        + f'\nregistered: {sorted(custom_metric_names)}'
+    )
+
+
+def test_dashboard_every_panel_has_title_and_grid_pos(dashboard_panels):
+    """Structural sanity: each panel must carry a title and a gridPos."""
+    for i, panel in enumerate(dashboard_panels):
+        assert panel.get('title'), f'panel index {i} has no title'
+        grid = panel.get('gridPos', {})
+        for key in ('x', 'y', 'w', 'h'):
+            assert key in grid, f'panel {panel["title"]!r} gridPos missing {key!r}'
+
+
+def test_dashboard_panel_ids_are_unique(dashboard_panels):
+    """Grafana uses panel id for permalinking; duplicates break panel URLs."""
+    ids = [p['id'] for p in dashboard_panels if 'id' in p]
+    assert len(ids) == len(set(ids)), f'duplicate panel ids: {ids}'

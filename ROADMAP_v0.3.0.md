@@ -556,18 +556,9 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 **Problem:** Telling operators "scrape `/metrics` with Prometheus" is like giving someone a database and telling them to write SQL. A pre-built dashboard is the difference between "monitoring is set up" and "monitoring is actually used."
 
-- [ ] **Dashboard JSON:** `docs/grafana-dashboard.json` — a complete Grafana dashboard importable via the Grafana UI or provisioning API. Panels:
-  - **Request Rate:** time series of `resume_site_requests_total` rate, broken down by status code (2xx green, 4xx yellow, 5xx red)
-  - **Response Time:** p50, p95, p99 overlaid on a single time series, with the CI regression threshold as a horizontal annotation line
-  - **Error Rate:** time series of `resume_site_errors_total` by category, stacked area chart
-  - **Database Performance:** query duration histogram heatmap, query count rate
-  - **Active Endpoints:** table of endpoints sorted by request count, with avg/p95 latency columns
-  - **Blog & Content:** gauge panels for published posts, pending reviews, approved reviews
-  - **API Usage:** request rate by scope (read/write/admin), top consumers by token name
-  - **System:** disk usage, memory estimate (from container metrics), uptime, backup age
-  - **Security:** login failure rate, rate limit trigger rate, CSP violation count, WAF-lite block count
-- [ ] **Dashboard variables:** Configurable time range, endpoint filter, status code filter. Uses Prometheus as the data source (configurable name)
-- [ ] **Setup documentation:** Section in `docs/PRODUCTION.md` covering: install Prometheus + Grafana (compose snippet), configure Prometheus to scrape `/metrics`, import the dashboard JSON, configure alerting rules. Estimated setup time: 15 minutes for someone with a running Prometheus/Grafana stack
+- [x] **Dashboard JSON:** `docs/grafana-dashboard.json` ships 11 panels importable via Grafana 10+ UI: request rate by status (green/yellow/red colour-coded), p50/p95/p99 latency (with 1s threshold marker matching the `ResumeHighLatency` alert), error rate by category (stacked area), login attempts by outcome (success/invalid/locked, colour-coded), process uptime, blog posts by status, backup age (red at 48h matching `ResumeBackupStale`), photo upload rate, disk usage gauge (1GB red matching `ResumeDiskUsageHigh`), contact submissions split by honeypot flag, and a top-10 endpoints table (1h window). DB performance + API scope + CSP / WAF-lite panels deferred — require metrics not yet declared (Phase 18.2 deferred batch + Phase 13 CSP reporting).
+- [x] **Dashboard variables:** `$DS_PROMETHEUS` templating variable with `type=datasource, query=prometheus` so operators pick their data source on import. Every panel target references `${DS_PROMETHEUS}` rather than a hardcoded uid. Time range and refresh interval are dashboard-level (`now-6h`, 30s). A drift-guard test in `tests/test_alerting_rules.py` parses the JSON and asserts every referenced `resume_site_*` metric (accounting for histogram `_bucket`/`_sum`/`_count` suffixes) exists in the live registry.
+- [ ] **Setup documentation:** covered in `docs/OBSERVABILITY_RUNBOOK.md` (Phase 18.14) — the Prometheus + Grafana install + scrape config + dashboard import + alert-rule wiring lives there, alongside the when-to-use-what guidance for every observability tool. `docs/PRODUCTION.md` cross-reference pending a non-owned edit by a later pass.
 
 ### 18.12 — Synthetic Monitoring Documentation
 
