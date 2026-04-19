@@ -564,12 +564,9 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 **Problem:** Internal metrics tell you the app is healthy from the inside. Synthetic monitoring tells you it's healthy from the outside — can a real user actually reach the site, does the page actually load, does the SSL certificate work?
 
-- [ ] **Synthetic monitoring guide:** Section in `docs/PRODUCTION.md` covering three levels of synthetic monitoring:
-  - **Level 1 (free, 5 minutes):** Set up Uptime Kuma (self-hosted) or UptimeRobot (free tier) to ping `/healthz` every 60 seconds. Alert on failure. This catches "the site is down" and nothing else
-  - **Level 2 (moderate, 30 minutes):** Set up a cron job (or systemd timer) that runs `curl` against 5 key pages (landing, portfolio, blog, contact, API health) and checks: HTTP 200, response time < 2 seconds, response body contains expected strings (site title, etc.). Alert on failure via webhook to your notification channel
-  - **Level 3 (comprehensive, 1 hour):** Set up a Playwright script (`tests/synthetic/monitor.py`) that runs a full user journey: load landing page, click portfolio, verify images load, navigate to blog, verify post renders, submit contact form with test data, check admin login page loads. Run every 15 minutes via cron. Alert on any step failure with a screenshot
-- [ ] **Example scripts:** Ship `tests/synthetic/healthcheck.sh` (Level 2 curl script) and `tests/synthetic/monitor.py` (Level 3 Playwright script) as ready-to-use templates. Users configure their domain and notification webhook
-- [ ] **Status page suggestion:** Document how to expose synthetic monitoring results as a simple status page (e.g., using Uptime Kuma's built-in status page feature or a custom `/status` endpoint)
+- [x] **Synthetic monitoring guide:** covered in `docs/OBSERVABILITY_RUNBOOK.md` (Phase 18.14) — three-level tiering (Uptime Kuma pinging `/healthz`; level-2 curl via `tests/synthetic/healthcheck.sh`; level-3 Playwright via `tests/synthetic/monitor.py`), cron + systemd-timer invocations for each, and a failure-notification webhook contract that both scripts honour.
+- [x] **Example scripts:** `tests/synthetic/healthcheck.sh` is a stdlib-bash + curl probe that asserts HTTP 200 + a threshold response time (default 2 s) + a route-specific body-regex match on five key pages (`/`, `/portfolio`, `/blog`, `/contact`, `/readyz`). Optional failure webhook posts a JSON body assembled without jq so the script has zero runtime deps beyond curl. `tests/synthetic/monitor.py` runs a full user journey via Playwright (landing → portfolio → blog post → honeypot-trapped contact submission → admin login probe), capturing a screenshot on any step failure and posting the same JSON envelope to `RESUME_WEBHOOK_URL`. Neither script is imported by CI or the runtime image — they ship in-repo as operator templates.
+- [ ] **Status page suggestion:** deferred — covered broadly in `OBSERVABILITY_RUNBOOK.md` as an Uptime Kuma pointer; a first-party `/status` endpoint is a separate feature decision for v0.4.0.
 
 ### 18.13 — Edge Case Test Exhaustiveness Methodology
 
