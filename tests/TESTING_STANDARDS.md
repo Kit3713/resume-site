@@ -66,11 +66,31 @@ every function — use judgment.
 |---|---|
 | `tests/test_api.py` | Phase 16.6 expansion done |
 | `tests/test_security.py` | CSP + headers covered |
-| `tests/test_fuzz.py` | Hypothesis covers crash + injection |
+| `tests/test_fuzz.py` | Hypothesis covers crash + injection + API body fuzzing (Phase 18.13) |
 | `tests/test_resilience.py` | Failure modes covered |
-| `tests/test_blog.py` | Pending edge case pass |
-| `tests/test_admin.py` | Pending edge case pass |
-| `tests/test_photo_processing.py` | Pending edge case pass |
+| `tests/test_edge_cases_contact.py` | **Done (Phase 18.13)** — 35 tests |
+| `tests/test_edge_cases_blog.py` | **Done (Phase 18.13)** — 36 tests |
+| `tests/test_edge_cases_api.py` | **Done (Phase 18.13)** — 54 tests |
+| `tests/test_edge_cases_photos.py` | **Done (Phase 18.13)** — 36 tests |
+| `tests/test_edge_cases_settings.py` | **Done (Phase 18.13)** — 44 tests |
+| `tests/test_blog.py` | Covered by `test_edge_cases_blog.py` |
+| `tests/test_admin.py` | Partial — settings covered by `test_edge_cases_settings.py`; admin-routes audit deferred |
+| `tests/test_photo_processing.py` | Covered by `test_edge_cases_photos.py` |
+
+### Edge-Case File Coverage Matrix
+
+Checklist category coverage for the five Phase 18.13 test files. ✓ = at
+least one test in the file exercises that category.
+
+| Category       | contact | blog | api | photos | settings |
+|----------------|:-------:|:----:|:---:|:------:|:--------:|
+| Empty / null   |    ✓    |   ✓  |  ✓  |   ✓    |     ✓    |
+| Boundary       |    ✓    |   ✓  |  ✓  |   ✓    |     ✓    |
+| Type mismatch  |    ✓    |   ✓  |  ✓  |   ✓    |     ✓    |
+| Unicode        |    ✓    |   ✓  |  ✓  |   ✓    |     ✓    |
+| Length         |    ✓    |   ✓  |  ✓  |   ✓    |     ✓    |
+| Concurrency    |    ✓    |   ✓  |  ✓  |   ✓    |     ✓    |
+| Injection      |    ✓    |   ✓  |  ✓  |   ✓    |     ✓    |
 
 ---
 

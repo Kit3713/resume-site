@@ -279,3 +279,49 @@ test.
   Practices, SEO) — requires a running browser.
 * Memory usage at idle and under load (50 concurrent users) — requires
   process monitoring during locust run.
+
+## Test Quality (Phase 18.8 — Mutation Testing)
+
+Mutation score measures whether the test suite would catch a real bug.
+`mutmut` mutates each line of `app/` and re-runs the suite per mutant;
+a "killed" mutant means at least one test failed. Score =
+killed / (killed + survived).
+
+**Target:** >= 70% on the priority modules documented in `ROADMAP_v0.3.0.md`
+Phase 18.8 (blog, photos, reviews, settings, admin IP restriction,
+contact honeypot).
+
+### Baseline (2026-04-18) — pending
+
+**Status:** mutmut 3.5.0 + Python 3.14.3 compatibility issue blocked the
+initial run. See `tests/mutation_review.md` for the root cause and the
+manual-capture workaround.
+
+**Scoped subset queued for baseline** (the narrow `paths_to_mutate` in
+`pyproject.toml`):
+
+| Module | LOC | Status |
+|---|---|---|
+| `app/services/text.py` | 43 | Pending |
+| `app/services/pagination.py` | 93 | Pending |
+| `app/services/time_helpers.py` | 123 | Pending |
+| `app/services/login_throttle.py` | 183 | Pending |
+
+Once the scoped baseline runs cleanly the score gets recorded here and
+the top-10 surviving mutants populate `tests/mutation_review.md` with
+one of two classifications per row:
+
+* **Action:** Test added — include the test name. Killed on re-run.
+* **Equivalent:** Mutation is observationally identical to the
+  original; document the reasoning so future readers don't try to
+  "fix" it.
+
+### Ratchet plan
+
+1. Capture the scoped baseline (4 leaf modules).
+2. Expand `paths_to_mutate` to include the Phase 18.8 priority list
+   (blog, photos, reviews, settings, admin IP restriction, contact
+   honeypot) once the scoped run is green and the toolchain is stable.
+3. Add `mutmut run --paths-to-mutate=app/` to CI as a
+   non-blocking informational job. Ratchet to blocking once the
+   whole-app score has been >= 70% for two consecutive weeks.

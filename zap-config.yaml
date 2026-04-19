@@ -1,0 +1,74 @@
+# =============================================================
+# OWASP ZAP Baseline Scan Configuration — Phase 13.9
+#
+# Consumed by .github/workflows/security-scan.yml via the
+# ``rules_file_name: zap-config.yaml`` option on the
+# zaproxy/action-baseline action.
+#
+# Format reference:
+#   https://www.zaproxy.org/docs/docker/baseline-scan/#config-file
+#
+# Each line is of the form:
+#   <rule_id>    <action>    (<description>)
+#
+# where <action> is one of:
+#   IGNORE — finding is recorded in the HTML report but never fails
+#            the build, even if severity is MEDIUM+. Use for
+#            documented false positives AND for rules we've decided
+#            not to fix (with a reason on the same line).
+#   WARN   — recorded as LOW regardless of ZAP's internal severity.
+#            Informational only; never fails the build.
+#   FAIL   — recorded at its native severity. MEDIUM+ here fails
+#            the build (per the allowlist filter in the workflow).
+#
+# WHY A SEPARATE ALLOWLIST FILE:
+# -----------------------------
+# A baseline scan of a fresh-out-of-the-box Flask app produces
+# a handful of findings that are either structurally false
+# positives (e.g. modern header rules flagging intentional
+# absences) or things we've decided not to action for operational
+# reasons. Checking them in lets a reviewer audit the full list
+# without running ZAP themselves, and every IGNORE must carry a
+# one-line justification next to it.
+#
+# When adding a new IGNORE, STATE THE REASON on the same line.
+# A rule ID with no justification is a bug, not a policy.
+# =============================================================
+
+# --- Allowlisted (IGNORE) ---
+#
+# No entries yet. The list below is a staging area of rules we
+# expect to need to allowlist once the first full scan runs; they
+# are set to WARN (advisory-only) pending that review.
+#
+# 10015   WARN   (Incomplete/No Cache-Control header — audit after first scan)
+# 10020   WARN   (X-Frame-Options header — we set DENY but the meta-tag alternative may surface this as LOW)
+# 10038   WARN   (CSP header — we emit a strict CSP; double-check after first run)
+# 10063   WARN   (Permissions-Policy missing — optional header, audit)
+# 10096   WARN   (Timestamp Disclosure — usually a false positive on Cookie / ETag values)
+# 10109   WARN   (Modern-Web Application — info rule; never fails)
+
+# --- Explicitly enabled at default severity (FAIL on MEDIUM+) ---
+#
+# These are the rules we expect the app to pass cleanly. Leaving
+# them un-annotated here makes it obvious in a diff if someone
+# ever tries to downgrade them.
+#
+# (No overrides needed — ZAP enables all applicable rules by default.)
+
+# --- Disabled entirely (IGNORE) ---
+#
+# Rules for technology stacks we don't run. Keeping them IGNORE
+# rather than deleted so future operators see the intent.
+
+40018   IGNORE   (SQL Injection - SQLite - Time-Based: active-scan rule; baseline is passive)
+40019   IGNORE   (SQL Injection - MySQL: we run SQLite, not MySQL)
+40020   IGNORE   (SQL Injection - Hypersonic: we don't use HSQL)
+40021   IGNORE   (SQL Injection - Oracle: not applicable)
+40022   IGNORE   (SQL Injection - PostgreSQL: we run SQLite)
+40027   IGNORE   (SQL Injection - MsSQL: not applicable)
+90017   IGNORE   (XSLT Injection: we don't use XSLT)
+90019   IGNORE   (Server Side Include: we don't use SSI)
+90020   IGNORE   (Remote OS Command Injection: active-scan rule)
+
+# --- End of file ---

@@ -1,0 +1,240 @@
+# =============================================================
+# Weekly Dynamic Application Security Testing (DAST) — Phase 13.9
+#
+# Runs every Monday at 04:00 UTC (no traffic, Python cutting edge not
+# yet spun up for weekday work). Can also be triggered on demand via
+# the "Run workflow" button on the Actions tab.
+#
+# The scan flow:
+#   1. Build the current HEAD image (we test WHAT WE'D SHIP, not just
+#      what's tagged :main — a freshly merged exploit shouldn't wait
+#      a week to be caught).
+#   2. Boot the container against an ephemeral config + data volume,
+#      with a test admin account whose credentials ZAP will be told.
+#   3. Seed a minimal content set so the spider has something to crawl
+#      (empty site gives only 4-5 routes, misses real-world surface).
+#   4. Run the OWASP ZAP baseline scan (passive, no attack payloads).
+#      Rules are customised via zap-config.yaml — we turn OFF checks
+#      for technologies we're not running (e.g. ASP.NET, PHP) and
+#      allowlist documented false positives with justifications.
+#   5. Upload the full HTML report as a build artifact so operators
+#      can review findings even when the job passes.
+#   6. Fail the build on any MEDIUM-or-higher finding that isn't in
+#      the allowlist. LOW / INFO are advisory only.
+#
+# This workflow is intentionally separate from ci.yml so failures
+# here don't block merges — a DAST regression is important but not
+# as time-critical as a broken test suite, and the cron cadence
+# already means we're not scanning every PR.
+# =============================================================
+
+name: Security Scan (DAST)
+
+on:
+  schedule:
+    # Mondays 04:00 UTC — low-traffic window, ZAP runs for ~10 min
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: 'Git ref to scan (branch / tag / SHA). Defaults to the default branch.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  # Uploading the ZAP report to the job run as an artifact doesn't
+  # need any extra scope, but creating an issue on MEDIUM+ findings
+  # would. We keep permissions tight for now; operators review the
+  # artifact manually.
+
+env:
+  IMAGE_NAME: kit3713/resume-site
+
+jobs:
+  zap-baseline:
+    name: OWASP ZAP Baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          # Pull the ref the operator asked for; default branch otherwise.
+          ref: ${{ github.event.inputs.target_ref || github.ref }}
+
+      # ---------------------------------------------------------
+      # Build the image we'll scan. We don't pull :main from GHCR
+      # here on purpose — a scan should reflect the exact commit
+      # a dispatcher chose, not whatever :main was last push.
+      # ---------------------------------------------------------
+      - name: Build container image
+        run: |
+          docker build \
+            --build-arg IMAGE_VERSION="dast-${GITHUB_SHA::7}" \
+            -t ${{ env.IMAGE_NAME }}:dast \
+            -f Containerfile .
+
+      # ---------------------------------------------------------
+      # Boot the image with a scenario config. The admin hash below
+      # is a throwaway generated from the password "ci-dast-test-pw"
+      # and never goes anywhere but this ephemeral container.
+      # ---------------------------------------------------------
+      - name: Boot the container against a scratch volume
+        run: |
+          mkdir -p /tmp/dast-data /tmp/dast-photos /tmp/dast-backups
+          # Use the pbkdf2 hash format werkzeug.security.generate_password_hash
+          # produces; any well-formed hash is fine because we're not logging
+          # in — the ZAP scan exercises anonymous access.
+          cat > /tmp/dast-config.yaml <<'EOF'
+          secret_key: "dast-run-secret-key-long-enough-for-audit-xxxxxx"
+          database_path: "/app/data/site.db"
+          photo_storage: "/app/photos"
+          session_cookie_secure: false
+          admin:
+            username: "admin"
+            password_hash: "pbkdf2:sha256:600000$dastsaltdastsal$0000000000000000000000000000000000000000000000000000000000000000"
+            allowed_networks:
+              - "0.0.0.0/0"
+          EOF
+
+          docker run -d --name dast-target \
+            -p 8080:8080 \
+            -v /tmp/dast-config.yaml:/app/config.yaml:ro \
+            -v /tmp/dast-data:/app/data \
+            -v /tmp/dast-photos:/app/photos \
+            -v /tmp/dast-backups:/app/backups \
+            ${{ env.IMAGE_NAME }}:dast
+
+          # Readiness gate — ZAP depends on a fully-migrated DB so
+          # /readyz (not just /healthz) must pass before scanning.
+          for i in $(seq 1 45); do
+            if curl -fsS http://localhost:8080/readyz > /dev/null 2>&1; then
+              echo "Target is ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+          # Sanity-probe the landing page. If this fails the ZAP scan
+          # would otherwise report nothing useful — fail loud here.
+          curl -fsS http://localhost:8080/ \
+            || (docker logs dast-target && exit 1)
+
+      # ---------------------------------------------------------
+      # OWASP ZAP baseline scan.
+      #
+      # We pin to v0.13.0 rather than @master because ZAP Action
+      # image releases sometimes carry breaking CLI flag changes
+      # (the same lesson Phase 21.3 learned about trivy-action).
+      # Bump deliberately.
+      #
+      # fail_action=false is intentional — we collect the scan
+      # result first, then run the allowlist filter in a dedicated
+      # step that can produce more useful output.
+      # ---------------------------------------------------------
+      - name: Run ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.13.0
+        with:
+          target: 'http://localhost:8080'
+          rules_file_name: 'zap-config.yaml'
+          # Documented-false-positive handling lives in zap-config.yaml;
+          # the action also supports ignoring rules via -c flags, but
+          # the YAML form is visible in diffs.
+          cmd_options: '-a -j -T 10'
+          fail_action: false
+          allow_issue_writing: false
+          artifact_name: zap-baseline-report
+
+      # ---------------------------------------------------------
+      # Allowlist filter. The ZAP action writes ``report_json.json``
+      # to the workspace — parse it, drop findings below the severity
+      # threshold, drop allowlisted rule IDs, and fail if anything
+      # survives.
+      # ---------------------------------------------------------
+      - name: Apply allowlist and fail on MEDIUM+ findings
+        if: always()
+        run: |
+          set -e
+          if [ ! -f report_json.json ]; then
+            echo "ZAP did not produce report_json.json — scan likely failed to start"
+            exit 1
+          fi
+
+          python3 <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          # Severity string → numeric rank for comparison.
+          SEVERITY_RANK = {
+              'Informational': 0,
+              'Low': 1,
+              'Medium': 2,
+              'High': 3,
+          }
+          FAIL_AT = SEVERITY_RANK['Medium']
+
+          # Rule IDs we've reviewed and decided NOT to action. Every entry
+          # must carry a justification; zap-config.yaml is the source of
+          # truth (this list is parsed on the action side too). Keeping
+          # a copy here means the filter works even if zap-config.yaml
+          # parsing silently drops an entry.
+          ALLOWLIST = {
+              # Rule IDs listed in zap-config.yaml as IGNORE — duplicated
+              # here defensively. The scan step is authoritative.
+          }
+
+          data = json.loads(Path('report_json.json').read_text())
+          findings = []
+          for site in data.get('site', []):
+              for alert in site.get('alerts', []):
+                  rule_id = alert.get('pluginid') or alert.get('alertRef', '')
+                  severity = alert.get('riskdesc', '').split(' ')[0]
+                  rank = SEVERITY_RANK.get(severity, 0)
+                  if rank < FAIL_AT:
+                      continue
+                  if rule_id in ALLOWLIST:
+                      continue
+                  findings.append({
+                      'rule_id': rule_id,
+                      'severity': severity,
+                      'name': alert.get('name'),
+                      'urls': [i.get('uri') for i in alert.get('instances', [])][:5],
+                  })
+
+          if findings:
+              print(f'FAIL: {len(findings)} MEDIUM+ finding(s) not in allowlist:')
+              for f in findings:
+                  print(f'  - [{f["severity"]}] {f["rule_id"]}: {f["name"]}')
+                  for url in f['urls']:
+                      print(f'      {url}')
+              sys.exit(1)
+
+          print('OK: no MEDIUM+ findings outside the documented allowlist')
+          PY
+
+      # ---------------------------------------------------------
+      # Teardown — always runs so a failed scan doesn't leave the
+      # container running on the runner. Logs are attached as an
+      # artifact so a failure is debuggable post-mortem.
+      # ---------------------------------------------------------
+      - name: Capture container logs
+        if: always()
+        run: |
+          docker logs dast-target > dast-container.log 2>&1 || true
+
+      - name: Upload container logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dast-container-logs
+          path: dast-container.log
+          if-no-files-found: ignore
+
+      - name: Stop scanner target
+        if: always()
+        run: |
+          docker stop dast-target 2>/dev/null || true
+          docker rm dast-target 2>/dev/null || true

@@ -141,9 +141,29 @@ ignore_names = [
 # ----------------------------------------------------------------
 # mutmut — mutation testing (v0.3.0 Phase 18.8)
 # ----------------------------------------------------------------
+# The default ``paths_to_mutate`` is the baseline subset documented in
+# PERFORMANCE.md "Test Quality" (small, CPU-cheap modules). To run the
+# full app/ scan — which takes 30-60 min — override on the command line:
+#     mutmut run  # baseline subset (fast)
+#     mutmut run --paths-to-mutate=app/  # full scan
+#
+# mutmut 3.x quirks (tracked in docs/PENTEST_CHECKLIST.md / PERFORMANCE.md
+# "Test Quality"):
+#   * ``tests_dir`` must be a list, not a scalar string — mutmut parses
+#     the scalar as a character sequence under some invocation paths.
+#   * mutmut 3.5.0 copies ``app/`` into ``mutants/app/`` and runs pytest
+#     from ``mutants/``; our tests' ``from app import create_app`` then
+#     resolves to the mutated tree only if PYTHONPATH / the package
+#     marker survives the copy. Capture the baseline manually or wait
+#     for mutmut's package-discovery fix before wiring into CI.
 [tool.mutmut]
-paths_to_mutate = ["app/"]
-tests_dir = "tests/"
+paths_to_mutate = [
+    "app/services/text.py",
+    "app/services/pagination.py",
+    "app/services/time_helpers.py",
+    "app/services/login_throttle.py",
+]
+tests_dir = ["tests"]
 runner = "python -m pytest -x -q"
 
 # ----------------------------------------------------------------
