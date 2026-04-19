@@ -207,7 +207,174 @@ jobs:
           cache: 'true'
 
   # -----------------------------------------------------------
-  # Publish to GHCR (tags only)
+  # Upgrade simulation (Phase 21.5 — push-update survivability)
+  #
+  # This is the load-bearing "rolling upgrade doesn't destroy data"
+  # gate. Runs in parallel with container-build / container-scan (it
+  # only depends on ``test``), and does two things:
+  #
+  #   1. Static reversibility: ``manage.py migrate --verify-reversible``
+  #      walks every migration and fails the job if any contain DROP
+  #      TABLE, NOT NULL ADD COLUMN without DEFAULT, DROP of a NOT NULL
+  #      column, or ALTER/MODIFY COLUMN syntax. Pure file-read, no DB
+  #      needed.
+  #
+  #   2. Dynamic replay: boot the previously-published ``:latest``
+  #      image against a volume + config.yaml, run init-db inside it
+  #      (the entrypoint handles that), stop it, and boot the freshly
+  #      built image against the same volume. The new image must
+  #      happily apply the pending migrations on top of the old DB and
+  #      pass /healthz + /readyz + the landing page + /admin/login.
+  #
+  # If ``:latest`` hasn't been published yet (first-ever release),
+  # the dynamic replay short-circuits with a notice — there's no
+  # previous version to upgrade from. The static check always runs.
+  # -----------------------------------------------------------
+  upgrade-simulation:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install reversibility-check deps
+        run: |
+          python -m pip install --upgrade pip
+          # The walker is stdlib-only; we only need manage.py to import
+          # cleanly (which requires werkzeug from the runtime deps).
+          pip install -r requirements.txt
+
+      # Part 1: static reversibility walker. This doesn't touch the
+      # DB — it just parses migration files. A violation here fails
+      # the job before any container work.
+      - name: Verify migrations are reversible
+        run: python manage.py migrate --verify-reversible
+
+      - name: Build container image (for upgrade sim)
+        run: |
+          docker build \
+            --build-arg IMAGE_VERSION="ci-${GITHUB_SHA::7}" \
+            -t ${{ env.IMAGE_NAME }}:upgrade \
+            -f Containerfile .
+
+      # Part 2: dynamic replay. Pull the previously-published image,
+      # seed a volume, swap to the freshly-built image, verify every
+      # probe. ``|| true`` on the pull so we can continue on first
+      # release — the subsequent steps skip gracefully.
+      - name: Pull previous release (:latest)
+        id: pull_prior
+        run: |
+          set -e
+          if docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest; then
+            echo "have_prior=true" >> $GITHUB_OUTPUT
+            docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest prior-release
+          else
+            echo "No prior :latest image in the registry — upgrade replay will be skipped."
+            echo "have_prior=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Prepare upgrade scenario
+        if: steps.pull_prior.outputs.have_prior == 'true'
+        run: |
+          # A config.yaml the image can actually boot from. The hash
+          # below is the werkzeug pbkdf2:sha256 form of "ci-password";
+          # the admin user isn't exercised beyond the login form render,
+          # so a real login isn't needed.
+          mkdir -p /tmp/upgrade-data /tmp/upgrade-photos /tmp/upgrade-backups
+          cat > /tmp/upgrade-config.yaml <<EOF
+          secret_key: "ci-upgrade-test-secret-key-that-is-long-enough-for-audit"
+          database_path: "/app/data/site.db"
+          photo_storage: "/app/photos"
+          session_cookie_secure: false
+          admin:
+            username: "admin"
+            password_hash: "__PLACEHOLDER__"
+          EOF
+          # Post-process to insert the pbkdf2 hash. Doing it with sed
+          # sidesteps the shell $-expansion surprises a heredoc would
+          # introduce in the three $-delimited sections of the
+          # pbkdf2 format. Admin auth is never actually exercised past
+          # GET /admin/login (form render), so any well-formed hash
+          # works for the smoke test.
+          HASH_LITERAL='pbkdf2:sha256:600000$upgradesaltcicicic$0000000000000000000000000000000000000000000000000000000000000000'
+          sed -i "s|__PLACEHOLDER__|${HASH_LITERAL}|" /tmp/upgrade-config.yaml
+
+      - name: Boot previous release against scenario volumes
+        if: steps.pull_prior.outputs.have_prior == 'true'
+        run: |
+          set -e
+          # The entrypoint runs init-db on first boot, so the old image
+          # populates /app/data with a fully-migrated (to its version)
+          # DB that the new image will then need to upgrade.
+          docker run -d --name upgrade-prior \
+            -p 18080:8080 \
+            -v /tmp/upgrade-config.yaml:/app/config.yaml:ro \
+            -v /tmp/upgrade-data:/app/data \
+            -v /tmp/upgrade-photos:/app/photos \
+            -v /tmp/upgrade-backups:/app/backups \
+            prior-release
+
+          # Wait for startup: poll /healthz until it answers, up to 30s.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:18080/healthz > /dev/null 2>&1; then
+              echo "Prior release is up after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:18080/readyz  || (docker logs upgrade-prior && exit 1)
+          # Stop (don't remove the volumes — that's the whole point).
+          docker stop upgrade-prior
+          docker rm   upgrade-prior
+
+      - name: Boot new image against the same volumes
+        if: steps.pull_prior.outputs.have_prior == 'true'
+        run: |
+          set -e
+          docker run -d --name upgrade-new \
+            -p 18080:8080 \
+            -v /tmp/upgrade-config.yaml:/app/config.yaml:ro \
+            -v /tmp/upgrade-data:/app/data \
+            -v /tmp/upgrade-photos:/app/photos \
+            -v /tmp/upgrade-backups:/app/backups \
+            ${{ env.IMAGE_NAME }}:upgrade
+
+          # Wait for migrations + startup — newer images may apply
+          # several migrations before Gunicorn binds, so allow a
+          # generous window.
+          for i in $(seq 1 45); do
+            if curl -fsS http://localhost:18080/healthz > /dev/null 2>&1; then
+              echo "Upgraded release is up after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+          # Every Phase 21.5 acceptance probe must succeed against the
+          # upgraded container.
+          curl -fsS http://localhost:18080/healthz      || (docker logs upgrade-new && exit 1)
+          curl -fsS http://localhost:18080/readyz       || (docker logs upgrade-new && exit 1)
+          curl -fsS http://localhost:18080/             || (docker logs upgrade-new && exit 1)
+          # /admin/login is IP-gated to private ranges; on the
+          # GitHub-hosted runner the request comes from the host
+          # loopback into the container's network, which appears as an
+          # allowed private address. Any 2xx (form render) or 302
+          # (session redirect) passes; anything else means either the
+          # IP gate regressed or the admin blueprint failed to register.
+          status=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:18080/admin/login)
+          if [ "$status" != "200" ] && [ "$status" != "302" ]; then
+            echo "ERROR: /admin/login returned $status on the upgraded container"
+            docker logs upgrade-new
+            exit 1
+          fi
+
+          docker stop upgrade-new
+          docker rm   upgrade-new
+
   # -----------------------------------------------------------
   publish:
     runs-on: ubuntu-latest

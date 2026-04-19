@@ -55,6 +55,7 @@ import argparse
 import ast
 import getpass
 import os
+import re
 import sqlite3
 import sys
 from datetime import UTC, datetime
@@ -216,6 +217,508 @@ def _check_db_not_corrupt(db_path):
         sys.exit(1)
 
 
+# ---------------------------------------------------------------------------
+# Migration-safety walker (Phase 21.5 — upgrade survivability)
+# ---------------------------------------------------------------------------
+#
+# ``manage.py migrate --verify-reversible`` is a dry-run that reads every
+# pending migration, parses it without touching the DB, and refuses to
+# proceed if it finds DDL that can silently lose data across a running
+# deployment's rolling upgrade:
+#
+#   * ``DROP TABLE`` — irreversible, obliterates rows
+#   * ``ALTER TABLE ... DROP COLUMN <col>`` where ``<col>`` was NOT NULL —
+#     old rows can't be re-added without the value
+#   * ``ALTER TABLE ... ADD COLUMN <col> ... NOT NULL`` without a
+#     ``DEFAULT`` — fails on any existing row
+#   * ``ALTER TABLE ... ALTER COLUMN`` / ``MODIFY COLUMN`` — SQLite
+#     doesn't support these natively; any such syntax implies a lossy
+#     rewrite
+#
+# The walker is sqlparse-free: a small state machine tokenises the
+# migration text (respecting line/block comments, quoted strings, and
+# ``BEGIN ... END`` trigger bodies), then a per-statement parser extracts
+# the column metadata the checker needs. Schema state accumulates across
+# migrations in dependency order so a DROP COLUMN can consult the column's
+# NOT NULL flag from the original CREATE TABLE.
+#
+# Keeping this here (not in ``app/services/migrations.py``) matches Agent 1's
+# file ownership: the route layer doesn't need the walker — only the CLI
+# does — and the service module's read-only contract rules out loading an
+# AST helper there.
+
+
+class _MigrationDDLError(Exception):
+    """A migration contains DDL flagged as unsafe for a rolling upgrade.
+
+    Carries the filename, starting line number of the offending
+    statement, the DDL text as it appeared in the file, and a human
+    readable reason so the operator can fix or audit it.
+    """
+
+    def __init__(self, filename, line, ddl, reason):
+        self.filename = filename
+        self.line = line
+        self.ddl = ddl
+        self.reason = reason
+        super().__init__(f'{filename}:{line}: {reason}\n    {ddl}')
+
+
+def _tokenize_sql(sql):  # noqa: C901 — SQL statement tokenizer is inherently stateful; splitting further would hide the state machine behind helper wrappers and make the comment/string/BEGIN handling harder to audit, not easier.
+    """Split SQL text into ``(starting_line, statement_text)`` pairs.
+
+    Handles:
+      * ``--`` line comments (consumed; don't appear in statements)
+      * ``/* */`` block comments (consumed)
+      * ``'...'`` and ``"..."`` string literals (SQL ``''`` / ``""``
+        doubled-quote escape; internal ``;`` is not a separator)
+      * ``BEGIN ... END`` trigger bodies (internal ``;`` is not a
+        separator; depth is tracked so nested BEGINs behave)
+
+    Line numbers are 1-indexed and reflect the position in the original
+    file (including comments). Statements are returned in source order
+    with their leading whitespace stripped.
+    """
+    statements = []
+    buf = []
+    stmt_line = 1
+    line = 1
+    i = 0
+    n = len(sql)
+    begin_depth = 0
+    stmt_started = False
+
+    def flush():
+        text = ''.join(buf).strip()
+        if text:
+            statements.append((stmt_line, text))
+        buf.clear()
+
+    while i < n:
+        ch = sql[i]
+
+        # Line comment: ``--`` through end of line
+        if ch == '-' and i + 1 < n and sql[i + 1] == '-':
+            while i < n and sql[i] != '\n':
+                i += 1
+            continue
+
+        # Block comment: ``/* ... */``
+        if ch == '/' and i + 1 < n and sql[i + 1] == '*':
+            i += 2
+            while i < n - 1 and not (sql[i] == '*' and sql[i + 1] == '/'):
+                if sql[i] == '\n':
+                    line += 1
+                i += 1
+            i = min(i + 2, n)
+            continue
+
+        # String literal: ' or "
+        if ch in ("'", '"'):
+            quote = ch
+            if not stmt_started:
+                stmt_line = line
+                stmt_started = True
+            buf.append(ch)
+            i += 1
+            while i < n:
+                c = sql[i]
+                if c == '\n':
+                    line += 1
+                if c == quote:
+                    # Doubled-quote escape: ``''`` or ``""``
+                    if i + 1 < n and sql[i + 1] == quote:
+                        buf.append(c)
+                        buf.append(sql[i + 1])
+                        i += 2
+                        continue
+                    buf.append(c)
+                    i += 1
+                    break
+                buf.append(c)
+                i += 1
+            continue
+
+        # Newline
+        if ch == '\n':
+            line += 1
+            buf.append(ch)
+            i += 1
+            continue
+
+        # Identifier / keyword — read whole word to detect BEGIN / END
+        if ch.isalpha() or ch == '_':
+            j = i
+            while j < n and (sql[j].isalnum() or sql[j] == '_'):
+                j += 1
+            word = sql[i:j]
+            upper = word.upper()
+            if upper == 'BEGIN':
+                begin_depth += 1
+            elif upper == 'END' and begin_depth > 0:
+                begin_depth -= 1
+            if not stmt_started:
+                stmt_line = line
+                stmt_started = True
+            buf.append(word)
+            i = j
+            continue
+
+        # Statement terminator outside BEGIN blocks
+        if ch == ';' and begin_depth == 0:
+            flush()
+            stmt_started = False
+            i += 1
+            continue
+
+        # Whitespace / other chars
+        if ch.isspace():
+            buf.append(ch)
+            i += 1
+            continue
+
+        if not stmt_started:
+            stmt_line = line
+            stmt_started = True
+        buf.append(ch)
+        i += 1
+
+    flush()
+    return statements
+
+
+def _split_top_level_commas(text):
+    """Split ``text`` on commas at paren depth 0, ignoring strings.
+
+    Used to split a CREATE TABLE column list. Returns a list of raw
+    clause strings with outer whitespace stripped.
+    """
+    parts = []
+    buf = []
+    depth = 0
+    in_str = False
+    str_ch = ''
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if in_str:
+            buf.append(ch)
+            if ch == str_ch:
+                if i + 1 < n and text[i + 1] == str_ch:
+                    buf.append(text[i + 1])
+                    i += 2
+                    continue
+                in_str = False
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            in_str = True
+            str_ch = ch
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == '(':
+            depth += 1
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == ')':
+            depth -= 1
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == ',' and depth == 0:
+            parts.append(''.join(buf).strip())
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    tail = ''.join(buf).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+_TABLE_LEVEL_CONSTRAINTS = {
+    'CONSTRAINT',
+    'PRIMARY',
+    'UNIQUE',
+    'CHECK',
+    'FOREIGN',
+}
+
+
+def _parse_column_clause(clause):
+    """Parse a single column clause from a CREATE TABLE body.
+
+    Returns ``(column_name, not_null_bool, has_default_bool)`` or
+    ``None`` if the clause is a table-level constraint / comment. Rows
+    with ``PRIMARY KEY`` inline are treated as NOT NULL because SQLite's
+    PRIMARY KEY semantics reject NULLs (except the one corner of
+    rowid-integer PKs, where a NULL autogenerates — still not a column
+    value the caller can rely on for a drop+readd).
+    """
+    text = clause.strip()
+    if not text:
+        return None
+    # First word is column name OR a table-level constraint keyword
+    head = re.split(r'\s+', text, maxsplit=1)
+    first = head[0].strip('`"[]').upper()
+    if first in _TABLE_LEVEL_CONSTRAINTS:
+        return None
+    # Column name is the first token, typically bare identifier
+    m = re.match(r'["\[`]?(\w+)["\]`]?(.*)$', text, re.DOTALL)
+    if not m:
+        return None
+    name = m.group(1)
+    rest = m.group(2).upper()
+    not_null = bool(re.search(r'\bNOT\s+NULL\b', rest))
+    if re.search(r'\bPRIMARY\s+KEY\b', rest):
+        not_null = True
+    has_default = bool(re.search(r'\bDEFAULT\b', rest))
+    return (name, not_null, has_default)
+
+
+def _parse_create_table(stmt):
+    """Extract ``(table, {col: {'not_null': bool, 'has_default': bool}})`` .
+
+    Returns ``None`` if the statement is not a CREATE TABLE (covers
+    CREATE VIRTUAL TABLE too — virtual tables don't have the same
+    per-column metadata, so we register the table with an empty column
+    map so a later DROP TABLE still resolves).
+    """
+    m = re.match(
+        r'^\s*CREATE\s+(?:VIRTUAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?'
+        r'(?:["\[`]?(\w+)["\]`]?)\s*',
+        stmt,
+        re.IGNORECASE,
+    )
+    if not m:
+        return None
+    table = m.group(1)
+    # Body is between the first ``(`` and the matching ``)``
+    paren_start = stmt.find('(', m.end() - 1)
+    if paren_start == -1:
+        return (table, {})
+    depth = 0
+    i = paren_start
+    n = len(stmt)
+    body_end = -1
+    in_str = False
+    str_ch = ''
+    while i < n:
+        ch = stmt[i]
+        if in_str:
+            if ch == str_ch:
+                if i + 1 < n and stmt[i + 1] == str_ch:
+                    i += 2
+                    continue
+                in_str = False
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            in_str = True
+            str_ch = ch
+            i += 1
+            continue
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+            if depth == 0:
+                body_end = i
+                break
+        i += 1
+    if body_end == -1:
+        return (table, {})
+    body = stmt[paren_start + 1 : body_end]
+    columns = {}
+    for clause in _split_top_level_commas(body):
+        parsed = _parse_column_clause(clause)
+        if parsed is None:
+            continue
+        name, not_null, has_default = parsed
+        columns[name] = {'not_null': not_null, 'has_default': has_default}
+    return (table, columns)
+
+
+def _classify_statement(stmt):
+    """Return a tuple ``(kind, details)`` for an already-trimmed statement.
+
+    Kinds recognised: ``create_table``, ``drop_table``, ``add_column``,
+    ``drop_column``, ``alter_column``, ``rename_column``, ``other``.
+    """
+    m_drop = re.match(
+        r'^\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?["\[`]?(\w+)["\]`]?', stmt, re.IGNORECASE
+    )
+    if m_drop:
+        return ('drop_table', {'table': m_drop.group(1)})
+
+    m_create = re.match(r'^\s*CREATE\s+(?:VIRTUAL\s+)?TABLE\b', stmt, re.IGNORECASE)
+    if m_create:
+        parsed = _parse_create_table(stmt)
+        if parsed is not None:
+            table, columns = parsed
+            return ('create_table', {'table': table, 'columns': columns})
+
+    m_alter = re.match(r'^\s*ALTER\s+TABLE\s+["\[`]?(\w+)["\]`]?\s+(.+)$', stmt, re.IGNORECASE)
+    if m_alter:
+        table = m_alter.group(1)
+        action = m_alter.group(2).strip()
+
+        m_add = re.match(r'^ADD\s+(?:COLUMN\s+)?["\[`]?(\w+)["\]`]?\s*(.+)$', action, re.IGNORECASE)
+        if m_add:
+            name = m_add.group(1)
+            spec = m_add.group(2)
+            upper = spec.upper()
+            not_null = bool(re.search(r'\bNOT\s+NULL\b', upper))
+            has_default = bool(re.search(r'\bDEFAULT\b', upper))
+            return (
+                'add_column',
+                {
+                    'table': table,
+                    'column': name,
+                    'not_null': not_null,
+                    'has_default': has_default,
+                },
+            )
+
+        m_drop_col = re.match(r'^DROP\s+(?:COLUMN\s+)?["\[`]?(\w+)["\]`]?', action, re.IGNORECASE)
+        if m_drop_col:
+            return (
+                'drop_column',
+                {'table': table, 'column': m_drop_col.group(1)},
+            )
+
+        m_rename_col = re.match(
+            r'^RENAME\s+(?:COLUMN\s+)?["\[`]?(\w+)["\]`]?\s+TO\s+["\[`]?(\w+)["\]`]?',
+            action,
+            re.IGNORECASE,
+        )
+        if m_rename_col:
+            return (
+                'rename_column',
+                {
+                    'table': table,
+                    'old': m_rename_col.group(1),
+                    'new': m_rename_col.group(2),
+                },
+            )
+
+        # SQLite: no native ALTER COLUMN / MODIFY COLUMN. Any appearance
+        # implies an operator is about to do a lossy rewrite.
+        if re.match(r'^(?:ALTER|MODIFY|CHANGE)\s+(?:COLUMN\s+)?', action, re.IGNORECASE):
+            return ('alter_column', {'table': table, 'ddl': action})
+
+    return ('other', {})
+
+
+def _verify_migrations_reversible(files_in_order, migrations_dir):
+    """Walk migrations and collect violations of the rolling-upgrade contract.
+
+    ``files_in_order`` is a list of ``(version, filename)`` pairs already
+    sorted. The function reads each file, tokenises it, updates its
+    in-memory schema model, and emits a ``_MigrationDDLError`` for every
+    statement that violates the contract. All violations are returned
+    together so one bad migration doesn't hide later ones.
+    """
+    # Schema model: table -> {col_name: {not_null, has_default}}
+    schema = {}
+    violations = []
+
+    for _version, fname in files_in_order:
+        path = os.path.join(migrations_dir, fname)
+        with open(path) as f:
+            sql = f.read()
+        for line, stmt in _tokenize_sql(sql):
+            kind, details = _classify_statement(stmt)
+            # One-line summary of the DDL, for reporter output.
+            ddl = re.sub(r'\s+', ' ', stmt).strip()
+            if len(ddl) > 160:
+                ddl = ddl[:157] + '...'
+
+            if kind == 'create_table':
+                table = details['table']
+                schema[table] = dict(details['columns'])
+            elif kind == 'drop_table':
+                violations.append(
+                    _MigrationDDLError(
+                        fname,
+                        line,
+                        ddl,
+                        f'DROP TABLE {details["table"]!r} is irreversible — '
+                        'migrate data into a successor table instead.',
+                    )
+                )
+                schema.pop(details['table'], None)
+            elif kind == 'add_column':
+                table = details['table']
+                if details['not_null'] and not details['has_default']:
+                    violations.append(
+                        _MigrationDDLError(
+                            fname,
+                            line,
+                            ddl,
+                            f'ALTER TABLE {table} ADD COLUMN {details["column"]} '
+                            'NOT NULL without DEFAULT — existing rows have no value '
+                            'and the migration will fail on any non-empty table.',
+                        )
+                    )
+                schema.setdefault(table, {})[details['column']] = {
+                    'not_null': details['not_null'],
+                    'has_default': details['has_default'],
+                }
+            elif kind == 'drop_column':
+                table = details['table']
+                col = details['column']
+                meta = schema.get(table, {}).get(col)
+                if meta is None:
+                    # Unknown column — still flag, operator should confirm.
+                    violations.append(
+                        _MigrationDDLError(
+                            fname,
+                            line,
+                            ddl,
+                            f'ALTER TABLE {table} DROP COLUMN {col} targets a '
+                            'column this walker never saw defined — cannot confirm '
+                            'it is safe to drop.',
+                        )
+                    )
+                elif meta['not_null']:
+                    violations.append(
+                        _MigrationDDLError(
+                            fname,
+                            line,
+                            ddl,
+                            f'ALTER TABLE {table} DROP COLUMN {col} — column was '
+                            'declared NOT NULL, so re-adding it during a rollback '
+                            'would fail against existing rows.',
+                        )
+                    )
+                schema.get(table, {}).pop(col, None)
+            elif kind == 'alter_column':
+                violations.append(
+                    _MigrationDDLError(
+                        fname,
+                        line,
+                        ddl,
+                        f'ALTER / MODIFY COLUMN on {details["table"]} — SQLite has '
+                        'no in-place column-type change, implying a lossy rewrite. '
+                        'Use a new migration that builds a successor table.',
+                    )
+                )
+            elif kind == 'rename_column':
+                old = details['old']
+                new = details['new']
+                cols = schema.setdefault(details['table'], {})
+                if old in cols:
+                    cols[new] = cols.pop(old)
+
+    return violations
+
+
 def migrate(args):
     """Apply pending database migrations in order.
 
@@ -231,11 +734,38 @@ def migrate(args):
     data). See Phase 18.7.
 
     Flags:
-        --status:   Print applied/pending status for all migrations and exit.
-        --dry-run:  Print SQL that would be executed without making changes.
+        --status:              Print applied/pending status and exit.
+        --dry-run:             Print SQL that would be executed, don't apply.
+        --verify-reversible:   Walk pending migrations for unsafe DDL
+                               (drops, NOT NULL-without-default adds,
+                               lossy column changes); refuse to apply if
+                               any are found. See Phase 21.5.
     """
-    db_path = _get_db_path()
     migrations_dir = _get_migrations_dir()
+
+    # --verify-reversible is a pure file-reading dry-run. It doesn't
+    # need the DB, the app factory, or even ``config.yaml`` — so we
+    # short-circuit here. This keeps the CLI callable from CI
+    # (``python manage.py migrate --verify-reversible``) without a
+    # prior ``config`` step, and mirrors the contract documented in
+    # docs/UPGRADE.md: the check is a static analysis on disk, not a
+    # live-DB probe.
+    if getattr(args, 'verify_reversible', False):
+        migration_files = _list_migration_files(migrations_dir)
+        if not migration_files:
+            print('No migration files found in migrations/')
+            return
+        violations = _verify_migrations_reversible(migration_files, migrations_dir)
+        if not violations:
+            print(f'All {len(migration_files)} migrations pass the reversibility check.')
+            return
+        print('Migration reversibility violations:', file=sys.stderr)
+        for v in violations:
+            print(f'  {v.filename}:{v.line}: {v.reason}', file=sys.stderr)
+            print(f'      {v.ddl}', file=sys.stderr)
+        sys.exit(1)
+
+    db_path = _get_db_path()
 
     os.makedirs(os.path.dirname(db_path) or '.', exist_ok=True)
     _check_db_not_corrupt(db_path)
@@ -1547,6 +2077,13 @@ def main():
     migrate_parser.add_argument('--status', action='store_true', help='Show migration status')
     migrate_parser.add_argument(
         '--dry-run', action='store_true', help='Print SQL without executing'
+    )
+    migrate_parser.add_argument(
+        '--verify-reversible',
+        action='store_true',
+        help='Refuse migrations that drop tables, drop NOT NULL columns, add '
+        'NOT NULL columns without a DEFAULT, or ALTER/MODIFY column types '
+        '(Phase 21.5 upgrade-safety gate).',
     )
 
     # Config validation
