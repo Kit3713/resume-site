@@ -587,7 +587,9 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 **Problem:** All the tooling in the world is useless if there's no process for using it. This runbook defines when and how to use each observability tool during development, not just in production.
 
-- [ ] **`docs/OBSERVABILITY_RUNBOOK.md`** — the operational playbook for the project:
+- [x] **`docs/OBSERVABILITY_RUNBOOK.md`** — shipped. Covers: a quick-index table mapping "when X, reach for Y" against every tool the project ships (structured logs, `/metrics`, alerting rules, Grafana dashboard, three levels of synthetic monitoring, `manage.py query-audit` / `profile` / `mutation-report`, `scripts/benchmark_routes.py`, locust); a troubleshooting cheatsheet mapping common symptoms to first-place-to-look; the full development workflow (pre-feature baseline → during-development → pre-PR → CI → post-deploy); and step-by-step setup for Prometheus + Grafana + Alertmanager (compose snippet, `rule_files` wiring, receiver routing by severity + component) and all three synthetic-monitoring tiers (Uptime Kuma ping, curl cron+systemd-timer, Playwright cron). The original roadmap text below is preserved for historical reference — all of it maps to runbook sections now.
+
+**Runbook contents (preserved from the original roadmap bullet):**
 
   **Before writing any new feature:**
   1. Run `manage.py profile` to establish a baseline for the routes the feature will affect
