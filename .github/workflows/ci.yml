@@ -285,6 +285,13 @@ jobs:
           # the admin user isn't exercised beyond the login form render,
           # so a real login isn't needed.
           mkdir -p /tmp/upgrade-data /tmp/upgrade-photos /tmp/upgrade-backups
+          # Bind-mount permission fix: the GitHub runner creates these
+          # dirs as the runner UID, but the container's appuser is UID
+          # 1000 and can't write to them — entrypoint's init-db then
+          # fails to create site.db, the container exits, and /healthz
+          # never answers. Pre-chown to the appuser UID so both the
+          # prior-release and new-image boots can populate the volumes.
+          sudo chown -R 1000:1000 /tmp/upgrade-data /tmp/upgrade-photos /tmp/upgrade-backups
           cat > /tmp/upgrade-config.yaml <<EOF
           secret_key: "ci-upgrade-test-secret-key-that-is-long-enough-for-audit"
           database_path: "/app/data/site.db"
