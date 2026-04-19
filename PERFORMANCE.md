@@ -596,6 +596,29 @@ tokenizer (intentionally single-function state machine). Full report:
 
 ### RAM per content-scale scenario
 
+#### Headline
+
+| Scenario | Total items | RSS steady | Δ vs empty | DB size |
+|---|---:|---:|---:|---:|
+| empty | 0 | 82.2 MiB | — | 0.4 MB |
+| small | 90 | 82.6 MiB | +0.3 MiB | 0.8 MB |
+| medium | 780 | 84.4 MiB | +2.1 MiB | 4.8 MB |
+| large | 6,770 | 85.6 MiB | +3.4 MiB | 44.2 MB |
+| huge | 27,630 | **103.1 MiB** | **+20.8 MiB** | 175 MB |
+
+Python heap is **flat at 23.8 MiB across all five scenarios** — the app
+does not hold per-row state between requests. The RSS growth that does
+appear is SQLite's page cache touching more of a bigger DB, bounded by
+SQLite's configured cache limit. Photo-upload peak (~161-168 MiB) is
+content-scale-independent — it tracks the Pillow bitmap, not the
+catalogue.
+
+Sizing guidance: two Gunicorn workers fit in **512 MiB for every tier**
+from empty up to 100 k items; budget **~85 MiB per concurrent upload**
+on top.
+
+#### Methodology
+
 Five scenarios spanning 0 to 27,630 content items, each run in a
 **fresh subprocess** (clean module cache per run), measuring RSS at
 boot, after warmup, after 500 landing requests, after hitting five
