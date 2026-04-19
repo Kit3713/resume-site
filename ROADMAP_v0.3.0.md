@@ -3,7 +3,9 @@
 > **Codename:** Forge  
 > **Status:** Planning  
 > **Baseline:** v0.2.0 (Phases 5–11 complete — hardened, extensible portfolio and blog platform)  
-> **Target:** Production-grade, observable, plugin-extensible portfolio engine with API-first architecture
+> **Target:** Production-grade, observable, ~~plugin-extensible~~ portfolio engine with API-first architecture
+
+> **Follow-on release:** v0.3.5 — carries forward the open audit issues plus the small number of *major* v0.3.0 items that did not finish. Cut/moved: Phase 20 (plugin architecture) entirely; the DAST pipeline (13.9), the Playwright browser-test suite (18.4), the load-test CI regression gate (18.6), the mutation-testing baseline + CI integration (18.8), the edge-case testing methodology (18.13), and the release-publication gate (21.5). Everything else that's still unchecked — CSS/JS minification, blog cover preview, translation dashboard, profile-export CLI, K8s examples, image-size baseline, etc. — stays in v0.3.0 as finishing-polish work. See [`ROADMAP_v0.3.5.md`](ROADMAP_v0.3.5.md). Items below that have been ~~struck through~~ are deferred to v0.3.5; nothing in v0.3.5 is a v0.4.0 item.
 
 ---
 
@@ -15,7 +17,7 @@ v0.2.0 transformed the codebase from a prototype into a foundation. v0.3.0 forge
 
 2. **Security posture moves from "hardened" to "defense-in-depth."** v0.2.0 added CSRF, rate limiting, input sanitization, and security headers. v0.3.0 adds WAF-style request filtering, CSP enforcement (not just report-only), secret rotation, token-scoped API authentication, automated dependency vulnerability scanning on every commit, and a formal threat model document.
 
-3. **The platform becomes API-first and extensible.** A full REST API (public reads + authenticated admin writes), a plugin architecture with both internal hooks and external module loading, a webhook/notification dispatch system, and a visual theme editor with live preview. Every new subsystem is designed so that v0.4.0+ features (multi-user, RBAC, SaaS mode) snap in without architectural rework.
+3. **The platform becomes API-first and extensible.** A full REST API (public reads + authenticated admin writes), ~~a plugin architecture with both internal hooks and external module loading~~, a webhook/notification dispatch system, and a visual theme editor with live preview. Every new subsystem is designed so that v0.4.0+ features (multi-user, RBAC, SaaS mode) snap in without architectural rework. **(Plugin architecture cut — see v0.3.5 roadmap.)**
 
 4. **Observability-driven development becomes the methodology, not an afterthought.** Every optimization is measured before and after. Every failure mode is tested. Every deployment is monitored. This means: structured JSON logging with request correlation, a Prometheus-compatible `/metrics` endpoint, per-request performance profiling, SQLite query analysis, load testing with CI regression gates, failure mode and resilience testing, fuzz testing on every input surface, mutation testing to validate test quality, static analysis in pre-commit and CI, Grafana dashboard templates, alerting rule definitions, container health probes, automated backup tooling, and synthetic monitoring documentation. The standard is not "it works" — the standard is "we can prove it works, prove it's fast, prove it's secure, and prove it stays that way after every commit."
 
@@ -49,7 +51,7 @@ These items were explicitly marked "deferred to v0.3.0" in the v0.2.0 roadmap:
 | Multilingual user-generated content (translation junction tables) | 15 |
 | Visual theme editor with live preview | 14 |
 | Webhook/notification dispatch system | 19 |
-| Plugin architecture (hooks + external loading) | 20 |
+| ~~Plugin architecture (hooks + external loading)~~ — **cut entirely** | ~~20~~ |
 
 ### Cross-Cutting Initiatives (Primary Focus)
 
@@ -210,15 +212,9 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 **Problem:** Static analysis (bandit) catches code patterns. DAST catches vulnerabilities in the running application — things like actual XSS that survives rendering, actual SQL injection through the full request pipeline, misconfigured headers on specific routes, and authentication bypass paths.
 
-- [ ] **OWASP ZAP baseline scan:** Add `zap-baseline.py` to the CI pipeline. Runs a passive scan against the test app (started in a CI container). Scans all public routes and the admin login page. Fails the build on MEDIUM+ findings
-- [ ] **ZAP configuration file:** `zap-config.yaml` — customize scan rules, exclude false positives, set authentication credentials for scanning admin routes (use the test admin account)
-- [ ] **DAST in CI workflow:** New CI job `security-scan` that:
-  1. Builds the container image
-  2. Starts it with a test config
-  3. Seeds the database with test content
-  4. Runs ZAP baseline scan against all routes
-  5. Uploads the HTML report as a CI artifact
-  6. Fails on findings above threshold
+- [ ] ~~**OWASP ZAP baseline scan:** Add `zap-baseline.py` to the CI pipeline. Runs a passive scan against the test app (started in a CI container). Scans all public routes and the admin login page. Fails the build on MEDIUM+ findings~~ — **moved to v0.3.5**
+- [ ] ~~**ZAP configuration file:** `zap-config.yaml` — customize scan rules, exclude false positives, set authentication credentials for scanning admin routes (use the test admin account)~~ — **moved to v0.3.5** (a stub `zap-config.yaml` already exists at the repo root; v0.3.5 wires it into CI)
+- [ ] ~~**DAST in CI workflow:** New CI job `security-scan`~~ — **moved to v0.3.5**
 - [x] **Manual pen test checklist:** `docs/PENTEST_CHECKLIST.md` — 10-section step-by-step guide covering authentication, authorization, input validation, CSRF, security headers, information disclosure, session security, rate limiting, file upload, and webhooks. Designed for periodic human review.
 
 ---
@@ -462,15 +458,15 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 - [x] **Slow request logging:** Requests exceeding 500ms are logged at WARNING with full timing breakdown (duration, query count, query time). Threshold is hardcoded at 500ms; configurable setting deferred.
 - [ ] **Profile export:** `manage.py profile` CLI command deferred — the structured log entries and `scripts/benchmark_routes.py` already provide profiling capability.
 
-### 18.4 — Browser-Based Testing (v0.2.0 Deferral)
+### 18.4 — Browser-Based Testing (v0.2.0 Deferral) — **ENTIRELY MOVED TO v0.3.5**
 
-- [ ] Add Playwright to dev dependencies
-- [ ] Test: dark/light mode toggle sets `localStorage` value and applies correct CSS class
-- [ ] Test: GSAP animations fire on scroll (verify element visibility states)
-- [ ] Test: Quill.js editor in admin — type text, save, verify content persists
-- [ ] Test: Photo upload drag-and-drop zone works
-- [ ] Test: Theme editor live preview updates iframe in real-time
-- [ ] Test: Drag-and-drop reordering persists order after page reload
+- [ ] ~~Add Playwright to dev dependencies~~ — **moved to v0.3.5**
+- [ ] ~~Test: dark/light mode toggle sets `localStorage` value and applies correct CSS class~~ — **moved to v0.3.5**
+- [ ] ~~Test: GSAP animations fire on scroll (verify element visibility states)~~ — **moved to v0.3.5**
+- [ ] ~~Test: Quill.js editor in admin — type text, save, verify content persists~~ — **moved to v0.3.5**
+- [ ] ~~Test: Photo upload drag-and-drop zone works~~ — **moved to v0.3.5**
+- [ ] ~~Test: Theme editor live preview updates iframe in real-time~~ — **moved to v0.3.5**
+- [ ] ~~Test: Drag-and-drop reordering persists order after page reload~~ — **moved to v0.3.5**
 
 ### 18.5 — Performance Baseline Document
 
@@ -480,22 +476,12 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 **Problem:** Without load testing, you don't know how the application behaves under realistic traffic, and without CI regression gates, you don't know when a code change makes it slower. Professional applications fail the build when performance degrades, the same way they fail the build when tests fail.
 
-- [ ] **Load testing with locust:** Add `locust` to dev dependencies. Create `tests/loadtests/locustfile.py`:
-  - `PublicUserBehavior`: simulates a visitor browsing the landing page, portfolio, blog listing, individual blog post, testimonials, and contact page. Weighted by realistic traffic distribution (landing page = 40%, portfolio = 20%, blog = 20%, rest = 20%)
-  - `APIConsumerBehavior`: simulates an API consumer making read requests to all public endpoints with realistic pagination patterns
-  - `AdminBehavior`: simulates an admin session — login, dashboard, edit content, upload photo, publish blog post, save settings
-  - Configurable user count and spawn rate via CLI or `tests/loadtests/config.yaml`
+- [x] **Load testing with locust:** `locust` is in dev dependencies and `tests/loadtests/locustfile.py` ships with all three behaviours (see next bullet).
 - [x] **Load test scenarios:** `tests/loadtests/locustfile.py` with `PublicUserBehavior` (weight 5, landing 40%, portfolio/blog 20% each), `APIConsumerBehavior` (weight 2, all public endpoints), `AdminBehavior` (weight 1, dashboard/photos/blog/settings). `tests/loadtests/thresholds.json` placeholder for CI gate.
-- [ ] **Baseline load test:** Run locust with 50 concurrent users for 5 minutes. Record results in `PERFORMANCE.md` tables.
-- [ ] **CI performance regression gate:** New CI job `perf-regression` that:
-  1. Starts the app with a seeded database (consistent test data for reproducible results)
-  2. Runs locust with 20 concurrent users for 60 seconds (fast enough for CI, long enough to stabilize)
-  3. Compares p95 response times against baseline thresholds stored in `tests/loadtests/thresholds.json`
-  4. Fails the build if any endpoint's p95 exceeds its threshold by more than 20%
-  5. Outputs a summary table showing endpoint-by-endpoint comparison
-  - Thresholds are updated manually after intentional performance changes (e.g., "we added translations, the blog listing is now 10ms slower, update the threshold")
-- [ ] **Memory leak detection:** The load test monitors process RSS memory at start and end. If memory grows more than 50% over the test duration, flag a potential leak. Not blocking in CI initially — warning only, ratchet to blocking after establishing stable baselines
-- [ ] **Concurrency stress test:** Run locust with 200 concurrent users for 30 seconds. The app should not crash, should not return 500 errors, and should not corrupt the SQLite database. This is not about response time — it's about proving the app degrades gracefully under overload rather than failing catastrophically. Document the degradation behavior in `PERFORMANCE.md`
+- [ ] ~~**Baseline load test:** Run locust with 50 concurrent users for 5 minutes. Record results in `PERFORMANCE.md` tables.~~ — **moved to v0.3.5** (paired with CI gate below)
+- [ ] ~~**CI performance regression gate:** New CI job `perf-regression`~~ — **moved to v0.3.5**
+- [ ] ~~**Memory leak detection:** The load test monitors process RSS memory at start and end. If memory grows more than 50% over the test duration, flag a potential leak. Not blocking in CI initially — warning only, ratchet to blocking after establishing stable baselines~~ — **moved to v0.3.5**
+- [ ] ~~**Concurrency stress test:** Run locust with 200 concurrent users for 30 seconds.~~ — **moved to v0.3.5**
 
 ### 18.7 — Failure Mode and Resilience Testing
 
@@ -518,9 +504,9 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 - [x] **mutmut configured:** `pyproject.toml [tool.mutmut]` targets `app/` with `tests/` as test dir and `python -m pytest -x -q` as runner. Already in dev dependencies.
 - [x] **Mutation report CLI:** `manage.py mutation-report` runs mutmut and prints killed/survived/timeout summary.
-- [ ] **Baseline mutation score:** Run `mutmut run` and record the score in PERFORMANCE.md. Target: >= 70%.
-- [ ] **Surviving mutant review:** Review and document surviving mutants from priority modules (blog, photos, reviews, settings, admin IP restriction, contact honeypot). Add tests or mark as equivalent.
-- [ ] **CI integration:** Add mutmut as informational CI job (non-blocking). Ratchet to blocking once baseline is stable.
+- [ ] ~~**Baseline mutation score:** Run `mutmut run` and record the score in PERFORMANCE.md. Target: >= 70%.~~ — **moved to v0.3.5**
+- [ ] ~~**Surviving mutant review:** Review and document surviving mutants from priority modules (blog, photos, reviews, settings, admin IP restriction, contact honeypot). Add tests or mark as equivalent.~~ — **moved to v0.3.5**
+- [ ] ~~**CI integration:** Add mutmut as informational CI job (non-blocking). Ratchet to blocking once baseline is stable.~~ — **moved to v0.3.5**
 
 ### 18.9 — Error Categorization and Structured Error Tracking
 
@@ -572,16 +558,9 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 **Problem:** The v0.2.0 test suite verifies features work. It doesn't exhaustively verify edge cases — what happens at boundaries, with empty inputs, with maximum-length inputs, with Unicode, with concurrent access. This is the "3 assertions vs. 15" gap. This sub-phase establishes a methodology and applies it retroactively to all existing tests and all v0.3.0 additions.
 
-- [ ] **Edge case checklist:** Create `tests/TESTING_STANDARDS.md` documenting the minimum edge cases that every test function must cover. For any function that accepts input:
-  - **Empty/null:** empty string, None, zero, empty list/dict
-  - **Boundary:** minimum valid, maximum valid, one below minimum, one above maximum
-  - **Type mismatch:** string where int expected, int where string expected, boolean edge cases (`"true"` vs `True` vs `1` vs `"1"`)
-  - **Unicode:** ASCII, multi-byte UTF-8, emoji, RTL text (Arabic/Hebrew), combining characters, zero-width joiners, null bytes
-  - **Length:** single character, exactly at the database column limit, one character over the limit, 10x the limit
-  - **Concurrency:** two requests hitting the same resource simultaneously (where applicable — slug uniqueness, token usage, sort order updates)
-  - **Injection:** SQL metacharacters (`'; --`), HTML/JS (`<script>`), path traversal (`../`), template injection (`{{ }}`), CRLF injection (`\r\n`)
-- [ ] **Retroactive edge case pass:** Apply the checklist to all existing test files. For each test function, add missing edge case assertions. This is tedious but essential — it's where real bugs hide. Track progress as a checklist per test file in `tests/TESTING_STANDARDS.md`
-- [ ] **New code requirement:** Every PR that adds a new function accepting user input must include edge case tests per the checklist. Code review checks for this. No exceptions
+- [ ] ~~**Edge case checklist:** Create `tests/TESTING_STANDARDS.md`~~ — **moved to v0.3.5** (methodology is its own project; not a polish item)
+- [ ] ~~**Retroactive edge case pass:** Apply the checklist to all existing test files.~~ — **moved to v0.3.5**
+- [ ] ~~**New code requirement:** Every PR that adds a new function accepting user input must include edge case tests per the checklist.~~ — **moved to v0.3.5**
 
 ### 18.14 — Observability-Driven Development Runbook
 
@@ -657,60 +636,32 @@ All 10 routes sit behind `@require_api_token('admin')` + the slower `rate_limit_
 
 ---
 
-## Phase 20 — Plugin Architecture
+## ~~Phase 20 — Plugin Architecture~~ — **CUT FROM v0.3.0**
 
-*Enables extending resume-site without modifying core code. Two mechanisms: internal Python hooks (for tightly-coupled extensions) and external plugin modules (for distributable add-ons).*
+> **Status:** Cut. The plugin architecture is deferred indefinitely — not moved to v0.3.5, not promised for v0.4.0. The event bus (Phase 19.1) and filter-hook surface give the same extension points for in-tree code without the trust-model and sandboxing cost of loading external modules. Re-evaluate when there's an external consumer asking for it.
 
-### 20.1 — Internal Hook System
+### ~~20.1 — Internal Hook System~~ — **CUT**
 
-*Built on Phase 19's event system, extended with filter hooks (modify data) in addition to action hooks (side effects).*
+~~*Built on Phase 19's event system, extended with filter hooks (modify data) in addition to action hooks (side effects).*~~
 
-- [ ] Extend `app/events.py` with filter hooks:
-  - `apply_filters(hook_name, value, **context)` — passes `value` through all registered filters in priority order. Each filter receives the current value and returns the modified value
-  - Filters have a `priority` parameter (default 10, lower = earlier)
-- [ ] **Built-in filter hooks:**
-  - `template.head_extra` — inject additional `<head>` content (CSS, meta tags)
-  - `template.body_end_extra` — inject content before `</body>` (scripts, widgets)
-  - `template.nav_items` — modify the navigation item list
-  - `template.footer_extra` — inject content into the footer
-  - `content.before_save` — transform content before database write
-  - `content.after_render` — transform rendered HTML before template output
-  - `api.response` — transform API response data before JSON serialization
-  - `admin.dashboard_widgets` — add custom widgets to the admin dashboard
-  - `admin.settings_categories` — add custom settings categories
-- [ ] **Hook documentation:** `PLUGINS.md` documenting every action and filter hook, their signatures, when they fire, and example usage
+- [ ] ~~Extend `app/events.py` with filter hooks (`apply_filters`, priority parameter)~~
+- [ ] ~~Built-in filter hooks (template.head_extra, template.body_end_extra, template.nav_items, template.footer_extra, content.before_save, content.after_render, api.response, admin.dashboard_widgets, admin.settings_categories)~~
+- [ ] ~~`PLUGINS.md` hook documentation~~
 
-### 20.2 — External Plugin Loading
+### ~~20.2 — External Plugin Loading~~ — **CUT**
 
-- [ ] **Plugin directory:** `/app/plugins/` (mapped to a container volume for persistence)
-- [ ] **Plugin structure:**
-  ```
-  plugins/
-    my-plugin/
-      plugin.yaml      # Metadata: name, version, author, description, hooks
-      __init__.py       # Entry point: register(app) function
-      templates/        # Optional Jinja2 template overrides
-      static/           # Optional static assets
-      migrations/       # Optional database migrations (numbered, same format as core)
-  ```
-- [ ] **Plugin lifecycle:**
-  - Discovery: On app startup, scan `plugins/` for directories containing `plugin.yaml`
-  - Validation: Check `plugin.yaml` schema (name, version, `resume_site_version_min` compatibility field)
-  - Registration: Call `plugin.register(app)` which receives the Flask app and can register event handlers, filter hooks, blueprints, template directories, and static asset directories
-  - Migration: Plugin migrations run after core migrations (prefixed with plugin name to avoid collisions)
-- [ ] **Plugin settings:** Plugins can register settings via the settings registry (Phase 9.4 from v0.2.0). Plugin settings appear in their own category in the admin settings page
-- [ ] **Plugin isolation:** Plugins run in the same process (no sandboxing in v0.3.0). Document the trust model: only install plugins you trust, they have full access to the database and Flask app. Sandboxing is a v0.5.0+ concern
-- [ ] **Plugin enable/disable:** Admin UI toggle per plugin. Disabled plugins are not loaded on startup. Disabling preserves the plugin's data (migrations are not reversed)
-- [ ] `manage.py plugins list` — show installed plugins, versions, enabled status
-- [ ] `manage.py plugins enable <name>` / `manage.py plugins disable <name>`
-- [ ] `manage.py plugins validate <name>` — check plugin.yaml, run plugin's self-test if defined
+- [ ] ~~Plugin directory `/app/plugins/`~~
+- [ ] ~~Plugin structure (plugin.yaml, __init__.py, templates/, static/, migrations/)~~
+- [ ] ~~Plugin lifecycle (discovery, validation, registration, migration)~~
+- [ ] ~~Plugin settings registration~~
+- [ ] ~~Trust-model / sandboxing documentation~~
+- [ ] ~~Enable/disable admin toggle~~
+- [ ] ~~`manage.py plugins list/enable/disable/validate`~~
 
-### 20.3 — Example Plugins
+### ~~20.3 — Example Plugins~~ — **CUT**
 
-*Ship two example plugins to validate the architecture and serve as templates for plugin developers:*
-
-- [ ] **`example-analytics-export`** — registers a hook on `admin.dashboard_widgets` to add a "Download Analytics CSV" button. Registers an API endpoint `/api/v1/plugins/analytics-export` that returns page_views as CSV. Demonstrates: widget injection, custom API endpoint, no database migration needed
-- [ ] **`example-social-cards`** — registers a filter on `template.head_extra` to inject auto-generated Open Graph image tags (using a simple SVG-to-PNG pipeline for blog posts without cover images). Demonstrates: filter hooks, template injection, Pillow integration
+- [ ] ~~`example-analytics-export`~~
+- [ ] ~~`example-social-cards`~~
 
 ---
 
@@ -747,39 +698,17 @@ Build-arg `IMAGE_VERSION` (default `dev`) added to the runtime stage so CI label
 - [x] **Production deployment guide:** Shipped as `docs/PRODUCTION.md` (12 sections, 300+ lines). Covers deployment-shape selection (Compose / Quadlet / k8s), server prerequisites, first-deploy checklist (secret key + password hash generation via `python -c`/`manage.py hash-password`, config.yaml layout, verification), reverse-proxy snippets for Caddy + Nginx + Traefik, firewall + TLS + admin IP-gating recipe (with the Tailscale CGNAT pattern), resource sizing for 1k / 10k / 100k monthly visitors with the Postgres-migration trigger documented, logging (journald for Quadlet, json-file for compose, pointer to `docs/LOGGING.md` for forwarding recipes), monitoring (uptime-only free tier vs Prometheus + Grafana with the `metrics_allowed_networks` guardrail), upgrades (with `cosign verify` command), day-2 operations (rotating `secret_key`, rotating API tokens, pen-test cadence), known limitations (single-writer SQLite, no object storage, no public login yet), and a getting-help section that indexes every other doc.
 - [ ] **Kubernetes / Nomad deployment examples:** Commented-out example manifests (not officially supported, but the image is designed to work in orchestrated environments) — the readiness-probe block in `compose.yaml` documents the contract; full k8s manifests deferred.
 
-### 21.5 — Release Publication (Container is the Shipping Artifact)
+### ~~21.5 — Release Publication (Container is the Shipping Artifact)~~ — **MOVED TO v0.3.5**
 
-*The container image — not source-tree installs — is the canonical v0.3.0 release. Every
-release of this GitHub project ships at minimum as a published OCI image. Source installs
-remain supported for development, but the container is the artifact the docs, the
-deployment guide, and the support matrix point at.*
+> The release-publication gate, signed-tag matrix, and "smoke-test the published image, not the source" checklist all move to v0.3.5. The CI publish+scan+cosign machinery shipped in 21.1–21.3; what's outstanding is the *process* around it (tag matrix, release-notes template, stop-ship gate, README/PRODUCTION.md reorientation to GHCR-first). v0.3.5 will cut the first release that honours this gate.
 
-- [ ] **GHCR is the release surface:** Every tagged release publishes to
-      `ghcr.io/<owner>/resume-site` via the existing CI workflow (`.github/workflows/ci.yml`,
-      `publish` job). No tag is considered released until the image is pushed and pullable.
-- [ ] **Multi-arch image:** Each release ships `linux/amd64` and `linux/arm64` manifests
-      under the same tag (already wired via `docker/build-push-action` + QEMU). Verify both
-      architectures pull and start cleanly before promoting any `vN.N.N` tag to `latest`.
-- [ ] **Tag matrix per release:** Push three immutable tags plus one moving tag for every
-      stable release: `vMAJOR.MINOR.PATCH`, `vMAJOR.MINOR`, `vMAJOR`, and `latest`. The
-      moving `:main` tag (already produced by `publish-main`) is for tracking trunk only —
-      never recommended in production docs.
-- [ ] **Release notes link to the image:** Every GitHub Release entry must include the
-      exact pull command (`podman pull ghcr.io/<owner>/resume-site:vX.Y.Z`), the image
-      digest (`sha256:...`), and the `cosign verify` command for the signed image (Phase
-      21.3). Don't ship a release without these three lines.
-- [ ] **Smoke-test the published image, not the source:** The release checklist runs
-      `podman run` against the freshly-published GHCR tag (with a minimal `config.yaml`)
-      and verifies `/healthz` and `/readyz` before announcing the release. This catches
-      registry-side regressions (auth, manifest, multi-arch missing variants) that source
-      tests miss.
-- [ ] **Document the container as the recommended install path:** Update `README.md` and
-      `docs/PRODUCTION.md` so the first install instruction is `podman pull` /
-      `docker pull` from GHCR. Source-tree install drops to a "Development" sub-section.
-      Quadlet / compose examples reference the GHCR image by digest-pinned tag.
-- [ ] **Stop-ship gate:** A failed publish (CI red on `publish` job, image not pullable,
-      cosign verification failure, or smoke test failure on the published image) is a
-      release blocker. Re-tag and re-run rather than back-fill a broken release.
+- [ ] ~~GHCR is the release surface~~ — **moved to v0.3.5**
+- [ ] ~~Multi-arch image verification before promoting to `latest`~~ — **moved to v0.3.5**
+- [ ] ~~Tag matrix per release (`vMAJOR.MINOR.PATCH`, `vMAJOR.MINOR`, `vMAJOR`, `latest`)~~ — **moved to v0.3.5**
+- [ ] ~~Release notes include pull command, digest, cosign verify line~~ — **moved to v0.3.5**
+- [ ] ~~Smoke-test the published image, not the source~~ — **moved to v0.3.5**
+- [ ] ~~README / PRODUCTION.md lead with `podman pull` from GHCR~~ — **moved to v0.3.5**
+- [ ] ~~Stop-ship gate~~ — **moved to v0.3.5**
 
 ---
 
@@ -799,7 +728,7 @@ Phase 16  (REST API)               ──── After 13.4 (token auth) + 12 (op
 Phase 17  (Backups)                ──── After 16 (API backup trigger endpoint).
 
 Phase 19  (Webhooks)               ──── After 16 (API event sources) + 12 (service decoupling).
-Phase 20  (Plugins)                ──── Last feature phase. Builds on 19 (event bus).
+~~Phase 20  (Plugins)~~              ──── **CUT** — see note at Phase 20 header.
 
 Phase 21  (Container Maturity)     ──── Final phase. Image is built after all features land.
 ```
@@ -809,7 +738,7 @@ Phase 21  (Container Maturity)     ──── Final phase. Image is built afte
 ```
 Stream A (Core Quality + Observability):  12 → 13 → 18 ──────────────────── → 21
 Stream B (Admin + Content):               ─────────────── → 14 → 15 ──────── → 21
-Stream C (API + Events):                  ─────────────────────── → 16 → 17 → 19 → 20 → 21
+Stream C (API + Events):                  ─────────────────────── → 16 → 17 → 19 → ~~20~~ → 21
 ```
 
 Streams A and B can run concurrently after Phase 12's query optimization and Phase 13's CSP work stabilize. Stream C starts once token auth (13.4) and the optimized service layer (12.2) are complete.
@@ -841,9 +770,9 @@ Streams A and B can run concurrently after Phase 12's query optimization and Pha
 | `mutmut` (dev only) | Mutation testing for test quality validation | 18 | Dev |
 | None (custom) | Metrics endpoint (no prometheus_client — custom lightweight implementation) | 18 | Runtime |
 | None (custom) | Event bus and webhook delivery (stdlib `threading`) | 19 | Runtime |
-| None (custom) | Plugin loader (stdlib `importlib`) | 20 | Runtime |
+| ~~None (custom) | Plugin loader (stdlib `importlib`) | 20 | Runtime~~ — **CUT** |
 
-**Dependency philosophy for v0.3.0:** Add no new runtime Python dependencies. The event bus, metrics endpoint, webhook delivery, plugin loader, and API framework are all built with Flask and the stdlib. All new Python packages are dev-only (linting, testing, profiling) and never ship in the container image. Sortable.js is the only new frontend dependency (CDN-loaded). This keeps the supply chain narrow, the container image small, and the attack surface minimal.
+**Dependency philosophy for v0.3.0:** Add no new runtime Python dependencies. The event bus, metrics endpoint, webhook delivery, ~~plugin loader~~, and API framework are all built with Flask and the stdlib. All new Python packages are dev-only (linting, testing, profiling) and never ship in the container image. Sortable.js is the only new frontend dependency (CDN-loaded). This keeps the supply chain narrow, the container image small, and the attack surface minimal.
 
 ---
 
@@ -857,7 +786,7 @@ Streams A and B can run concurrently after Phase 12's query optimization and Pha
 | `008_fts5.sql` | FTS5 virtual table for admin search | 14 |
 | `009_content_translations.sql` | Translation junction tables for all content types | 15 |
 | `010_webhooks.sql` | `webhooks` and `webhook_deliveries` tables | 19 |
-| `011_plugins.sql` | `plugins` table (name, version, enabled, installed_at) | 20 |
+| ~~`011_plugins.sql` | `plugins` table (name, version, enabled, installed_at) | 20~~ — **CUT** | |
 
 ---
 
@@ -877,7 +806,7 @@ Streams A and B can run concurrently after Phase 12's query optimization and Pha
 | `manage.py rebuild-search-index` | Rebuild FTS5 index | 14 |
 | `manage.py translations export-content` | Export translatable content as .po | 15 |
 | `manage.py translations import-content` | Import translated content from .po | 15 |
-| `manage.py plugins list/enable/disable/validate` | Plugin management | 20 |
+| ~~`manage.py plugins list/enable/disable/validate` | Plugin management | 20~~ — **CUT** | |
 
 ---
 
@@ -892,7 +821,7 @@ Streams A and B can run concurrently after Phase 12's query optimization and Pha
 | `docs/alerting-rules.yaml` | Prometheus alerting rules with runbook links | 18 |
 | `docs/grafana-dashboard.json` | Pre-built Grafana dashboard (importable) | 18 |
 | `docs/PENTEST_CHECKLIST.md` | Manual penetration testing guide | 13 |
-| `PLUGINS.md` | Plugin development guide, hook reference | 20 |
+| ~~`PLUGINS.md` | Plugin development guide, hook reference | 20~~ — **CUT** | |
 | `docs/PRODUCTION.md` | Production deployment, monitoring, synthetic checks | 21 |
 | `docs/API.md` | API quickstart (complements OpenAPI spec) | 16 |
 | `openapi.yaml` | OpenAPI 3.0 specification | 16 |
@@ -917,7 +846,7 @@ Streams A and B can run concurrently after Phase 12's query optimization and Pha
 | 17 | `test_backup.py` (backup/restore cycle) | 84% |
 | 18 | `test_observability.py` (metrics format, log structure), `test_resilience.py` (failure modes), `test_edge_cases.py` (retroactive edge case pass), Playwright tests, load tests in CI, mutation testing (informational) | 90% |
 | 19 | `test_webhooks.py` (delivery, signing, retry, auto-disable) | 91% |
-| 20 | `test_plugins.py` (discovery, loading, hooks, lifecycle) | 92% |
+| ~~20 | `test_plugins.py` (discovery, loading, hooks, lifecycle) | 92%~~ — **CUT** | | |
 | 21 | Container smoke tests in CI | 92%+ |
 
 **Testing quality metrics (in addition to line coverage):**
@@ -942,14 +871,14 @@ Ratchet: CI `--cov-fail-under` increments with each phase. Mutation score ratche
 
 These are explicitly deferred. The v0.3.0 architecture is designed to make them possible:
 
-- Multiple admin / viewer accounts (API token auth, activity log `admin_user` field, plugin settings per-user prepare for this)
+- Multiple admin / viewer accounts (API token auth, activity log `admin_user` field prepare for this)
 - Public-facing login (CSRF, session hardening, and API auth prepare for this)
 - Role-based access control (API scope model generalizes to role-based permissions)
-- SaaS / multi-tenant mode (plugin architecture and settings registry per-namespace prepare for this)
+- SaaS / multi-tenant mode (settings registry per-namespace prepares for this)
 - OAuth2 / OIDC provider integration (token auth pattern extends to delegated auth)
 - PostgreSQL backend option (service layer abstracts DB access; migration system supports multiple backends with driver switch)
 - Real-time features (WebSocket support for live admin collaboration)
-- Plugin sandboxing (currently plugins have full access; v0.5.0+ could add process isolation)
+- ~~Plugin sandboxing~~ — moot: the plugin architecture itself was cut. Re-evaluate if a plugin system ever lands.
 
 ---
 
@@ -977,7 +906,7 @@ v0.3.0 is ready to ship when:
 
 **Security:**
 7. CSP is in enforcement mode with zero violations on all pages
-8. OWASP ZAP baseline scan passes with zero MEDIUM+ findings
+8. ~~OWASP ZAP baseline scan passes with zero MEDIUM+ findings~~ — **moved to v0.3.5** (DAST pipeline deferred)
 9. All Hypothesis fuzz tests pass with no crashes or unexpected exceptions
 10. `THREAT_MODEL.md` is complete and reviewed against OWASP Top 10
 11. `docs/PENTEST_CHECKLIST.md` has been executed manually at least once
@@ -986,7 +915,7 @@ v0.3.0 is ready to ship when:
 12. All v0.2.0 deferred admin features are functional and tested
 13. The REST API passes a full integration test suite with auth, pagination, and error handling
 14. Backup and restore complete a round-trip without data loss
-15. The plugin system loads, enables, and disables example plugins without error
+15. ~~The plugin system loads, enables, and disables example plugins without error~~ — **CUT (plugin architecture removed from v0.3.0 scope)**
 16. Webhook delivery succeeds with HMAC verification on a test endpoint
 
 **Observability:**
@@ -999,25 +928,26 @@ v0.3.0 is ready to ship when:
 **Testing:**
 22. Test line coverage is ≥ 92% with zero skipped security tests
 23. Test branch coverage is ≥ 85%
-24. Mutation score is ≥ 70% (mutmut) with all surviving mutants reviewed
+24. ~~Mutation score is ≥ 70% (mutmut) with all surviving mutants reviewed~~ — **moved to v0.3.5**
 25. All failure mode tests pass (SMTP down, disk full, DB locked, corrupted uploads)
-26. Edge case checklist is complete for every function accepting user input
-27. Load test with 50 concurrent users shows zero 500 errors and p95 < 500ms
+26. ~~Edge case checklist is complete for every function accepting user input~~ — **moved to v0.3.5**
+27. ~~Load test with 50 concurrent users shows zero 500 errors and p95 < 500ms~~ — **moved to v0.3.5**
 
 **Performance:**
-28. CI performance regression gate passes (no endpoint regresses beyond 20% threshold)
+28. ~~CI performance regression gate passes (no endpoint regresses beyond 20% threshold)~~ — **moved to v0.3.5**
 29. Container image is < 150MB, starts in < 5 seconds, passes Trivy scan with zero CRITICAL/HIGH CVEs
 30. Lighthouse score ≥ 95 on Performance for the landing page
 31. `PERFORMANCE.md` documents baselines for all top routes with before/after optimization data
 
 **Documentation:**
-32. `PERFORMANCE.md`, `THREAT_MODEL.md`, `PLUGINS.md`, `docs/PRODUCTION.md`, `docs/OBSERVABILITY_RUNBOOK.md`, `tests/TESTING_STANDARDS.md`, `docs/alerting-rules.yaml`, and `docs/grafana-dashboard.json` are complete
+32. `PERFORMANCE.md`, `THREAT_MODEL.md`, ~~`PLUGINS.md`~~, `docs/PRODUCTION.md`, `docs/OBSERVABILITY_RUNBOOK.md`, ~~`tests/TESTING_STANDARDS.md`~~, `docs/alerting-rules.yaml`, and `docs/grafana-dashboard.json` are complete (struck items moved to v0.3.5 or cut)
 33. `docs/PENTEST_CHECKLIST.md` exists and has been used at least once
 34. Synthetic monitoring scripts (`tests/synthetic/`) are functional and documented
 
-**Release / Distribution:**
-35. The `v0.3.0` tag has published a multi-arch (`linux/amd64` + `linux/arm64`) container image to `ghcr.io/<owner>/resume-site` and the image is publicly pullable
-36. The published image carries the `vMAJOR.MINOR.PATCH`, `vMAJOR.MINOR`, `vMAJOR`, and `latest` tags, all pointing at the same digest
-37. The image is signed with `cosign` (keyless / OIDC) and `cosign verify` succeeds against a clean machine
-38. The GitHub Release notes for `v0.3.0` include the exact `podman pull` command, the image digest, and the `cosign verify` command
-39. A clean-machine smoke test (`podman run` against the published GHCR tag with a minimal `config.yaml`) reaches `/healthz` and `/readyz` successfully before the release is announced
+**Release / Distribution:** — **ALL MOVED TO v0.3.5** (see Phase 21.5 deferral note)
+
+35. ~~The `v0.3.0` tag has published a multi-arch (`linux/amd64` + `linux/arm64`) container image to `ghcr.io/<owner>/resume-site` and the image is publicly pullable~~ — **moved to v0.3.5**
+36. ~~The published image carries the `vMAJOR.MINOR.PATCH`, `vMAJOR.MINOR`, `vMAJOR`, and `latest` tags, all pointing at the same digest~~ — **moved to v0.3.5**
+37. ~~The image is signed with `cosign` (keyless / OIDC) and `cosign verify` succeeds against a clean machine~~ — **moved to v0.3.5**
+38. ~~The GitHub Release notes for `v0.3.0` include the exact `podman pull` command, the image digest, and the `cosign verify` command~~ — **moved to v0.3.5**
+39. ~~A clean-machine smoke test (`podman run` against the published GHCR tag with a minimal `config.yaml`) reaches `/healthz` and `/readyz` successfully before the release is announced~~ — **moved to v0.3.5**
