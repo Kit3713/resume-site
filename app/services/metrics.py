@@ -384,6 +384,26 @@ disk_usage_bytes = _registry.gauge(
     label_names=('path',),
 )
 
+# Security counters.
+#
+# ``login_attempts_total`` tallies every admin-login attempt by its final
+# outcome. Three labels:
+#
+#   * ``success``  — credentials verified, session opened.
+#   * ``invalid``  — credentials rejected (bad username or password).
+#   * ``locked``   — Phase 13.6 lockout refused the attempt before we
+#                    even looked at credentials.
+#
+# Keeping this separate from ``errors_total`` avoids adding a
+# high-cardinality ``endpoint`` label there. ``ResumeBruteForce``
+# (alerting-rules.yaml) rates ``outcome="invalid"`` to catch sustained
+# password-guessing without the lockout's help.
+login_attempts_total = _registry.counter(
+    'resume_site_login_attempts_total',
+    'Admin login attempts by final outcome (success|invalid|locked).',
+    label_names=('outcome',),
+)
+
 
 # ---------------------------------------------------------------------------
 # Request instrumentation helper

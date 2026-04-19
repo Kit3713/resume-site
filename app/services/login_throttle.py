@@ -49,6 +49,22 @@ def _iso(dt: datetime) -> str:
     return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
+def _inc_login_attempts(outcome: str) -> None:
+    """Increment the ``login_attempts_total`` counter, tolerating test isolation.
+
+    The metrics module is imported lazily so a misconfigured test
+    environment that stubs the registry doesn't blow up the core login
+    path. Metrics are an observability concern; a broken counter must
+    never break authentication.
+    """
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        from app.services.metrics import login_attempts_total
+
+        login_attempts_total.inc(label_values=(outcome,))
+
+
 def record_failed_login(
     db: sqlite3.Connection, ip_hash: str, *, now: datetime | None = None
 ) -> None:
@@ -58,6 +74,7 @@ def record_failed_login(
         (ip_hash, _iso(_now(now))),
     )
     db.commit()
+    _inc_login_attempts('invalid')
 
 
 def record_successful_login(
@@ -75,6 +92,7 @@ def record_successful_login(
         (ip_hash, _iso(_now(now))),
     )
     db.commit()
+    _inc_login_attempts('success')
 
 
 def check_lockout(
@@ -134,6 +152,12 @@ def check_lockout(
     if seconds_remaining <= 0:
         return LockoutStatus(locked=False, failures_in_window=failures, seconds_remaining=0)
 
+    # A lockout is currently in force — surface it as the `locked`
+    # outcome so ResumeBruteForce can distinguish "attempted-while-
+    # locked" from "credential mismatch". The increment happens only
+    # when the result is actually locked so the counter reflects
+    # attempts turned away, not every probe of the lockout state.
+    _inc_login_attempts('locked')
     return LockoutStatus(
         locked=True,
         failures_in_window=failures,

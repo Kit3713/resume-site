@@ -364,3 +364,136 @@ def test_record_request_normalises_none_rule(clean_metrics_registry):
     record_request('GET', None, 404, 0.001)
     keys = [dict(s[1])['path'] for s in requests_total.samples()]
     assert UNMATCHED_PATH in keys
+
+
+# ---------------------------------------------------------------------------
+# login_attempts_total — Phase 18.10 brute-force counter
+# ---------------------------------------------------------------------------
+
+
+def test_login_attempts_declared_with_outcome_label():
+    """The counter exists in the registry with the expected help text.
+
+    The alert rule in docs/alerting-rules.yaml references the metric
+    name verbatim, so a rename needs a corresponding YAML update — this
+    test is the canary.
+    """
+    from app.services.metrics import get_registry
+
+    metric = get_registry()._metrics['resume_site_login_attempts_total']
+    assert metric.TYPE == 'counter'
+    assert metric.label_names == ('outcome',)
+
+
+def test_record_failed_login_emits_invalid_outcome(clean_metrics_registry, tmp_path):
+    """record_failed_login increments login_attempts_total{outcome="invalid"}."""
+    import sqlite3
+
+    from app.services.login_throttle import record_failed_login
+    from app.services.metrics import login_attempts_total
+
+    conn = sqlite3.connect(str(tmp_path / 'throttle.db'))
+    conn.executescript(
+        'CREATE TABLE login_attempts ('
+        '  id INTEGER PRIMARY KEY AUTOINCREMENT,'
+        '  ip_hash TEXT NOT NULL,'
+        '  success INTEGER NOT NULL,'
+        '  created_at TEXT NOT NULL'
+        ');'
+    )
+    try:
+        record_failed_login(conn, 'ip-a')
+        record_failed_login(conn, 'ip-b')
+
+        samples = {dict(s[1])['outcome']: s[2] for s in login_attempts_total.samples()}
+        assert samples.get('invalid') == 2
+    finally:
+        conn.close()
+
+
+def test_record_successful_login_emits_success_outcome(clean_metrics_registry, tmp_path):
+    import sqlite3
+
+    from app.services.login_throttle import record_successful_login
+    from app.services.metrics import login_attempts_total
+
+    conn = sqlite3.connect(str(tmp_path / 'throttle.db'))
+    conn.executescript(
+        'CREATE TABLE login_attempts ('
+        '  id INTEGER PRIMARY KEY AUTOINCREMENT,'
+        '  ip_hash TEXT NOT NULL,'
+        '  success INTEGER NOT NULL,'
+        '  created_at TEXT NOT NULL'
+        ');'
+    )
+    try:
+        record_successful_login(conn, 'ip-a')
+
+        samples = {dict(s[1])['outcome']: s[2] for s in login_attempts_total.samples()}
+        assert samples.get('success') == 1
+    finally:
+        conn.close()
+
+
+def test_check_lockout_when_locked_emits_locked_outcome(clean_metrics_registry, tmp_path):
+    """A locked-out attempt increments the locked counter exactly once."""
+    import sqlite3
+    from datetime import UTC, datetime, timedelta
+
+    from app.services.login_throttle import check_lockout, record_failed_login
+    from app.services.metrics import login_attempts_total
+
+    conn = sqlite3.connect(str(tmp_path / 'throttle.db'))
+    conn.executescript(
+        'CREATE TABLE login_attempts ('
+        '  id INTEGER PRIMARY KEY AUTOINCREMENT,'
+        '  ip_hash TEXT NOT NULL,'
+        '  success INTEGER NOT NULL,'
+        '  created_at TEXT NOT NULL'
+        ');'
+    )
+    try:
+        # Seed enough failures to trip the threshold, then confirm
+        # check_lockout emits the `locked` outcome (but not when the
+        # same IP is below threshold).
+        base = datetime(2026, 4, 18, 12, 0, 0, tzinfo=UTC)
+        for i in range(5):
+            record_failed_login(conn, 'ip-a', now=base + timedelta(seconds=i))
+
+        # Under threshold (5 < 10) — check_lockout returns not-locked
+        # and must NOT emit.
+        before = sum(
+            s[2] for s in login_attempts_total.samples() if dict(s[1])['outcome'] == 'locked'
+        )
+        status = check_lockout(
+            conn,
+            'ip-a',
+            threshold=10,
+            window_minutes=15,
+            lockout_minutes=15,
+            now=base + timedelta(seconds=6),
+        )
+        assert not status.locked
+        after = sum(
+            s[2] for s in login_attempts_total.samples() if dict(s[1])['outcome'] == 'locked'
+        )
+        assert after == before, 'under-threshold check must not emit locked'
+
+        # Trip the threshold and confirm the locked increment lands.
+        for i in range(5, 11):
+            record_failed_login(conn, 'ip-a', now=base + timedelta(seconds=i))
+        status = check_lockout(
+            conn,
+            'ip-a',
+            threshold=10,
+            window_minutes=15,
+            lockout_minutes=15,
+            now=base + timedelta(seconds=12),
+        )
+        assert status.locked
+        locked_samples = [
+            s[2] for s in login_attempts_total.samples() if dict(s[1])['outcome'] == 'locked'
+        ]
+        assert locked_samples and locked_samples[0] >= 1
+    finally:
+        conn.close()

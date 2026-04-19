@@ -129,6 +129,51 @@ lockout is exactly what's protecting you.
 
 ---
 
+## ResumeBruteForce
+
+**Severity:** warning • **Component:** security
+
+**What it means:** `login_attempts_total{outcome="invalid"}` is
+incrementing faster than ~6/min averaged over 5 minutes. A bot or
+an attacker is guessing admin credentials at sustained volume.
+
+**How this differs from `ResumeAuthErrorSpike`:** the sibling rule
+watches every 401/403 anywhere in the app (failed API tokens,
+IP-restriction rejections, admin lockout 429s). `ResumeBruteForce`
+is narrower — only credential-mismatch events on the admin login
+form. If both fire together, you're almost certainly looking at a
+password-guessing campaign. If only the spike fires, investigate
+the broader auth surface.
+
+**What to check:**
+
+1. Scrape `/metrics` and confirm `resume_site_login_attempts_total`
+   is still incrementing for `outcome="invalid"`. A few minutes of
+   elevated `outcome="locked"` increments usually follow — that's
+   the Phase 13.6 lockout refusing the attacker after the threshold
+   was hit.
+2. Inspect `login_attempts` to see how many distinct `ip_hash`
+   values are in play:
+   ```
+   SELECT ip_hash, COUNT(*) AS n, MAX(created_at) AS last
+   FROM login_attempts WHERE success = 0
+   GROUP BY ip_hash ORDER BY n DESC LIMIT 10;
+   ```
+3. If one hash dominates: the in-process lockout is already
+   rejecting them. Consider an upstream block (Cloudflare, firewall,
+   reverse-proxy rate-limit) if the noise is expensive.
+4. If many hashes each contribute a few failures: that's
+   credential-stuffing from a botnet. Reduce the Flask-Limiter POST
+   budget on `/admin/login` (e.g. from 5/min to 2/min), or add a
+   CAPTCHA, or move the admin surface behind Tailscale-only
+   `allowed_networks`.
+
+**Do not** silence this alert by raising the threshold without
+investigating — the point is to surface sustained attacks early
+enough to take upstream action.
+
+---
+
 ## ResumeHighLatency
 
 **Severity:** warning • **Component:** performance

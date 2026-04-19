@@ -80,6 +80,32 @@ groups:
           runbook_url: "./alerting-rules.md#ResumeAuthErrorSpike"
 
       # -----------------------------------------------------------------
+      # ResumeBruteForce
+      # -----------------------------------------------------------------
+      # The Phase 13.6 lockout reacts in-process, but this alert surfaces
+      # sustained password-guessing earlier than `locked` can on its own.
+      # ``outcome="invalid"`` counts bad credentials specifically — not
+      # bot noise hitting other 401/403 routes — and the 6/min threshold
+      # matches the sibling ResumeAuthErrorSpike rule so both fire
+      # together on a real brute-force campaign.
+      - alert: ResumeBruteForce
+        expr: |
+          rate(resume_site_login_attempts_total{outcome="invalid"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: Admin login failures suggest a brute-force attempt
+          description: |
+            Invalid login attempts are arriving faster than 0.1/sec
+            (~6/min) averaged over the last 5 minutes. The application
+            lockout (Phase 13.6) should already be refusing the source
+            IP, but an operator should review firewall posture and
+            decide whether an upstream block is warranted.
+          runbook_url: "./alerting-rules.md#ResumeBruteForce"
+
+      # -----------------------------------------------------------------
       # ResumeHighLatency
       # -----------------------------------------------------------------
       # p95 over 1 second means page rendering has degraded meaningfully.
