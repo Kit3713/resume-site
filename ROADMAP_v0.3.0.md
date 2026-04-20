@@ -5,7 +5,17 @@
 > **Baseline:** v0.2.0 (Phases 5–11 complete — hardened, extensible portfolio and blog platform)  
 > **Target:** Production-grade, observable, ~~plugin-extensible~~ portfolio engine with API-first architecture
 
-> **Follow-on release:** v0.3.5 — carries forward the open audit issues plus the small number of *major* v0.3.0 items that did not finish. Cut/moved: Phase 20 (plugin architecture) entirely; the DAST pipeline (13.9), the Playwright browser-test suite (18.4), the load-test CI regression gate (18.6), the mutation-testing baseline + CI integration (18.8), the edge-case testing methodology (18.13), and the release-publication gate (21.5). Everything else that's still unchecked — CSS/JS minification, blog cover preview, translation dashboard, profile-export CLI, K8s examples, image-size baseline, etc. — stays in v0.3.0 as finishing-polish work. See [`ROADMAP_v0.3.5.md`](ROADMAP_v0.3.5.md). Items below that have been ~~struck through~~ are deferred to v0.3.5; nothing in v0.3.5 is a v0.4.0 item.
+> **Status:** Closed. v0.3.5 was planned as a single finishing-pass release but proved too large; it was split into three focused sub-releases. This document is superseded by the three below. Inline notes that say "moved to v0.3.5" remain factually accurate about the re-scoping decision — the destination release for each bullet is now mapped in the table below.
+>
+> **Follow-on releases:**
+>
+> | Release | Codename | Scope (old v0.3.5 phase numbers preserved) |
+> |---|---|---|
+> | [`ROADMAP_v0.3.1.md`](ROADMAP_v0.3.1.md) | Keystone | Critical exploitable security (22) + release-publication gate (35) + v0.3.0 polish carry-over (new 36) |
+> | [`ROADMAP_v0.3.2.md`](ROADMAP_v0.3.2.md) | Shield | Tier-2 security hardening (23), information disclosure (24), operational hygiene (25), correctness bugs (27), API deprecation policy (new 37) |
+> | [`ROADMAP_v0.3.3.md`](ROADMAP_v0.3.3.md) | Proof | Performance (26), CI hygiene (28), redundancy closeout (29), DAST (30), Playwright (31), load-test gate (32), mutation baseline (33), edge-case methodology (34) |
+>
+> v0.3.1 ships the release gate first so every subsequent v0.3.x release inherits it. Plugin architecture (Phase 20) remains cut indefinitely and is not carried forward to any release.
 
 ---
 
@@ -122,7 +132,7 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 - [ ] **CSS minification:** Add a build step (or Gunicorn middleware) that serves minified CSS in production. Preserve source CSS for development
 - [ ] **JavaScript audit:** Profile `main.js` for unused functions, redundant event listeners, and GSAP animations that fire on hidden/off-screen elements. Audit `admin.js` for the same
 - [ ] **JavaScript minification:** Same as CSS — minified in production, source in development
-- [ ] **Asset fingerprinting:** Append a content hash to static asset URLs (`style.abc123.css`) so `Cache-Control: immutable` works correctly across deployments. Implement via Flask's `url_for('static', ...)` override or a manifest file
+- [x] **Asset fingerprinting:** Shipped — duplicate of the line above. `app/assets.py:static_hashed()` appends `?v=<sha256[:8]>` to every referenced static URL; `Cache-Control: public, max-age=2592000, immutable` is served from the static handler. Process-lifetime cache, dev-mode bypass, template-level integration on `style.css` + `main.js` + `swagger-init.js`.
 - [x] **GSAP optimization:** Audited — GSAP is already excluded from admin templates (admin uses `base_admin.html` which doesn't load GSAP CDN). All GSAP usage in `main.js` is guarded by `typeof gsap !== 'undefined'` so pages degrade gracefully. No SPA navigation so no `kill()` needed. All ScrollTrigger registrations are on persistent elements.
 - [x] **Critical CSS / preload:** Added `<link rel="preload" as="style">` hint for the main stylesheet in `base.html` to eliminate render-blocking delay. Full critical CSS inlining deferred — at 58KB the stylesheet is small enough that the preload hint + fingerprinted caching is sufficient.
 - [x] **Image optimization pipeline:** Responsive variants (640w, 1024w) generated during upload via `_generate_responsive_variants()` in `app/services/photos.py`. WebP secondary format generated for all non-GIF uploads. New `<picture>` macro in `app/templates/components/picture.html` with WebP `<source>` and `srcset` (640w/1024w/2000w) with `sizes` attribute. Applied to portfolio grid, featured portfolio, and landing page. `delete_photo_file()` updated to clean up all variants. LQIP blur-up deferred.
@@ -250,7 +260,7 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 
 - [x] **Photo upload preview:** Client-side preview on file select using `URL.createObjectURL`. Shows a thumbnail below the file input before upload.
 - [ ] **Blog cover image:** Same preview pattern on the blog editor page (deferred)
-- [ ] **Existing photo editing:** Show the current image alongside the metadata form (already visible in the photo card grid)
+- [x] **Existing photo editing:** Already satisfied — the current image is visible in the photo card grid alongside the metadata form. No additional work shipped because the UX already meets the intent.
 - [ ] **Drag-and-drop upload zone:** Drop zone for photo manager (deferred)
 
 ### 14.5 — Admin Search
@@ -314,7 +324,7 @@ The v0.3.0 architecture (API token auth, plugin hooks, activity log with `admin_
 - [x] **Uniform error envelope:** `{"error": "<human message>", "code": "<STABLE_TAG>"}` with optional `details` dict. App-level `errorhandler(404)` and `errorhandler(405)` match on `request.path.startswith('/api/')` and return the JSON envelope (the blueprint's own errorhandlers don't fire for unmatched paths, which is why the handler lives at app level).
 - [x] **Uniform pagination envelope:** `{"data": [...], "pagination": {"page", "per_page", "total", "pages"}}`. Built on `app.services.pagination.paginate`. `per_page` is clamped to `[1, 100]` via `_parse_per_page`; malformed inputs fall back to the endpoint default.
 - [x] **ETag + If-None-Match:** `_conditional_response` computes a strong ETag (`"<sha256[:32]>"`) from the canonicalised JSON body (`sort_keys=True`, `separators=(',', ':')`), returns 304 on a matching `If-None-Match`, echoes the ETag and sets `Cache-Control: no-cache` on both 200 and 304 responses.
-- [ ] **JSON Content-Type enforcement on POST/PUT/PATCH:** deferred to Phase 16.3 (write endpoints land then; no POST body on any current route, so the check would be no-op).
+- [x] **JSON Content-Type enforcement on POST/PUT/PATCH:** Shipped in Phase 16.3 (line 341) — `before_request` middleware on the API blueprint returns 415 `UNSUPPORTED_MEDIA_TYPE` on non-JSON bodies; multipart routes allow-listed via `_MULTIPART_ENDPOINTS`.
 - [x] **`Accept-Language` respected for multilingual content:** `_resolve_request_locale()` helper in `app/routes/api.py` uses Werkzeug's `accept_languages.best_match(available_locales)` to pick the preferred configured locale, falling back to `default_locale`. Every public read endpoint that serves translatable content (`/content/:slug`, `/services`, `/stats`, `/projects`, `/projects/:slug`, `/certifications`, `/blog`, `/blog/:slug`) threads the resolved locale through the translation overlay from Phase 15.4. Responses carry `Content-Language: <locale>` (the locale actually served, may differ from the requested one) and `Vary: Accept-Language` so downstream caches key correctly. OpenAPI spec gains a reusable `AcceptLanguage` header parameter referenced from every translatable endpoint. 17 tests in `tests/test_api_locale.py` cover q-value negotiation, unconfigured-locale fallback, missing-translation fallback, per-locale ETag divergence, Content-Language absence on non-translatable endpoints / 404s, and an OpenAPI drift guard.
 
 ### 16.2 — Public Read Endpoints (No Auth Required)
