@@ -37,6 +37,12 @@
       "default": true,
       "description": "Set the Secure flag on the session cookie (HTTPS-only). Disable for plain-HTTP local development."
     },
+    "trusted_proxies": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Phase 22.6: CIDR ranges whose inbound connections may legitimately carry an X-Forwarded-For header. The admin IP allowlist consults XFF only when request.remote_addr falls inside this list; otherwise XFF is ignored and remote_addr is used directly. Full rollout to every IP-trusting callsite lands in v0.3.2 Phase 23.2."
+    },
     "smtp": {
       "type": "object",
       "properties": {

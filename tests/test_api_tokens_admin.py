@@ -236,3 +236,125 @@ def test_api_tokens_revoke_writes_activity_log(auth_client, app):
     conn.close()
     assert row is not None
     assert 'Revoked' in row['action']
+
+
+# ---------------------------------------------------------------------------
+# Phase 22.4 — Server-side reveal handoff
+# ---------------------------------------------------------------------------
+
+
+def _reveal_rows(app):
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        'SELECT reveal_id, token_id, raw_token, expires_at FROM api_token_reveals'
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def test_generate_does_not_leak_raw_token_into_session_cookie(auth_client, app):
+    """The raw token must never travel in the Set-Cookie payload of
+    the generate response. Flask default sessions are signed-not-
+    encrypted, so bytes written into ``session['...']`` land in the
+    browser's cookie jar in inspectable form."""
+    # Before my change: session['_api_token_reveal']['raw'] carried the
+    # plaintext — grepping the cookie payload would turn it up.
+    post = auth_client.post(
+        '/admin/api-tokens/generate',
+        data={'name': 'CookieGate', 'scope': ['read'], 'expires': 'never'},
+        follow_redirects=False,
+    )
+    assert post.status_code == 302
+    set_cookie = ''
+    for key, value in post.headers.items():
+        if key.lower() == 'set-cookie':
+            set_cookie += value
+
+    # Grab the raw token from the reveal page so we know the byte string
+    # we're searching for.
+    reveal = auth_client.get('/admin/api-tokens/reveal')
+    assert reveal.status_code == 200
+    # The <code> element carries data-token="<raw>".
+    import re as _re
+
+    match = _re.search(rb'data-token="([^"]+)"', reveal.data)
+    assert match, 'raw token not found in reveal HTML'
+    raw = match.group(1).decode('ascii')
+    assert len(raw) >= 30  # sanity-check it looks like a real 32-byte urlsafe
+
+    assert raw not in set_cookie, (
+        'raw token bytes leaked into Set-Cookie payload — '
+        'session carrier should hold only the reveal_id'
+    )
+
+
+def test_reveal_row_is_deleted_after_first_get(auth_client, app):
+    """A reveal row must be consumed on first read — not left in the
+    DB for a later `SELECT raw_token` attack from a DB-dump leak."""
+    auth_client.post(
+        '/admin/api-tokens/generate',
+        data={'name': 'OneShot', 'scope': ['read'], 'expires': 'never'},
+    )
+    assert len(_reveal_rows(app)) == 1
+
+    resp = auth_client.get('/admin/api-tokens/reveal')
+    assert resp.status_code == 200
+    assert _reveal_rows(app) == []
+
+
+def test_reveal_expired_returns_410_gone(auth_client, app):
+    """A reveal whose 5-minute TTL elapsed must not render the token —
+    410 Gone tells the operator the value is permanently unavailable."""
+    # Generate normally.
+    auth_client.post(
+        '/admin/api-tokens/generate',
+        data={'name': 'Expiry', 'scope': ['read'], 'expires': 'never'},
+    )
+    # Backdate the reveal row's expires_at so it's already stale.
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    conn.execute("UPDATE api_token_reveals SET expires_at = '2020-01-01T00:00:00Z'")
+    conn.commit()
+    conn.close()
+
+    resp = auth_client.get('/admin/api-tokens/reveal')
+    assert resp.status_code == 410
+    # And the row is gone (consume always deletes).
+    assert _reveal_rows(app) == []
+
+
+def test_reveal_missing_session_id_redirects(auth_client):
+    """A GET with no stashed reveal_id (cleared session / never generated)
+    must redirect, not 500 or 410."""
+    resp = auth_client.get('/admin/api-tokens/reveal', follow_redirects=False)
+    assert resp.status_code == 302
+    assert '/admin/api-tokens' in resp.headers['Location']
+
+
+def test_reveal_prune_removes_stale_rows(app):
+    """``prune_expired_reveals`` scrubs rows whose TTL elapsed. Called
+    request-time by the generate + reveal routes so the table can't
+    accumulate forgotten rows indefinitely."""
+    from app.services.api_token_reveals import prune_expired_reveals
+
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    conn.executemany(
+        'INSERT INTO api_token_reveals '
+        '(reveal_id, token_id, raw_token, name, scope, expires_at) '
+        'VALUES (?, 0, ?, ?, ?, ?)',
+        [
+            ('stale1', 'r1', 'n1', 'read', '2020-01-01T00:00:00Z'),
+            ('fresh1', 'r2', 'n2', 'read', '2099-01-01T00:00:00Z'),
+            ('stale2', 'r3', 'n3', 'read', '2020-02-02T00:00:00Z'),
+        ],
+    )
+    conn.commit()
+    try:
+        removed = prune_expired_reveals(conn)
+        remaining = [
+            r[0] for r in conn.execute('SELECT reveal_id FROM api_token_reveals').fetchall()
+        ]
+    finally:
+        conn.close()
+    assert removed == 2
+    assert remaining == ['fresh1']

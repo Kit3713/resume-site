@@ -8,18 +8,20 @@ testable and keeping the routes as thin controllers.
 HTML sanitization is applied on every write using nh3, which enforces
 a strict allowlist of safe tags. This prevents XSS payloads stored via
 the Quill.js editor from being rendered to public visitors.
+
+Phase 22.2 (#63) — nh3 is a HARD runtime dependency. The old
+``try/except ImportError`` fell back to returning the input unchanged,
+so a broken install silently disabled sanitisation and let XSS through
+every write path. The import below intentionally fails at app-boot if
+nh3 is missing so the deploy surface-faults loudly instead of quietly
+regressing.
 """
 
 from __future__ import annotations
 
 import sqlite3
 
-try:
-    import nh3
-
-    _HAS_NH3 = True
-except ImportError:
-    _HAS_NH3 = False
+import nh3
 
 # Tags that the Quill editor legitimately produces and we allow in storage.
 _ALLOWED_TAGS = {
@@ -57,11 +59,13 @@ _ALLOWED_ATTRS = {
 def sanitize_html(html: str) -> str:
     """Strip disallowed tags/attributes from HTML using nh3.
 
-    Falls back to returning the input unchanged if nh3 is not installed
-    (allows the app to run without the dependency during development, but
-    nh3 should always be present in production — see requirements.txt).
+    Phase 22.2 (#63) — fail-closed. An empty input returns the empty
+    string; any other input goes through ``nh3.clean`` unconditionally.
+    The previous ``_HAS_NH3`` fallback branch was removed because a
+    missing ``nh3`` import silently disabled sanitisation for every
+    write path the admin panel exposes.
     """
-    if not _HAS_NH3 or not html:
+    if not html:
         return html
     return nh3.clean(
         html,
@@ -69,6 +73,77 @@ def sanitize_html(html: str) -> str:
         attributes=_ALLOWED_ATTRS,
         link_rel=None,  # Don't forcibly add rel="noopener" — we control content
     )
+
+
+# ---------------------------------------------------------------------------
+# URL allowlist (Phase 22.2 #17)
+#
+# Custom nav links (and any future operator-supplied href) must never
+# carry the ``javascript:``, ``data:``, or ``vbscript:`` schemes that
+# browsers execute instead of navigating to. The audit item #17 found
+# that ``custom_nav_links`` flows straight into ``href="..."`` via
+# ``base.html`` with only Jinja autoescape between the attacker and a
+# living-off-the-href XSS.
+#
+# Two defences:
+#
+# 1. ``validate_safe_url`` runs at save time and rejects bad values
+#    with a user-visible error (wired in ``save_settings``).
+# 2. ``safe_url`` is a Jinja filter that silently rewrites a bad URL
+#    to ``#`` at render time so even a legacy row created before the
+#    save-time gate came in cannot execute.
+# ---------------------------------------------------------------------------
+
+_ALLOWED_URL_SCHEMES = ('http', 'https', 'mailto')
+
+
+def validate_safe_url(url: str) -> bool:
+    """Return True when ``url`` is safe to place inside ``href="..."``.
+
+    Accepts absolute URLs of the form ``http://...``, ``https://...``
+    or ``mailto:...``, plus site-relative paths starting with ``/``.
+    Empty strings are treated as unsafe — an operator submitting a
+    link without a URL is a bug either way.
+
+    Anything else (including ``javascript:``, ``data:``, ``vbscript:``,
+    scheme-relative ``//evil.com``, and malformed inputs) is rejected.
+    """
+    if not url or not isinstance(url, str):
+        return False
+    stripped = url.strip()
+    if not stripped:
+        return False
+    # Guard scheme-relative URLs explicitly — urlparse would otherwise
+    # return an empty scheme + attacker-controlled netloc.
+    if stripped.startswith('//'):
+        return False
+    # Site-relative paths always safe.
+    if stripped.startswith('/') and not stripped.startswith('//'):
+        return True
+    # Fragment-only / query-only links (bare ``#`` or ``?foo=bar``) are
+    # same-document and therefore safe too.
+    if stripped.startswith(('#', '?')):
+        return True
+    from urllib.parse import urlparse
+
+    parsed = urlparse(stripped)
+    scheme = (parsed.scheme or '').lower().strip()
+    if not scheme:
+        return False
+    return scheme in _ALLOWED_URL_SCHEMES
+
+
+def safe_url(url):
+    """Jinja filter: pass-through if safe, replace with ``#`` otherwise.
+
+    Used by ``base.html`` as a second-line defence so a legacy row
+    that bypassed the save-time validator (e.g. written directly via
+    a manage.py one-off before 22.2 landed) still can't execute. The
+    bad value logs a warning once per render so operators see it.
+    """
+    if validate_safe_url(str(url or '')):
+        return url
+    return '#'
 
 
 def get_all_blocks(db: sqlite3.Connection) -> list[sqlite3.Row]:

@@ -1032,6 +1032,87 @@ ul, ol {
     font-size: var(--fs-xs);
 }
 
+/* Admin translation-completeness matrix (Phase 36.3). Colour bands map to
+ * coverage percentage — green >=90, amber 50-89, red 1-49, grey 0. */
+.admin-translation-matrix__cell {
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.admin-translation-matrix__cell--ok    { background: rgba(34, 139, 34, 0.18); }
+.admin-translation-matrix__cell--warn  { background: rgba(255, 165, 0, 0.18); }
+.admin-translation-matrix__cell--gap   { background: rgba(220, 53, 69, 0.16); }
+.admin-translation-matrix__cell--empty { color: var(--color-text-secondary); }
+
+.admin-translation-matrix__pct {
+    font-size: var(--fs-xs);
+    color: var(--color-text-secondary);
+    margin-left: 4px;
+}
+
+/* Admin alerts list (Phase 36.5). Severity rail colour-codes each entry. */
+.admin-card--alerts .admin-card__value--warn { color: var(--color-danger, #dc3545); }
+.admin-card--alerts .admin-card__value--ok   { color: var(--color-success, #228b22); }
+
+.admin-alerts-list {
+    list-style: none;
+    padding: 0;
+    margin: var(--space-xs) 0 0;
+}
+
+.admin-alerts-list__item {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    gap: var(--space-xs);
+    align-items: baseline;
+    padding: 4px 8px;
+    margin-bottom: 4px;
+    border-left: 3px solid var(--color-border);
+    border-radius: 3px;
+    font-size: var(--fs-sm);
+}
+
+.admin-alerts-list__item--critical { border-left-color: #dc3545; background: rgba(220, 53, 69, 0.08); }
+.admin-alerts-list__item--warning  { border-left-color: #ffa500; background: rgba(255, 165, 0, 0.08); }
+.admin-alerts-list__item--info     { border-left-color: #17a2b8; background: rgba(23, 162, 184, 0.08); }
+
+.admin-alerts-list__severity {
+    text-transform: uppercase;
+    font-size: var(--fs-xs);
+    letter-spacing: 0.05em;
+    color: var(--color-text-secondary);
+}
+
+.admin-alerts-list__summary {
+    color: var(--color-text-secondary);
+}
+
+/* Admin drag-and-drop upload zone (Phase 36.2).
+ * Hidden by default (display:none) so browsers without DataTransfer support
+ * or with JS disabled see only the native file input. The upload JS toggles
+ * display:block on DOMContentLoaded when DataTransfer is available. */
+.photo-dropzone {
+    display: none;
+    padding: var(--space-lg);
+    margin-bottom: var(--space-sm);
+    border: 2px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    text-align: center;
+    color: var(--color-text-secondary);
+    background: var(--color-bg-secondary);
+    cursor: pointer;
+    transition: border-color 150ms ease, background 150ms ease;
+}
+
+.photo-dropzone--active {
+    border-color: var(--color-accent);
+    background: var(--color-surface);
+}
+
+.photo-dropzone__hint {
+    font-size: var(--fs-sm);
+}
+
 /* Admin photo grid */
 .admin-photos-grid {
     display: grid;

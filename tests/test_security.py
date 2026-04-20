@@ -518,3 +518,133 @@ def test_service_description_sanitized_on_create(app):
         assert '<p>ok</p>' in row['description']
     finally:
         db.close()
+
+
+# ============================================================
+# DEV-SERVER DEBUG GATE (Phase 22.1)
+# ============================================================
+
+
+def test_console_not_exposed_on_default_app(client):
+    """The Werkzeug /console interactive debugger must never be reachable.
+
+    The factory-built app fixture is the shape operators boot in production
+    (Gunicorn → create_app()) and under `python app.py` without the opt-in
+    gate. The debugger registers its route under `/console`; a 404 here
+    proves the gate (RESUME_SITE_DEV=1 + --debug) is the only way to reach
+    it.
+    """
+    response = client.get('/console')
+    assert response.status_code == 404
+
+
+def test_app_debug_mode_off_by_default(app):
+    """Flask `app.debug` must default to False so the exception page never
+    renders a traceback for a public visitor and the `/console` route is
+    never registered. Gate flip lives only in the `python app.py`
+    entry-point with both the env var and --debug present."""
+    assert app.debug is False
+
+
+# ============================================================
+# XFF trust gate (Phase 22.6 — audit issue #16)
+# ============================================================
+
+
+def _admin_app_with_trusted_proxies(tmp_path, proxies):
+    """Build a test app whose config.yaml sets trusted_proxies = ``proxies``.
+
+    Separate from the conftest ``app`` fixture because 22.6 is about
+    what happens when the operator has a SPECIFIC trusted_proxies value
+    (including the empty list, which is the correct production default
+    for a directly-exposed instance post-22.5).
+    """
+    from app import create_app
+    from tests.conftest import _init_test_db
+
+    pw_hash = (
+        'pbkdf2:sha256:600000$bngNDaCGXphoecmK$'
+        '7e35934ae555af4c418e1399fa0c866411b05f64bf8c3ef64d50c93990a7497b'
+    )
+    cfg = tmp_path / 'config.yaml'
+    proxy_lines = ''.join(f'  - "{p}"\n' for p in proxies) if proxies else ''
+    cfg.write_text(
+        'secret_key: "test-secret-key-for-testing-only"\n'
+        f'database_path: "{tmp_path}/xff.db"\n'
+        f'photo_storage: "{tmp_path}/photos"\n'
+        'session_cookie_secure: false\n'
+        f'trusted_proxies:\n{proxy_lines}'
+        'admin:\n'
+        '  username: "admin"\n'
+        f'  password_hash: "{pw_hash}"\n'
+        '  allowed_networks:\n'
+        '    - "127.0.0.0/8"\n'
+    )
+    flask_app = create_app(config_path=str(cfg))
+    flask_app.config['TESTING'] = True
+    flask_app.config['WTF_CSRF_ENABLED'] = False
+    _init_test_db(str(tmp_path / 'xff.db'))
+    return flask_app
+
+
+def test_admin_xff_ignored_when_no_trusted_proxies(tmp_path):
+    """22.6: with an EMPTY trusted_proxies list, the admin IP gate must
+    ignore X-Forwarded-For entirely and judge the request by
+    ``remote_addr`` alone. An attacker that reaches the container
+    directly cannot pivot to admin by forging ``X-Forwarded-For:
+    127.0.0.1``."""
+    flask_app = _admin_app_with_trusted_proxies(tmp_path, proxies=[])
+    client = flask_app.test_client()
+
+    # Test client's remote_addr is 127.0.0.1 (inside allowed_networks).
+    # Even with a bogus XFF pointing offsite, the XFF is IGNORED and we
+    # allow the request based on remote_addr → 302 (login redirect), not
+    # 403 (IP-blocked).
+    resp = client.get('/admin/login', headers={'X-Forwarded-For': '203.0.113.1'})
+    assert resp.status_code == 200
+
+    # Conversely, if the attacker tries to set XFF to a value NOT in
+    # allowed_networks in the hope it'll be consulted, the gate still
+    # ignores it — remote_addr is still 127.0.0.1 so we're allowed.
+    resp2 = client.get(
+        '/admin/login',
+        headers={'X-Forwarded-For': '10.99.99.99, 127.0.0.1'},
+    )
+    assert resp2.status_code == 200
+
+
+def test_admin_xff_consulted_when_remote_addr_in_trusted_proxies(tmp_path):
+    """22.6: with the loopback net listed as a trusted proxy, the XFF
+    header IS trusted and the IP gate is evaluated against its leftmost
+    value. Simulates the legitimate deployment where Caddy sits on
+    127.0.0.1 and forwards traffic with the real client IP in XFF."""
+    flask_app = _admin_app_with_trusted_proxies(tmp_path, proxies=['127.0.0.0/8'])
+    client = flask_app.test_client()
+
+    # XFF names an external client — gate says "not in allowed_networks" → 403.
+    resp = client.get('/admin/login', headers={'X-Forwarded-For': '203.0.113.1'})
+    assert resp.status_code == 403
+
+    # XFF carries the standard Caddy hop chain ending in a 127.0.0.0/8 peer;
+    # leftmost entry (the real client) is inside allowed_networks → 200.
+    resp_ok = client.get(
+        '/admin/login',
+        headers={'X-Forwarded-For': '127.0.0.2, 127.0.0.1'},
+    )
+    assert resp_ok.status_code == 200
+
+
+def test_admin_xff_ignored_when_direct_peer_not_in_trusted_proxies(tmp_path):
+    """22.6: trusted_proxies is non-empty, but the current peer is NOT in
+    it (e.g., attacker bypassed the proxy and hit the container on a
+    separate network). XFF must not be trusted; ``remote_addr`` is
+    used verbatim — and since remote_addr is 127.0.0.1 in the test
+    client, we end up allowing."""
+    flask_app = _admin_app_with_trusted_proxies(tmp_path, proxies=['10.99.99.0/24'])
+    client = flask_app.test_client()
+
+    # Attacker sends forged XFF. remote_addr = 127.0.0.1 is NOT in
+    # trusted_proxies (10.99.99.0/24), so XFF is ignored and we fall back
+    # to remote_addr = 127.0.0.1 which IS in allowed_networks → 200.
+    resp = client.get('/admin/login', headers={'X-Forwarded-For': '127.0.0.1'})
+    assert resp.status_code == 200

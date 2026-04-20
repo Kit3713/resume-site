@@ -613,3 +613,227 @@ def test_handler_settings_snapshot_handles_bad_values(monkeypatch, app):
     assert kwargs['timeout'] == 5  # default
     # Negative threshold gets clamped to 0 (auto-disable disabled).
     assert kwargs['threshold'] == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 22.3 — SSRF target validation
+#
+# validate_webhook_target() is the single gate used by admin-HTML,
+# the JSON API, and (via re-resolution) the delivery worker. Every
+# CIDR family listed in the audit issue #19 gets its own explicit
+# rejection test so a regression in the block-list has an obvious
+# failing case. DNS rebinding is exercised by monkeypatching
+# _resolve_target_ips so one resolution returns public, the next
+# returns private.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ('url', 'tag'),
+    [
+        ('http://127.0.0.1/hook', 'loopback v4'),
+        ('http://127.1.2.3/hook', 'loopback v4 (non-.1)'),
+        ('http://[::1]/hook', 'loopback v6'),
+        ('http://169.254.169.254/latest', 'link-local v4'),
+        ('http://[fe80::1]/hook', 'link-local v6'),
+        ('http://10.0.0.1/hook', 'RFC 1918 10/8'),
+        ('http://172.20.1.1/hook', 'RFC 1918 172.16/12'),
+        ('http://192.168.1.1/hook', 'RFC 1918 192.168/16'),
+        ('http://100.64.0.1/hook', 'CGNAT 100.64/10'),
+        ('http://[fc00::1]/hook', 'unique-local v6'),
+        ('http://0.0.0.0/hook', 'this network'),
+    ],
+)
+def test_validate_webhook_target_rejects_each_cidr_family(url, tag):
+    from app.services.webhooks import validate_webhook_target
+
+    ok, msg = validate_webhook_target(url, allow_private=False)
+    assert ok is False, f'expected rejection for {tag} ({url}): {msg!r}'
+    assert 'loopback / private / CGNAT' in msg
+
+
+@pytest.mark.parametrize(
+    'url',
+    [
+        'http://127.0.0.1/hook',
+        'http://10.0.0.1/hook',
+        'http://192.168.1.1/hook',
+        'http://169.254.169.254/latest',
+    ],
+)
+def test_validate_webhook_target_allows_private_when_opted_in(url):
+    from app.services.webhooks import validate_webhook_target
+
+    ok, msg = validate_webhook_target(url, allow_private=True)
+    assert ok is True, f'allow_private=True should pass {url}: {msg!r}'
+    assert msg == ''
+
+
+def test_validate_webhook_target_rejects_non_http_scheme():
+    from app.services.webhooks import validate_webhook_target
+
+    ok, msg = validate_webhook_target('file:///etc/passwd', allow_private=False)
+    assert ok is False
+    assert 'http(s)' in msg
+
+
+def test_validate_webhook_target_rejects_empty_url():
+    from app.services.webhooks import validate_webhook_target
+
+    ok, msg = validate_webhook_target('', allow_private=False)
+    assert ok is False
+    assert 'required' in msg
+
+
+def test_validate_webhook_target_accepts_public_host(monkeypatch):
+    """A host that resolves exclusively to public IPs must pass."""
+    from app.services import webhooks as webhooks_mod
+
+    monkeypatch.setattr(
+        webhooks_mod, '_resolve_target_ips', lambda host: ['203.0.113.1', '2001:db8::1']
+    )
+    ok, msg = webhooks_mod.validate_webhook_target(
+        'https://public.example.com/hook', allow_private=False
+    )
+    assert ok is True, msg
+
+
+def test_validate_webhook_target_rejects_mixed_public_and_private(monkeypatch):
+    """If ANY resolved IP is private, the whole URL is rejected.
+
+    This is the DNS-rebinding staging case: attacker returns a public IP
+    the operator can't object to alongside a private IP that the delivery
+    worker would actually connect to. Rejecting on any-match closes the
+    gap.
+    """
+    from app.services import webhooks as webhooks_mod
+
+    monkeypatch.setattr(
+        webhooks_mod, '_resolve_target_ips', lambda host: ['203.0.113.1', '10.0.0.1']
+    )
+    ok, msg = webhooks_mod.validate_webhook_target(
+        'https://rebind.example.com/hook', allow_private=False
+    )
+    assert ok is False
+    assert '10.0.0.1' in msg
+
+
+def test_deliver_now_rebind_flips_to_private_between_create_and_delivery(monkeypatch):
+    """With allow_private=False, a host that re-resolves to a private IP at
+    delivery time aborts the request before urlopen fires. Simulates a
+    DNS rebinding attack caught by the delivery-time re-validation."""
+    from app.services import webhooks as webhooks_mod
+
+    monkeypatch.setattr(webhooks_mod, '_resolve_target_ips', lambda host: ['10.0.0.99'])
+
+    called = []
+
+    def fail_if_called(request, timeout=None):
+        called.append(request.full_url)
+        return _StubResponse(200)
+
+    monkeypatch.setattr('app.services.webhooks.urlopen', fail_if_called)
+
+    result = deliver_now(
+        _wh(url='https://rebind.example.com/hook'),
+        'evt',
+        {},
+        timeout=2,
+        allow_private=False,
+    )
+    assert result.status_code == 0
+    assert 'SSRF guard' in result.error
+    assert called == []  # urlopen never fired
+
+
+def test_deliver_now_allow_private_true_skips_ssrf_check(monkeypatch):
+    """When the operator explicitly allows private targets, the guard does
+    not pre-empt the request — urlopen is called as usual."""
+    from app.services import webhooks as webhooks_mod
+
+    monkeypatch.setattr(webhooks_mod, '_resolve_target_ips', lambda host: ['10.0.0.99'])
+    sent = []
+
+    def capture(request, timeout=None):
+        sent.append(request.full_url)
+        return _StubResponse(200)
+
+    monkeypatch.setattr('app.services.webhooks.urlopen', capture)
+
+    result = deliver_now(
+        _wh(url='https://rebind.example.com/hook'),
+        'evt',
+        {},
+        timeout=2,
+        allow_private=True,
+    )
+    assert result.status_code == 200
+    assert sent == ['https://rebind.example.com/hook']
+
+
+# ---------------------------------------------------------------------------
+# Phase 22.3 — No-follow redirects
+#
+# _NoRedirectHandler raises HTTPError on every 3xx so a compromised
+# webhook target can't bounce delivery at an SSRF victim. Unit-test the
+# handler directly (simulates what urlopen triggers), and assert that
+# deliver_now records the 3xx status in its DeliveryResult.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize('code', [301, 302, 303, 307, 308])
+def test_no_redirect_handler_raises_on_each_redirect_status(code):
+    from app.services.webhooks import _NoRedirectHandler
+
+    handler = _NoRedirectHandler()
+    # http_error_30x(req, fp, code, msg, headers) is the stdlib contract.
+    fake_req = Webhook(
+        id=0,
+        name='x',
+        url='https://example.test/',
+        secret='',
+        events=[],
+        enabled=True,
+        failure_count=0,
+        created_at='',
+        last_triggered_at=None,
+    )
+
+    class _FakeReq:
+        full_url = 'https://example.test/'
+
+    method = getattr(handler, f'http_error_{code}')
+    with pytest.raises(HTTPError) as excinfo:
+        method(_FakeReq(), BytesIO(b''), code, 'Moved', {})
+    assert excinfo.value.code == code
+    # We keep ``fake_req`` referenced so linters don't drop the imported
+    # Webhook symbol (it's the shape the real delivery path passes).
+    assert fake_req.id == 0
+
+
+def test_deliver_now_records_redirect_as_failed_delivery(monkeypatch):
+    """A 3xx response must land in the delivery log as a failure, never
+    be silently followed. The module's urlopen goes through the custom
+    OpenerDirector in production; for this unit test we simulate it by
+    monkeypatching urlopen to raise HTTPError like _NoRedirectHandler
+    would."""
+
+    def fake_urlopen(request, timeout=None):
+        raise HTTPError(request.full_url, 302, 'Found', hdrs=None, fp=BytesIO(b''))
+
+    monkeypatch.setattr('app.services.webhooks.urlopen', fake_urlopen)
+
+    result = deliver_now(_wh(), 'evt', {}, timeout=2)
+    assert result.status_code == 302
+    assert 'HTTP 302' in result.error
+
+
+def test_module_urlopen_is_the_no_redirect_wrapper():
+    """Sanity check that our module-level urlopen is the opener-backed
+    wrapper and not a leftover re-export of urllib.request.urlopen."""
+    from urllib.request import urlopen as stdlib_urlopen
+
+    from app.services import webhooks as webhooks_mod
+
+    assert webhooks_mod.urlopen is not stdlib_urlopen
+    assert webhooks_mod.urlopen.__module__ == 'app.services.webhooks'

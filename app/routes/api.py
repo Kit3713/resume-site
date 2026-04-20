@@ -2059,15 +2059,25 @@ def _webhook_to_dict(webhook):
 
 
 def _validate_webhook_url(url):
-    """Return ``(ok, message)`` after URL parsing."""
-    from urllib.parse import urlparse as _urlparse
+    """Return ``(ok, message)`` after URL parsing and SSRF resolution.
 
-    if not url:
-        return False, 'url is required'
-    parsed = _urlparse(url)
-    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
-        return False, 'url must be a valid http(s) address'
-    return True, ''
+    Phase 22.3 — delegates to :func:`app.services.webhooks.validate_webhook_target`
+    so the admin HTML and JSON API enforce the same SSRF gate. The
+    ``webhook_allow_private_targets`` setting (Security category, default
+    ``false``) lets an operator intentionally dispatch to an internal
+    service.
+    """
+    from app.services.settings_svc import get as get_setting
+    from app.services.webhooks import validate_webhook_target
+
+    db = get_db()
+    allow_private = get_setting(db, 'webhook_allow_private_targets', 'false').strip().lower() in {
+        '1',
+        'true',
+        'yes',
+        'on',
+    }
+    return validate_webhook_target(url, allow_private=allow_private)
 
 
 def _coerce_events_field(raw):

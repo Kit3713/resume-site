@@ -518,6 +518,25 @@ SETTINGS_REGISTRY = {
             'disable the auto-disable behaviour entirely.'
         ),
     },
+    # Phase 22.3 — SSRF foot-gun. Off by default: webhook targets whose
+    # host resolves to loopback / RFC 1918 / link-local / CGNAT / ULA
+    # are rejected at create time and again at delivery time (so a DNS
+    # rebind between the two can't slip through). Enable ONLY if you
+    # genuinely dispatch to an internal service (e.g., a Slack-bridge
+    # container reachable on the host network) and understand the risk.
+    'webhook_allow_private_targets': {
+        'type': 'bool',
+        'default': 'false',
+        'label': 'Allow Private / Loopback Webhook Targets (SSRF foot-gun)',
+        'category': 'Security',
+        'description': (
+            'OFF by default. When off, webhook URLs whose host resolves '
+            'to loopback, link-local, RFC 1918 private, CGNAT, or ULA '
+            'ranges are rejected at create time and re-checked at '
+            'delivery time (defeats DNS rebinding). Flip ON only for '
+            'deliberate internal-service dispatch.'
+        ),
+    },
 }
 
 # Ordered list of categories for the admin settings page.

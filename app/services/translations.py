@@ -75,16 +75,26 @@ _TRANSLATION_TABLES = {
         'table': 'content_block_translations',
         'fk': 'block_id',
         'fields': ('title', 'content', 'plain_text'),
+        # Phase 22.2 (#41): HTML-format fields that must run through
+        # ``sanitize_html`` at translation-save time, mirroring what the
+        # default-locale save path does. Plain-text fields are omitted
+        # (Jinja autoescape covers them on render).
+        'html_fields': ('content',),
     },
     'blog_posts': {
         'table': 'blog_post_translations',
         'fk': 'post_id',
         'fields': ('title', 'summary', 'content'),
+        # ``content`` is HTML only when the parent blog post is stored
+        # with ``content_format = 'html'``. Markdown posts are rendered
+        # through the blog service's own sanitising pipeline.
+        'html_fields_when_parent_format_html': ('content',),
     },
     'services': {
         'table': 'service_translations',
         'fk': 'service_id',
         'fields': ('title', 'description'),
+        'html_fields': ('description',),
     },
     'stats': {
         'table': 'stat_translations',
@@ -97,6 +107,7 @@ _TRANSLATION_TABLES = {
         # ``summary`` is the card-grid blurb; ``description`` is the
         # long-form body on the detail page. Both matter to visitors.
         'fields': ('title', 'summary', 'description'),
+        'html_fields': ('description',),
     },
     'certifications': {
         'table': 'certification_translations',
@@ -104,6 +115,7 @@ _TRANSLATION_TABLES = {
         # Mirrors the parent table's column names (``name``, not ``title``).
         # Phase 15.4 migration 011 update aligned both sides.
         'fields': ('name', 'description'),
+        'html_fields': ('description',),
     },
 }
 
@@ -196,6 +208,47 @@ def get_all_translated(
     return [dict(row) for row in db.execute(sql, params).fetchall()]
 
 
+def _sanitize_translation_fields(
+    db: sqlite3.Connection,
+    source_table: str,
+    parent_id: int,
+    valid_fields: dict[str, str],
+) -> dict[str, str]:
+    """Apply :func:`app.services.content.sanitize_html` to every HTML-format
+    translatable field (Phase 22.2 #41).
+
+    Mirrors the sanitisation the default-locale save path already does
+    so a per-locale save can't be the one place XSS slips through.
+    Plain-text fields are copied verbatim — Jinja autoescape is the
+    defence on render for those.
+
+    The blog-post ``content`` field is conditionally HTML: we consult
+    the parent row's ``content_format`` to decide. Markdown posts are
+    re-rendered by ``app.services.blog.render_post_content``, which
+    does its own sanitisation, so skipping here is safe.
+    """
+    from app.services.content import sanitize_html
+
+    config = _TRANSLATION_TABLES.get(source_table) or {}
+    html_fields = set(config.get('html_fields', ()))
+    if 'html_fields_when_parent_format_html' in config:
+        row = db.execute(
+            f'SELECT content_format FROM {source_table} WHERE id = ?',  # noqa: S608  # nosec B608 — table keyed from dict literal
+            (parent_id,),
+        ).fetchone()
+        fmt = (row['content_format'] if hasattr(row, 'keys') else row[0]) if row is not None else ''
+        if fmt == 'html':
+            html_fields.update(config['html_fields_when_parent_format_html'])
+
+    sanitised = {}
+    for key, value in valid_fields.items():
+        if key in html_fields and value:
+            sanitised[key] = sanitize_html(value)
+        else:
+            sanitised[key] = value
+    return sanitised
+
+
 def save_translation(
     db: sqlite3.Connection,
     source_table: str,
@@ -203,7 +256,13 @@ def save_translation(
     locale: str,
     **fields: str,
 ) -> None:
-    """Insert or update a translation for a specific item and locale."""
+    """Insert or update a translation for a specific item and locale.
+
+    Phase 22.2 (#41) — HTML-format fields are run through the same
+    ``sanitize_html`` policy the default-locale save paths use. Callers
+    can therefore pass raw form input without risking that a per-locale
+    save becomes the XSS smuggle path.
+    """
     config = _TRANSLATION_TABLES.get(source_table)
     if not config:
         return
@@ -211,6 +270,8 @@ def save_translation(
     valid_fields = {k: v for k, v in fields.items() if k in config['fields']}
     if not valid_fields:
         return
+
+    valid_fields = _sanitize_translation_fields(db, source_table, parent_id, valid_fields)
 
     trans_table = config['table']
     fk = config['fk']
@@ -412,3 +473,51 @@ def get_available_post_locales(
     translated = get_available_translations(db, 'blog_posts', post_id)
     locales = {default_locale, *translated}
     return sorted(locales)
+
+
+def get_coverage_matrix(
+    db: sqlite3.Connection,
+    configured_locales: list[str],
+    default_locale: str = 'en',
+) -> list[dict]:
+    """Per-locale translation coverage matrix for the admin dashboard (36.3).
+
+    Returns one row per translatable content type. Each row carries the
+    total count in the parent table plus, for every configured locale,
+    the number of rows that have a translation entry. The default locale
+    is reported as fully covered because the parent table's own columns
+    ARE the default-locale content.
+
+    Runs one aggregate query per content type — bounded (six types, six
+    queries) and cheap on SQLite thanks to the UNIQUE(parent_id, locale)
+    index on every junction table.
+    """
+    matrix = []
+    non_default = [loc for loc in configured_locales if loc and loc != default_locale]
+    for source_table, cfg in _TRANSLATION_TABLES.items():
+        total_row = db.execute(
+            f'SELECT COUNT(*) AS cnt FROM {source_table}'  # noqa: S608 — source_table from literal dict keys
+        ).fetchone()
+        total = int(total_row['cnt']) if total_row else 0
+        coverage: dict[str, int] = {default_locale: total}
+        if non_default:
+            if total:
+                placeholders = ','.join('?' for _ in non_default)
+                rows = db.execute(
+                    f'SELECT locale, COUNT(*) AS cnt FROM {cfg["table"]} '  # noqa: S608 — table from literal dict; locales parameterised
+                    f'WHERE locale IN ({placeholders}) GROUP BY locale',
+                    tuple(non_default),
+                ).fetchall()
+                counts = {r['locale']: int(r['cnt']) for r in rows}
+            else:
+                counts = {}
+            for loc in non_default:
+                coverage[loc] = counts.get(loc, 0)
+        matrix.append(
+            {
+                'type': source_table,
+                'total': total,
+                'coverage': coverage,
+            }
+        )
+    return matrix

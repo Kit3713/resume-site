@@ -74,6 +74,18 @@ jobs:
             exit 1
           fi
 
+      - name: Guard against debug=True in app entry points (Phase 22.1)
+        run: |
+          # The Werkzeug /console interactive debugger is RCE-by-design. Any
+          # literal `debug=True` in app.py or app/__init__.py re-opens that
+          # surface. The dev-only gate lives behind RESUME_SITE_DEV=1 + a
+          # --debug CLI flag; the gate must never be bypassed by a stray edit.
+          if grep -nE 'debug[[:space:]]*=[[:space:]]*True' app.py app/__init__.py; then
+            echo "ERROR: Literal 'debug=True' found in app.py or app/__init__.py."
+            echo "Dev-server debug must stay behind RESUME_SITE_DEV=1 + --debug (see Phase 22.1)."
+            exit 1
+          fi
+
   # -----------------------------------------------------------
   # Test Suite
   # -----------------------------------------------------------
@@ -416,11 +428,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version from tag
+      - name: Extract version + tag-matrix components
         id: meta
+        # Phase 35 — split version into matrix components. Stable tags
+        # advance the v<MAJOR>.<MINOR> / v<MAJOR> aliases via
+        # `imagetools create` after the build. Pre-release tags
+        # (vX.Y.Z-rc.1, vX.Y.Z-beta.N) only push their exact tag —
+        # they never move the lifecycle aliases or `:latest`. The
+        # `:latest` alias is advanced by the `release-verify` job
+        # below, gated on the multi-arch smoke test passing.
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          if [[ "$VERSION" == *-* ]]; then
+            echo "stable=false" >> $GITHUB_OUTPUT
+            echo "Pre-release tag detected: $VERSION — only :$VERSION will be pushed."
+          else
+            echo "stable=true" >> $GITHUB_OUTPUT
+            IFS=. read -r MAJOR MINOR _PATCH <<<"$VERSION"
+            echo "major=v$MAJOR" >> $GITHUB_OUTPUT
+            echo "minor=v$MAJOR.$MINOR" >> $GITHUB_OUTPUT
+          fi
 
       - name: Set up QEMU (multi-arch)
         uses: docker/setup-qemu-action@v3
@@ -428,7 +456,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push
+      - name: Build and push :${{ steps.meta.outputs.version }}
         id: build_and_push
         uses: docker/build-push-action@v6
         with:
@@ -440,16 +468,24 @@ jobs:
           # the OCI label matches the git tag exactly.
           build-args: |
             IMAGE_VERSION=${{ steps.meta.outputs.version }}
+          # Phase 35: only the exact version tag is pushed here. The
+          # v<MAJOR>.<MINOR> / v<MAJOR> aliases are advanced below via
+          # imagetools create (no rebuild — same digest). `:latest` is
+          # advanced by release-verify after the multi-arch smoke test
+          # passes (stop-ship gate).
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           labels: |
             org.opencontainers.image.version=${{ steps.meta.outputs.version }}
 
       # Phase 21.3 — keyless cosign signing.
       # Uses the GitHub Actions OIDC token (no keypair to manage) and
       # records the signature + certificate in the public Sigstore
-      # transparency log. Operators verify with:
+      # transparency log. The signature is bound to the digest, so
+      # every alias tag (v<MAJOR>.<MINOR>, v<MAJOR>, latest) that
+      # later resolves to this digest is verified by the same
+      # signature — no need to re-sign per alias.
+      # Operators verify with:
       #   cosign verify ghcr.io/<owner>/resume-site:vX.Y.Z \
       #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
       #     --certificate-identity-regexp 'https://github.com/Kit3713/resume-site/.+'
@@ -463,6 +499,170 @@ jobs:
           DIGEST="${{ steps.build_and_push.outputs.digest }}"
           cosign sign --yes \
             "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+
+      # Phase 35 — tag matrix. Stable releases advance the
+      # v<MAJOR>.<MINOR> and v<MAJOR> lifecycle aliases to the
+      # just-pushed digest. `imagetools create` operates entirely at
+      # the registry layer (no image data is re-uploaded), so the
+      # alias is a pure pointer to the same multi-arch manifest.
+      # `:latest` is held back until release-verify smoke-tests both
+      # architectures — see the release-verify job below.
+      - name: Advance v<MAJOR>.<MINOR> and v<MAJOR> aliases (stable only)
+        if: steps.meta.outputs.stable == 'true'
+        run: |
+          set -e
+          SRC="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
+          for ALIAS in "${{ steps.meta.outputs.minor }}" "${{ steps.meta.outputs.major }}"; do
+            echo "Promoting $ALIAS -> $SRC"
+            docker buildx imagetools create \
+                --tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${ALIAS}" \
+                "$SRC"
+          done
+
+  # -----------------------------------------------------------
+  # Release verification — multi-arch smoke test (Phase 35)
+  #
+  # Pulls the just-pushed :vX.Y.Z manifest for BOTH linux/amd64 and
+  # linux/arm64 on a clean runner, boots each variant, and verifies
+  # /healthz + /readyz answer green. arm64 runs through QEMU emulation
+  # registered via setup-qemu-action — slower (~3-5x) but catches
+  # architecture-specific surprises (Pillow wheel, Cython deps) that a
+  # single-arch build never sees.
+  #
+  # Stop-ship gate: a failure on either arch aborts the job, which
+  # means the `:latest` alias is never advanced. Operators tracking
+  # `:latest` are not silently moved to a broken multi-arch build.
+  # Operators who pinned to `:vX.Y.Z` already pulled the broken bits
+  # and will need to roll back per docs/PRODUCTION.md §9.
+  # -----------------------------------------------------------
+  release-verify:
+    runs-on: ubuntu-latest
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    # Same OIDC + packages permissions as publish — we re-use the
+    # GHCR push capability for the `:latest` imagetools create at the
+    # end. id-token is not strictly required here (no cosign sign in
+    # this job) but is kept consistent with publish-main / publish for
+    # future expansion (e.g. signing an SBOM attestation).
+    permissions:
+      id-token: write
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version + stable flag
+        id: meta
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          if [[ "$VERSION" == *-* ]]; then
+            echo "stable=false" >> $GITHUB_OUTPUT
+          else
+            echo "stable=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up QEMU (multi-arch emulation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write smoke-test config
+        run: |
+          # Single-quoted heredoc — the password_hash literal contains
+          # `$` delimiters that must NOT undergo shell expansion.
+          cat > /tmp/verify-config.yaml <<'EOF'
+          secret_key: "release-verify-key-not-for-production-but-long-enough"
+          database_path: "/app/data/site.db"
+          photo_storage: "/app/photos"
+          session_cookie_secure: false
+          admin:
+            username: "admin"
+            password_hash: "pbkdf2:sha256:600000$verifysalt$0000000000000000000000000000000000000000000000000000000000000000"
+          EOF
+
+      - name: Pull amd64 manifest of ${{ steps.meta.outputs.version }}
+        run: |
+          IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
+          docker pull --platform linux/amd64 "$IMG"
+          docker tag "$IMG" verify-amd64:test
+
+      - name: Smoke-test amd64
+        run: |
+          set -e
+          docker run -d --name verify-amd64 --platform linux/amd64 \
+            -p 18080:8080 \
+            -v /tmp/verify-config.yaml:/app/config.yaml:ro \
+            verify-amd64:test
+
+          # Poll /healthz until it answers, up to 30s.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:18080/healthz > /dev/null 2>&1; then
+              echo "amd64 image up after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS http://localhost:18080/healthz || (docker logs verify-amd64 && exit 1)
+          curl -fsS http://localhost:18080/readyz  || (docker logs verify-amd64 && exit 1)
+
+          docker stop verify-amd64
+          docker rm   verify-amd64
+
+      - name: Pull arm64 manifest of ${{ steps.meta.outputs.version }}
+        run: |
+          IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
+          docker pull --platform linux/arm64 "$IMG"
+          docker tag "$IMG" verify-arm64:test
+
+      - name: Smoke-test arm64 (QEMU emulation)
+        run: |
+          set -e
+          # arm64 boots through QEMU on the x86 runner — allow a
+          # generous start window (3x amd64) for Pillow/Cython init.
+          docker run -d --name verify-arm64 --platform linux/arm64 \
+            -p 18081:8080 \
+            -v /tmp/verify-config.yaml:/app/config.yaml:ro \
+            verify-arm64:test
+
+          for i in $(seq 1 90); do
+            if curl -fsS http://localhost:18081/healthz > /dev/null 2>&1; then
+              echo "arm64 image up after ${i}s (QEMU)"
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS http://localhost:18081/healthz || (docker logs verify-arm64 && exit 1)
+          curl -fsS http://localhost:18081/readyz  || (docker logs verify-arm64 && exit 1)
+
+          docker stop verify-arm64
+          docker rm   verify-arm64
+
+      # Phase 35 stop-ship gate: only after BOTH arch smoke tests pass
+      # do we advance :latest. Pre-release tags (rc, beta) never move
+      # :latest regardless — operators who want bleeding-edge stability
+      # track :latest, which by definition is the most recent stable
+      # release that survived the gate.
+      - name: Promote :latest to ${{ steps.meta.outputs.version }} (stable only)
+        if: steps.meta.outputs.stable == 'true'
+        run: |
+          SRC="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
+          echo "Promoting :latest -> $SRC"
+          docker buildx imagetools create \
+              --tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" \
+              "$SRC"
 
   # -----------------------------------------------------------
   # Publish rolling :main tag (every merge to main)

@@ -19,6 +19,7 @@ Commands:
     purge-analytics      Delete page view records older than N days.
     query-audit          Run EXPLAIN QUERY PLAN on documented hot queries.
     complexity-report    Print the top N most complex functions in the codebase.
+    profile              Per-route p50/p95/query-count/response-size benchmark.
     backup               Create, list, or prune timestamped site backups.
     restore              Restore the site database and photos from a backup.
     translations         Manage translation files (extract, init, compile, update).
@@ -40,6 +41,9 @@ Usage:
     python manage.py query-audit
     python manage.py complexity-report
     python manage.py complexity-report --top 40
+    python manage.py profile
+    python manage.py profile --iterations 20
+    python manage.py profile --routes /,/portfolio
     python manage.py backup
     python manage.py backup --db-only
     python manage.py backup --list
@@ -1908,6 +1912,12 @@ def _print_api_token_banner(token):
     The raw value is surfaced here and ONLY here — it is never persisted
     and never reappears on subsequent CLI invocations, so the banner is
     deliberately loud so a user piping to logs sees the warning.
+
+    Phase 22.4 audit anchor (#58): the CLI path deliberately does NOT
+    use the ``api_token_reveals`` server-side handoff that the admin
+    HTML route uses. There is no browser session to protect — the raw
+    token lives only in stdout and in the operator's terminal
+    scrollback. Do not introduce any persistence for convenience here.
     """
     banner = '=' * 64
     print(banner)
@@ -2064,6 +2074,57 @@ def list_api_tokens(args):  # noqa: ARG001 — argparse passes args even when un
         )
 
 
+def profile(args):
+    """Thin wrapper over scripts/benchmark_routes.py (Phase 36.4).
+
+    Measures per-route p50/p95 wall-clock time, SQL query count, and response
+    size by driving the in-process Flask test client. Defaults to the top-5
+    public routes tracked in PERFORMANCE.md; --routes scopes the probe to a
+    comma-separated subset of paths.
+
+    Flags:
+        --iterations N  Requests per route (default: 50).
+        --routes a,b,c  Restrict to the given paths (e.g. "/,/portfolio").
+    """
+    import importlib
+    import sys as _sys
+    from pathlib import Path
+
+    project_root = Path(__file__).resolve().parent
+    scripts_dir = project_root / 'scripts'
+    if str(scripts_dir) not in _sys.path:
+        _sys.path.insert(0, str(scripts_dir))
+
+    # Reset argv so benchmark_routes' module-level sys.argv[1] parsing
+    # doesn't pick up our subcommand name. We override ITERATIONS / ROUTES
+    # after import instead.
+    saved_argv = _sys.argv
+    _sys.argv = [str(scripts_dir / 'benchmark_routes.py')]
+    try:
+        benchmark_routes = importlib.import_module('benchmark_routes')
+    finally:
+        _sys.argv = saved_argv
+
+    benchmark_routes.ITERATIONS = args.iterations
+
+    if args.routes:
+        wanted = [r.strip() for r in args.routes.split(',') if r.strip()]
+        by_path = {path: (name, path) for name, path in benchmark_routes.ROUTES}
+        filtered = []
+        for path in wanted:
+            if path not in by_path:
+                print(
+                    f'ERROR: unknown route {path!r}. '
+                    f'Known: {", ".join(p for _, p in benchmark_routes.ROUTES)}',
+                    file=_sys.stderr,
+                )
+                _sys.exit(2)
+            filtered.append(by_path[path])
+        benchmark_routes.ROUTES = filtered
+
+    _sys.exit(benchmark_routes.main())
+
+
 def main():
     """Parse command-line arguments and dispatch to the appropriate handler."""
     parser = argparse.ArgumentParser(description='resume-site management CLI')
@@ -2217,6 +2278,22 @@ def main():
         help='Where to write the pre-restore safety sidecar',
     )
 
+    # Route profiler (Phase 36.4) — thin wrapper over scripts/benchmark_routes.py
+    profile_parser = subparsers.add_parser(
+        'profile', help='Per-route p50/p95/query-count/response-size benchmark'
+    )
+    profile_parser.add_argument(
+        '--iterations',
+        type=int,
+        default=50,
+        help='Requests per route (default: 50)',
+    )
+    profile_parser.add_argument(
+        '--routes',
+        default=None,
+        help='Comma-separated paths to probe (default: top-5 from PERFORMANCE.md)',
+    )
+
     # Translation management
     trans_parser = subparsers.add_parser('translations', help='Manage translation files')
     trans_parser.add_argument(
@@ -2248,6 +2325,7 @@ def main():
         'purge-analytics': purge_analytics,
         'query-audit': query_audit,
         'complexity-report': complexity_report,
+        'profile': profile,
         'backup': backup,
         'restore': restore,
         'translations': translations,

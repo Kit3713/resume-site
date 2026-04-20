@@ -102,10 +102,14 @@ def blog_new():
         if action == 'publish':
             publish_post(db, post_id)
             flash(_('Post published.'), 'success')
-            with contextlib.suppress(Exception):
-                log_action(db, 'Published post', 'blog', title)
+            # Activity-log entry now fires from the BLOG_PUBLISHED subscriber
+            # in app.services.event_subscribers (Phase 36.7).
         else:
             flash(_('Draft saved.'), 'success')
+            # The 'Created draft' direct log was not migrated (the
+            # BLOG_UPDATED subscriber only logs the status='deleted' case).
+            # Preserving the pre-36.7 behaviour for save-as-draft keeps
+            # the activity feed readable for a single-admin deployment.
             with contextlib.suppress(Exception):
                 log_action(db, 'Created draft', 'blog', title)
 
@@ -193,7 +197,6 @@ def blog_delete(post_id):
     """Permanently delete a blog post."""
     db = get_db()
     post = get_post_by_id(db, post_id)
-    detail = post['title'] if post else f'ID {post_id}'
     # Snapshot identifying fields BEFORE the delete so the event payload
     # can carry them — the row will be gone by the time we emit.
     payload = (
@@ -209,8 +212,9 @@ def blog_delete(post_id):
     )
 
     delete_post(db, post_id)
-    with contextlib.suppress(Exception):
-        log_action(db, 'Deleted post', 'blog', detail)
+    # The activity-log entry now fires from the BLOG_UPDATED subscriber
+    # (Phase 36.7), which branches on ``status='deleted'`` to emit the
+    # 'Deleted post' action.
 
     # Phase 19.1 event bus — fire `blog.updated` with status='deleted'
     # (mirrors api.blog_delete) so subscribers can distinguish a real

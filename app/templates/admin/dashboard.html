@@ -48,7 +48,71 @@
             </p>
             {% endif %}
         </div>
+        <div class="admin-card admin-card--alerts">
+            {# Active alerts (Phase 36.5). Evaluated from docs/alerting-rules.yaml
+               against the same in-memory error counter the card above consumes.
+               Only rules keyed on resume_site_errors_total{category=...} are
+               in-process-evaluable — rate-based and latency rules still need
+               Prometheus. See app/services/alerting.py. #}
+            <h3 class="admin-card__title">{{ _('Active Alerts') }}</h3>
+            {% if active_alerts %}
+            <p class="admin-card__value admin-card__value--warn">{{ active_alerts|length }}</p>
+            <ul class="admin-alerts-list">
+                {% for alert in active_alerts %}
+                <li class="admin-alerts-list__item admin-alerts-list__item--{{ alert.severity }}">
+                    <strong>{{ alert.alert }}</strong>
+                    <span class="admin-alerts-list__severity">{{ alert.severity }}</span>
+                    <span class="admin-alerts-list__summary">{{ alert.summary }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="admin-card__value admin-card__value--ok">0</p>
+            <p class="admin-card__meta">{{ _('No in-process alerts firing.') }}</p>
+            {% endif %}
+        </div>
     </div>
+
+    {% if translation_matrix and translation_locales|length > 1 %}
+    <div class="admin-section">
+        <h2 class="admin-section__title">{{ _('Translation Completeness') }}</h2>
+        <p class="admin-section__caption">
+            {{ _('Rows with at least one translation entry per configured locale. The default locale mirrors the parent table.') }}
+        </p>
+        <table class="admin-table admin-translation-matrix">
+            <thead>
+                <tr>
+                    <th>{{ _('Content type') }}</th>
+                    <th>{{ _('Total') }}</th>
+                    {% for locale in translation_locales %}
+                    <th>{{ locale }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in translation_matrix %}
+                <tr>
+                    <td><code>{{ row.type }}</code></td>
+                    <td>{{ row.total }}</td>
+                    {% for locale in translation_locales %}
+                        {% set translated = row.coverage.get(locale, 0) %}
+                        {% set pct = (translated / row.total * 100) if row.total else 0 %}
+                        {% set band = 'ok' if pct >= 90 else ('warn' if pct >= 50 else ('gap' if pct > 0 else 'empty')) %}
+                        {% if row.total %}
+                        <td class="admin-translation-matrix__cell admin-translation-matrix__cell--{{ band }}">
+                            {{ translated }} / {{ row.total }}
+                            <span class="admin-translation-matrix__pct">({{ pct|round(0, 'floor')|int }}%)</span>
+                        </td>
+                        {% else %}
+                        <td class="admin-translation-matrix__cell admin-translation-matrix__cell--empty">—</td>
+                        {% endif %}
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
 
     {% if popular_pages %}
     <div class="admin-section">

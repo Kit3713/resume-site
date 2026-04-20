@@ -29,7 +29,15 @@
         <div class="admin-list-item" style="padding:var(--space-sm)">
             <div>
                 <strong>{{ result.title or _('(untitled)') }}</strong>
-                <p style="color:var(--color-text-secondary);font-size:var(--fs-sm)">{{ result.snippet | safe }}</p>
+                {# Phase 22.2 (#44): ``result.snippet`` is a pre-sanitised
+                   ``markupsafe.Markup`` value built by
+                   ``_render_search_snippet`` — attacker-controlled bytes
+                   have already been HTML-escaped and only the server-
+                   controlled ``<mark>`` highlight wrappers survive. We
+                   therefore render it with Jinja's default autoescape
+                   rather than the previous ``| safe`` which accepted
+                   arbitrary HTML from the FTS snippet. #}
+                <p style="color:var(--color-text-secondary);font-size:var(--fs-sm)">{{ result.snippet }}</p>
             </div>
         </div>
     {% endfor %}

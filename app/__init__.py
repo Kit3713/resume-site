@@ -555,6 +555,31 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
 
     init_assets(app)
 
+    # --- 9c. CSS/JS minification middleware (Phase 36.1) ---
+    # Request-time minification cached per-fingerprint. Dev mode (app.debug)
+    # is a no-op so devtools see the source as written.
+    from app.services.minify import init_app as init_minify
+
+    init_minify(app)
+
+    # --- 9d. In-app alerting rule cache (Phase 36.5) ---
+    # Parse docs/alerting-rules.yaml once so the dashboard widget doesn't
+    # re-read disk on every render. Failures are logged and ignored —
+    # the widget falls back to an empty alert list.
+    with contextlib.suppress(Exception):
+        from app.services.alerting import prime_cache as _prime_alert_cache
+
+        _prime_alert_cache()
+
+    # --- 9e. Event-bus subscribers (Phase 36.7) ---
+    # Activity log + metrics subscribe to canonical events emitted by
+    # routes, replacing three direct-call sites (log_action / counter.inc)
+    # with bus-driven side-effects. Idempotent so test fixtures that
+    # re-run create_app() don't double-register.
+    from app.services.event_subscribers import register_all as _register_subscribers
+
+    _register_subscribers()
+
     # --- 10. Template context processor ---
     @app.context_processor
     def inject_settings():
@@ -630,6 +655,14 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
     from app.services.time_helpers import time_ago
 
     app.jinja_env.filters['time_ago'] = time_ago
+
+    # ``safe_url`` (Phase 22.2 #17) — second-line defence for operator-
+    # supplied ``href`` values. Rewrites ``javascript:`` / ``data:`` /
+    # scheme-relative URLs to ``#`` at render time even if a row
+    # predates the save-time validator.
+    from app.services.content import safe_url
+
+    app.jinja_env.filters['safe_url'] = safe_url
 
     # --- 12. Webhook bus subscribers (Phase 19.2) ---
     # Subscribes one handler per Events.* constant so every emission

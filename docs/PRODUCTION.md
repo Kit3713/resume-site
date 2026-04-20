@@ -6,17 +6,27 @@ gets you to a running site in about five minutes. This document
 assumes you're putting the site in front of real visitors and want a
 hardened, monitored, backed-up deployment.
 
+> **TL;DR — GHCR is the canonical artifact.** Production deploys pull
+> a signed image from `ghcr.io/kit3713/resume-site`. A source checkout
+> is for development only. Every release is Trivy-clean,
+> cosign-signed, and multi-arch verified through the
+> [release-publication gate](#release-publication-gate). Verify the
+> signature before each upgrade — see §[3.0 Pull and verify the
+> signed image](#30-pull-and-verify-the-signed-image).
+
 ---
 
 ## 1. Choose your deployment shape
 
-Three supported shapes, ordered from simplest to richest:
+Three supported shapes, ordered from simplest to richest. All three
+consume the same GHCR image — they only differ in how the host
+supervises the container:
 
 | Shape | Best for | Defined by |
 |---|---|---|
 | **Podman Compose** | Single host, "just get it running" | `compose.yaml` |
 | **Podman Quadlet (systemd)** | Fedora/RHEL servers, auto-start, journald logs | `resume-site.container`, `resume-site-backup.{service,timer}` |
-| **Kubernetes / Nomad** | Multi-host, orchestrated, horizontal scaling | Adapt the `compose.yaml` probes + your own manifests |
+| **Kubernetes / Nomad** | Multi-host, orchestrated, horizontal scaling | See [§13 Kubernetes / Nomad manifests](#13-kubernetes--nomad-manifests) below |
 
 Pick one and stick with it — don't mix Quadlet with compose or you'll
 end up with two containers fighting over the same volumes.
@@ -44,6 +54,48 @@ end up with two containers fighting over the same volumes.
 ---
 
 ## 3. First-deploy checklist
+
+### 3.0 Pull and verify the signed image
+
+Pin to an exact `vX.Y.Z` tag for production. The aliases (`v0.3`,
+`v0`, `latest`) move between releases — convenient for "give me the
+newest patch" pulls, dangerous if your manifest is supposed to be
+reproducible.
+
+```bash
+podman pull ghcr.io/kit3713/resume-site:v0.3.1
+```
+
+Verify the cosign signature **before** running anything from the new
+image. Every release is signed by the publish CI job using GitHub's
+OIDC identity (no keypair to manage; the signature + certificate land
+in the public Sigstore transparency log):
+
+```bash
+cosign verify \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp 'https://github.com/Kit3713/resume-site/.+' \
+  ghcr.io/kit3713/resume-site:v0.3.1
+```
+
+A non-zero exit means the image was not built by the resume-site CI
+workflow (or has been tampered with on the registry between push and
+your pull). **Do not deploy.** That's a stop-ship — see
+§[12 Release publication gate](#release-publication-gate).
+
+For maximum reproducibility, capture the digest after the verify
+passes and pin to that in your manifests:
+
+```bash
+podman image inspect ghcr.io/kit3713/resume-site:v0.3.1 \
+    --format '{{ index .RepoDigests 0 }}'
+# → ghcr.io/kit3713/resume-site@sha256:<64-hex>
+```
+
+A digest pin is the only way to guarantee the bits you tested are the
+bits that boot in production — the `vX.Y.Z` tag is conventionally
+immutable but a force-pushed registry tag could in theory swap under
+you. Digests cannot.
 
 ### 3.1 Generate secrets
 
@@ -165,7 +217,10 @@ server {
 
     client_max_body_size 15m;      # photo uploads are up to 10 MB by default
     proxy_set_header X-Real-IP        $remote_addr;
-    proxy_set_header X-Forwarded-For  $proxy_add_x_forwarded_for;
+    # Strip-and-overwrite: $remote_addr (NOT $proxy_add_x_forwarded_for)
+    # so client-supplied X-Forwarded-For cannot slip through. See
+    # §3.5.1 for the trust-model rationale.
+    proxy_set_header X-Forwarded-For  $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header Host             $host;
 
@@ -178,6 +233,83 @@ server {
 Traefik labels live on the container — see the Traefik docs for
 v2.x router + middleware syntax. The backing service is a plain HTTP
 service on port 8080.
+
+#### 3.5.1 Reverse-proxy binding and the X-Forwarded-For trust model ⚠ {#reverse-proxy-xff}
+
+> **tl;dr** — Keep the container bound to `127.0.0.1:8080` (the
+> v0.3.1 default) and put a reverse proxy in front. Exposing port
+> 8080 directly to the public internet is an admin-bypass waiting to
+> happen until `get_client_ip()` extraction lands in v0.3.2 Phase
+> 23.2.
+
+As of v0.3.1, `compose.yaml` and `resume-site.container` both publish
+the container on `127.0.0.1:8080` only (Phase 22.5, issue #66). The
+app is reachable exclusively through a reverse proxy running on the
+host — Caddy, nginx, Cloudflare Tunnel, Tailscale Funnel, or
+equivalent. **Do not change those bindings to `0.0.0.0` /
+`"8080:8080"` unless you understand the trust model below.**
+
+##### Why the app cannot be safely exposed on `0.0.0.0` today
+
+The admin panel uses an IP allowlist (`admin.allowed_networks` in
+`config.yaml`) to gate `/admin/*`. Phase 22.6 (issue #16) fixed the
+admin allowlist to consult `X-Forwarded-For` only when the inbound
+TCP peer (`request.remote_addr`) is inside `trusted_proxies`. But
+four other callsites — contact-form rate limit, API rate limit,
+analytics IP hashing, `/metrics` access gate, login throttle — still
+trust `X-Forwarded-For` unconditionally (issue #34). The full
+extraction into a shared `get_client_ip()` helper lands in **v0.3.2
+Phase 23.2**.
+
+Until that ships:
+
+- **Binding to a public interface lets a remote attacker forge
+  `X-Forwarded-For: 127.0.0.1`** to sidestep the analytics hash, the
+  rate limiters, and the `/metrics` IP gate.
+- A misconfigured `trusted_proxies` can even re-open the admin gate
+  to the forged header.
+
+##### What "safe" looks like on v0.3.1
+
+```yaml
+# config.yaml
+trusted_proxies:
+  - "127.0.0.0/8"    # Caddy / nginx on the same host
+# - "10.0.0.0/24"    # or the docker-compose bridge network if the proxy is a peer container
+```
+
+```yaml
+# compose.yaml (shipped default)
+ports:
+  - "127.0.0.1:8080:8080"
+```
+
+…and a reverse proxy that:
+
+1. Terminates TLS.
+2. Sets `X-Forwarded-For: <real client IP>`.
+3. Does NOT pass through any client-supplied `X-Forwarded-For`
+   (strip-and-overwrite, not append).
+
+Caddy does this out of the box; nginx requires
+`proxy_set_header X-Forwarded-For $remote_addr;` (**not**
+`$proxy_add_x_forwarded_for`, which _appends_ the client-supplied
+header).
+
+##### If you really need to expose 8080 directly (not recommended)
+
+You are opting out of the Phase 22.6 guarantee. Wait for v0.3.2
+Phase 23.2, or:
+
+1. Set `trusted_proxies: []` in `config.yaml` so the admin gate
+   ignores `X-Forwarded-For` outright.
+2. Accept that contact-form, API, and login rate-limiting will be
+   spoofable (the other four callsites still trust XFF — see
+   issue #34).
+3. Restrict `admin.allowed_networks` to the **public** IP range you
+   actually administer from, not `127.0.0.0/8`.
+
+Track v0.3.2 Phase 23.2 before making this permanent.
 
 ---
 
@@ -327,6 +459,20 @@ planned for Phase 18.11.
 defaults to the admin allowed list). Never expose `/metrics` to the
 public internet.
 
+### 7.3 Observability runbook cross-reference {#observability-runbook}
+
+<!-- ANCHOR: agent-c-observability-cross-ref (Phase 36.6).
+     Agent C: drop the one-line pointer to docs/OBSERVABILITY_RUNBOOK.md
+     here. Five-minute edit; section exists so the link has a stable
+     home (and so the v0.3.0 carry-over is visibly closed in this
+     file rather than left as an implicit "see §7"). -->
+
+_Reserved for Agent C's observability runbook pointer (Phase 36.6)._
+Until Agent C lands, the runbook lives at
+[`docs/OBSERVABILITY_RUNBOOK.md`](OBSERVABILITY_RUNBOOK.md) — the
+"when to reach for which tool" decision tree, the Prometheus +
+Grafana + Alertmanager wiring, and the synthetic-monitoring tiers.
+
 ---
 
 ## 8. Backups
@@ -457,12 +603,125 @@ release. It's designed for periodic human review, not automation.
 
 ---
 
-## 12. Getting help
+## 12. Release publication gate {#release-publication-gate}
+
+Every published release passes through a fixed CI pipeline. The
+operator-visible side of that pipeline is what's described here —
+what gets published, under which tags, and the rules under which a
+release is **not** published.
+
+### 12.1 Tag matrix
+
+Every stable release advances four tags pointing at the same digest.
+The exact `vX.Y.Z` tag is pushed by the multi-arch build itself; the
+`vX.Y`, `vX`, and `latest` aliases are layered on via
+`docker buildx imagetools create` (no image data is re-uploaded — the
+alias is a pure registry-side pointer to the same multi-arch
+manifest):
+
+| Tag | Stability | When it moves |
+|---|---|---|
+| `vX.Y.Z` | **Immutable.** Pin this in production manifests. | Once per release. Never re-pushed. |
+| `vX.Y` | Latest patch on this minor line. | Every patch release. |
+| `vX` | Latest minor on this major line. | Every minor (and patch) release. |
+| `latest` | Most recent stable release. | Every release. **Gated on `release-verify` smoke test passing on both amd64 and arm64.** |
+
+The `latest` alias is advanced **after** the `release-verify` job
+pulls the just-pushed digest on a clean runner and confirms `/healthz`
++ `/readyz` answer green on both `linux/amd64` and `linux/arm64`. If
+either arch fails the smoke test, `latest` does not move; the
+`vX.Y.Z` tag remains pulled but operators tracking `latest` are not
+silently moved to a broken build.
+
+`:main` continues to track trunk on every push to `main` and is
+explicitly **not a release tag**:
+
+- It is built without the `release-verify` smoke test.
+- It does **not** participate in the tag matrix.
+- It is signed with cosign (same as a release tag) so its provenance
+  is verifiable, but it is not promoted from RC → stable.
+- Use it for local poking / nightly builds. Never deploy it.
+
+### 12.2 Stop-ship gate {#stop-ship-gate}
+
+Each rule below is a **full stop**, not a ratchet. Failing any one of
+them aborts the release; nothing is published, no tags move, no
+operator gets paged about a "soft failure."
+
+| Gate | What fails the release |
+|---|---|
+| `quality` | Any ruff lint, ruff format, bandit, or SQL grep finding. |
+| `test (3.11, 3.12)` | Any failing test, or coverage below 60 %. |
+| `container-build` | Image fails to build, or the smoke-test container fails `/`, `/healthz`, or `/readyz`. |
+| `container-scan` | **Trivy reports any HIGH or CRITICAL CVE with an available fix.** Unfixed CVEs are advisory only — operators can't action what upstream hasn't patched. |
+| `publish` | Multi-arch build/push to GHCR fails, or `cosign sign` fails. |
+| `release-verify` | Pulling the just-pushed digest fails on either `linux/amd64` or `linux/arm64`, or `/healthz` / `/readyz` fail on the pulled image. |
+| **Cosign verify on a clean machine** | A release-checklist step pulls the published image to a clean machine and runs `cosign verify` against it. A failure here means the signature didn't replicate to the registry correctly — release is rolled back. |
+| **Release notes** | The release does not honour [`.github/RELEASE_TEMPLATE.md`](../.github/RELEASE_TEMPLATE.md) — missing pull command, digest line, cosign verify line, "Breaking changes" section, or "Migration notes" section. |
+
+The whole point of the gate is that there is no "we'll fix it
+forward" path. A release that can't satisfy the gate is not a
+release. Either the gate is wrong (rare; document the exception
+explicitly and update the gate) or the release is not ready (common;
+fix the underlying issue and try again).
+
+### 12.3 Dry-run on `vX.Y.Z-rc.1`
+
+Before any stable tag, cut `vX.Y.Z-rc.1` against the same gate.
+Everything the stable release has to do, the RC has to do — same
+Trivy scan, same cosign signature, same `release-verify` smoke test,
+same release-notes template (with "release candidate" called out).
+The RC is the dress rehearsal; if anything in the gate behaves
+unexpectedly on the RC, fix it there before promoting.
+
+The RC's tag matrix is narrower: only `vX.Y.Z-rc.1` and (optionally)
+`vX.Y.Z-rc` are pushed. RCs **do not** advance `vX.Y`, `vX`, or
+`latest`.
+
+---
+
+## 13. Kubernetes / Nomad manifests {#k8s-manifests}
+
+<!-- ANCHOR: agent-c-k8s-manifests (Phase 36.8).
+     Agent C: drop the commented-out k8s Deployment + Service + Ingress
+     manifests here. Include the readinessProbe / livenessProbe block
+     with `initialDelaySeconds: 5, failureThreshold: 3` (Phase 21.2
+     contract — already documented in compose.yaml). The probe pair is
+     what makes the image work in orchestrated environments; this
+     section is the full manifest form operators have asked for.
+     Not officially supported, but the image is designed to support it. -->
+
+_Reserved for Agent C's k8s / Nomad commented-example manifests
+(Phase 36.8)._ Until that lands, the `compose.yaml` health-check block
+documents the readiness contract every orchestrator needs:
+
+```yaml
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 10s
+```
+
+For a real Kubernetes deployment, mirror that into a `livenessProbe`
+on `/healthz` and a `readinessProbe` on `/readyz` with
+`initialDelaySeconds: 5, failureThreshold: 3` (matching the Phase
+21.2 contract).
+
+---
+
+## 14. Getting help
 
 - GitHub Issues for bugs and feature requests.
-- `docs/LOGGING.md` for log schema and forwarding recipes.
-- `docs/PENTEST_CHECKLIST.md` for security self-audit.
-- `docs/alerting-rules.md` for per-alert runbooks.
-- `docs/openapi.yaml` for the REST API surface (interactive at
+- [`docs/LOGGING.md`](LOGGING.md) for log schema and forwarding recipes.
+- [`docs/PENTEST_CHECKLIST.md`](PENTEST_CHECKLIST.md) for security self-audit.
+- [`docs/alerting-rules.md`](alerting-rules.md) for per-alert runbooks.
+- [`docs/UPGRADE.md`](UPGRADE.md) for the upgrade-survivability story
+  (rolling-upgrade replay, `pre-restore-*` sidecars, rollback).
+- [`docs/openapi.yaml`](openapi.yaml) for the REST API surface (interactive at
   `/api/v1/docs` when you set `api_docs_enabled = true` in admin
   settings).
+- [`.github/RELEASE_TEMPLATE.md`](../.github/RELEASE_TEMPLATE.md) for the
+  required release-notes skeleton (pull command, digest, cosign verify,
+  Breaking changes, Migration notes — see §12 above).

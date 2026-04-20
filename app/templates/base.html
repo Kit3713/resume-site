@@ -163,7 +163,11 @@
                 {% endfor %}
                 {# Custom nav links (Phase 14.2) #}
                 {% for link in custom_nav_links %}
-                <li><a href="{{ link.url }}"{% if link.new_tab %} target="_blank" rel="noopener noreferrer"{% endif %}>{{ link.label }}</a></li>
+                {# Phase 22.2 (#17): | safe_url rewrites any
+                   javascript: / data: / scheme-relative URL to # at
+                   render time as defence-in-depth, even if a row was
+                   written before save-time validation landed. #}
+                <li><a href="{{ link.url | safe_url }}"{% if link.new_tab %} target="_blank" rel="noopener noreferrer"{% endif %}>{{ link.label }}</a></li>
                 {% endfor %}
                 {% block nav_extra %}{% endblock %}
                 {# Language switcher (only when multiple locales configured) #}

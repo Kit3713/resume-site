@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — v0.3.1 (Keystone)
+
+### Added — Phase 35: Release Publication Gate
+- `.github/RELEASE_TEMPLATE.md` — required release-notes skeleton. Three commands no release omits: `podman pull ghcr.io/kit3713/resume-site:vX.Y.Z`, the `@sha256:` digest pin, and the `cosign verify` invocation with the OIDC issuer + identity-regexp baked in. Required headings for "Breaking changes" and "Migration notes" — operators rely on the section being present so they can grep for it across releases, even when the answer is "None." A new release that does not honour the template is a stop-ship.
+- `release-verify` CI job — multi-arch smoke test that pulls the just-pushed `:vX.Y.Z` manifest for both `linux/amd64` and `linux/arm64` on a clean runner, boots each variant against a minimal `verify-config.yaml`, and asserts `/healthz` + `/readyz` answer green. arm64 runs through QEMU emulation registered via `setup-qemu-action` (allows a 90s start window vs amd64's 30s — Pillow / Cython init under emulation is ~3x slower). A failure on either arch leaves `:latest` un-promoted; operators tracking `:latest` are not silently moved to a broken multi-arch build.
+- Tag matrix promotion in `publish` job — stable releases now advance `v<MAJOR>.<MINOR>` and `v<MAJOR>` lifecycle aliases via `docker buildx imagetools create` after the multi-arch build pushes the immutable `vX.Y.Z` digest. No image data re-upload — the alias is a pure registry-side pointer to the same multi-arch manifest. Pre-release tags (`vX.Y.Z-rc.1`, `-beta.N`) only push their exact tag and never move the lifecycle aliases or `:latest`.
+- `:latest` is now gated. `:latest` advancement is the last step of `release-verify`, runs only after both arch smoke tests pass, and only for stable (non-pre-release) tags. Operators tracking `:latest` are by construction tracking "the most recent release that survived the gate."
+
+### Changed — Phase 35: GHCR-first documentation
+- `README.md` rewrite — `podman pull ghcr.io/kit3713/resume-site:v0.3.1` is now the headline install path, immediately followed by the `cosign verify` invocation. The full tag-matrix table (with `vX.Y.Z` / `vX.Y` / `vX` / `latest` semantics and the `:main` non-production caveat) sits inline under Quick Start so operators see it before they make a deployment decision. The legacy "Local development" install path was demoted out of Quick Start into a new `## Development` section near the bottom of the README — sourcing a clone is now explicitly framed as "you only need this to modify the project, not to deploy it."
+- `docs/PRODUCTION.md` reorientation — new TL;DR callout above §1 establishes GHCR as the canonical artifact. New `§3.0 Pull and verify the signed image` runs first in the deploy checklist (before secret generation in §3.1) so the image is verified before any operator-facing step touches it. New `§12 Release publication gate` section documents the tag matrix + the full stop-ship rule set (every gate is a full stop, not a ratchet) + the `vX.Y.Z-rc.1` dry-run requirement. Anchor stubs left for Agent A's reverse-proxy XFF callout (§3.5.1, Phase 22.5), Agent C's observability cross-reference (§7.3, Phase 36.6), and Agent C's k8s/Nomad manifests (§13, Phase 36.8) — those drafts merge into stable headings rather than being added ad-hoc.
+- `Container Image` section in README dedup'd — the per-tag `podman pull` examples lived in two places; the canonical pull command is now in Quick Start, and the Container Image section links back rather than duplicating.
+- Cosign verify is now in the upgrade flow — both README's "Upgrading" section and PRODUCTION.md §9 show `cosign verify` as a required step before restart, not an optional aside.
+- Shipped `compose.yaml` and `resume-site.container` now pin to `:v0.3.1` instead of `:latest`. Operators who `podman compose pull` or `podman auto-update` no longer silently roll forward to a new release. The Quadlet `AutoUpdate=registry` line is commented out (it is a no-op against an immutable tag); operators who prefer rolling auto-upgrades switch the tag back to `:latest` and re-enable the directive. Inline comments on both files walk through the digest-pin alternative and cross-reference `docs/PRODUCTION.md §3.0`.
+
+---
+
 ## [Unreleased] — v0.3.0
 
 ### Changed — Phase 18.5 / 18.14: PERFORMANCE.md baselines

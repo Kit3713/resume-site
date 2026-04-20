@@ -1,10 +1,8 @@
 # resume-site
 
-> **Current release: v0.2.0** — Hardened, extensible portfolio and blog platform with i18n, admin customization, and container-native deployment.
->
-> See [ROADMAP_v0.2.0.md](ROADMAP_v0.2.0.md) for the full development history.
+> **Current release: v0.3.1** — _Keystone_. First release shipped through the release-publication gate (cosign-signed, Trivy-clean, multi-arch verified). See [ROADMAP_v0.3.1.md](ROADMAP_v0.3.1.md), the [v0.2.0 history](ROADMAP_v0.2.0.md), and [CHANGELOG.md](CHANGELOG.md) for the full story.
 
-A self-hosted, containerized resume and portfolio website engine built with Flask. Apple-inspired design, and admin panel for content management.
+A self-hosted, containerized resume and portfolio website engine built with Flask. Apple-inspired design, and admin panel for content management. **Distributed as a signed, multi-arch container image on GHCR** — a source checkout is only needed for development.
 
 ## Overview
 
@@ -43,80 +41,102 @@ resume-site is a configurable portfolio website designed around the idea that **
 
 ## Quick Start
 
-### Option A: Pull from container registry (recommended)
+The container image on GHCR is the canonical artifact. **Pull it; do not build from source for a deployment.** Source-tree workflows are documented under [Development](#development).
+
+### 1. Pull and verify the signed image
 
 ```bash
-podman pull ghcr.io/kit3713/resume-site:latest
+podman pull ghcr.io/kit3713/resume-site:v0.3.1
 ```
 
-Create your config file:
+Verify the cosign signature before you run anything (keyless OIDC,
+recorded in the public Sigstore transparency log):
+
+```bash
+cosign verify \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp 'https://github.com/Kit3713/resume-site/.+' \
+  ghcr.io/kit3713/resume-site:v0.3.1
+```
+
+A non-zero exit means do not deploy — see the
+[Stop-ship gate](docs/PRODUCTION.md#stop-ship-gate) for what to do
+next.
+
+> **Tag matrix.** Every stable release advances four tags atomically
+> (all four point at the same digest):
+>
+> | Tag | Use |
+> |---|---|
+> | `v0.3.1` | This exact release (immutable). **Pin this in production.** |
+> | `v0.3` | Latest patch on the v0.3 line — moves on every patch. |
+> | `v0` | Latest minor on the v0 line — moves on every minor. |
+> | `latest` | Most recent stable release — moves on every release. |
+>
+> `:main` tracks trunk and is **not** a release tag. Treat it as a
+> nightly build for local poking — never deploy it.
+
+### 2. Configure
 
 ```bash
 curl -O https://raw.githubusercontent.com/Kit3713/resume-site/main/config.example.yaml
 cp config.example.yaml config.yaml
-# Edit config.yaml with your SMTP credentials and admin password
+# Edit config.yaml with your SMTP credentials and admin password.
+# Generate a secret_key + admin password hash with:
+#   podman run --rm ghcr.io/kit3713/resume-site:v0.3.1 python manage.py generate-secret
+#   podman run --rm -it ghcr.io/kit3713/resume-site:v0.3.1 python manage.py hash-password
 ```
 
-Run:
+### 3. Run
+
+Pick one shape — Compose for one-host simplicity, Quadlet for a
+systemd-native deployment, or `podman run` for ad-hoc.
+
+#### Podman / Docker (one-shot)
 
 ```bash
 podman run -d \
   --name resume-site \
-  -p 8080:8080 \
+  -p 127.0.0.1:8080:8080 \
   -v ./config.yaml:/app/config.yaml:ro,Z \
   -v resume-site-data:/app/data:Z \
   -v resume-site-photos:/app/photos:Z \
-  ghcr.io/kit3713/resume-site:latest
+  -v resume-site-backups:/app/backups:Z \
+  ghcr.io/kit3713/resume-site:v0.3.1
 ```
 
-The container entrypoint applies any pending migrations and seeds default
-content automatically on every start — no separate `init-db` step needed.
-Upgrades to a newer image tag are the same `pull` + `restart` cycle; new
-migrations apply on the next boot.
+Bind to `127.0.0.1` so the reverse proxy is the only public ingress —
+exposing port 8080 directly to the internet defeats the
+`X-Forwarded-For` trust model the app ships with.
 
-### Option B: Podman Compose
+#### Podman Compose
 
 ```bash
-git clone https://github.com/Kit3713/resume-site.git
-cd resume-site
-cp config.example.yaml config.yaml
-# Edit config.yaml
+curl -O https://raw.githubusercontent.com/Kit3713/resume-site/main/compose.yaml
 podman compose up -d
 ```
 
-Migrations and seeds run automatically on container start; no manual
-`init-db` needed.
+The shipped `compose.yaml` already references the GHCR image; edit
+the `image:` line to pin the digest for production.
 
-### Option C: Podman Quadlet (systemd)
-
-For systemd-managed deployments on Fedora, RHEL, or AlmaLinux:
+#### Podman Quadlet (systemd, Fedora / RHEL / AlmaLinux)
 
 ```bash
 mkdir -p ~/resume-site
-cp config.example.yaml ~/resume-site/config.yaml
-# Edit ~/resume-site/config.yaml
+cp config.yaml ~/resume-site/config.yaml
 
+curl -O https://raw.githubusercontent.com/Kit3713/resume-site/main/resume-site.container
 cp resume-site.container ~/.config/containers/systemd/
 systemctl --user daemon-reload
-systemctl --user start resume-site
-systemctl --user enable resume-site
+systemctl --user enable --now resume-site
 ```
 
-### Option D: Local development
+The container entrypoint applies pending migrations and seeds default
+content automatically on every start — no separate `init-db` step
+needed. Upgrades are the same `pull` + `restart` cycle; new migrations
+apply on the next boot.
 
-```bash
-git clone https://github.com/Kit3713/resume-site.git
-cd resume-site
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cp config.example.yaml config.yaml
-# Edit config.yaml
-python manage.py init-db
-flask run --debug
-```
-
-### Configure your reverse proxy
+### 4. Configure your reverse proxy
 
 ```
 portfolio.yourdomain.com {
@@ -124,7 +144,11 @@ portfolio.yourdomain.com {
 }
 ```
 
-### Access admin
+[`docs/PRODUCTION.md`](docs/PRODUCTION.md) has the Caddy / Nginx /
+Traefik configurations, TLS guidance, and the full XFF /
+admin-allowlist trust-model walkthrough.
+
+### 5. Access admin
 
 Navigate to your site from a local or Tailscale IP and log in at `/admin`.
 
@@ -283,20 +307,15 @@ podman exec resume-site python manage.py <command>
 
 ## Container Image
 
-The container image is published to GitHub Container Registry on every tagged release:
+Published to GitHub Container Registry on every tagged release through
+the v0.3.1 [release-publication gate](docs/PRODUCTION.md#release-publication-gate)
+— Trivy-clean (no HIGH/CRITICAL CVEs with an available fix), cosign
+keyless OIDC-signed, multi-arch verified.
 
-```bash
-# Latest stable release
-podman pull ghcr.io/kit3713/resume-site:latest
-
-# Specific version
-podman pull ghcr.io/kit3713/resume-site:0.2.0
-
-# Rolling development (main branch HEAD)
-podman pull ghcr.io/kit3713/resume-site:main
-```
-
-Multi-arch support: `linux/amd64` and `linux/arm64`.
+The [Quick Start](#quick-start) above covers the canonical pull +
+verify + run flow. Tag matrix and stop-ship rules live in
+[`docs/PRODUCTION.md`](docs/PRODUCTION.md). Multi-arch support:
+`linux/amd64` and `linux/arm64`.
 
 ### Container security
 
@@ -305,6 +324,9 @@ Multi-arch support: `linux/amd64` and `linux/arm64`.
 - Health check endpoint
 - Minimal system dependencies (curl only)
 - OCI labels for provenance
+- Cosign-signed (keyless OIDC, Sigstore transparency log)
+- Trivy-scanned at publish time — release blocked on any HIGH/CRITICAL
+  with an available fix
 
 ### Volumes
 
@@ -313,6 +335,7 @@ Multi-arch support: `linux/amd64` and `linux/arm64`.
 | `config.yaml` | `/app/config.yaml` | Infrastructure config (mount read-only) |
 | Named volume or `./data/` | `/app/data` | SQLite database |
 | Named volume or `./photos/` | `/app/photos` | Uploaded images |
+| Named volume or `./backups/` | `/app/backups` | Backup archives (see [Backup](#backup)) |
 
 ### Backup
 
@@ -447,13 +470,25 @@ single-shot capture of the entire deployment state.
 ## Upgrading
 
 ```bash
-podman pull ghcr.io/kit3713/resume-site:latest
+# Pin to a specific version for reproducibility (recommended).
+# Re-run cosign verify on the new tag before restarting:
+podman pull ghcr.io/kit3713/resume-site:v0.3.1
+cosign verify \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp 'https://github.com/Kit3713/resume-site/.+' \
+  ghcr.io/kit3713/resume-site:v0.3.1
+
 podman stop resume-site
 podman rm resume-site
 # Re-run your original podman run command (or podman compose up -d)
 ```
 
-Your data and photos persist in volumes. Database migrations (v0.2.0+) will run automatically or via `manage.py migrate`.
+Your data and photos persist in volumes. Pending database migrations
+apply automatically on container start (or via `manage.py migrate`
+inside the running container). For the upgrade-survivability story —
+how the rolling-upgrade replay test works in CI, what the
+`pre-restore-*` sidecars are for, and how to roll back — see
+[`docs/UPGRADE.md`](docs/UPGRADE.md).
 
 ## Private Deployment Fork
 
@@ -487,7 +522,31 @@ CI also runs `pip-audit` on every push to flag known vulnerabilities.
 
 ## Roadmap
 
-See [ROADMAP_v0.2.0.md](ROADMAP_v0.2.0.md) for the full development plan. The original v0.1.0 build phases are documented in [ROADMAP.md](ROADMAP.md).
+The active roadmap is [ROADMAP_v0.3.1.md](ROADMAP_v0.3.1.md) (Keystone — release-publication gate). The successor releases are [v0.3.2 Shield](ROADMAP_v0.3.2.md) and [v0.3.3 Proof](ROADMAP_v0.3.3.md). Historical: [v0.3.0 Forge](ROADMAP_v0.3.0.md), [v0.2.0](ROADMAP_v0.2.0.md), and the original v0.1.0 build [ROADMAP.md](ROADMAP.md).
+
+## Development
+
+You only need a source checkout to **modify** resume-site. To deploy
+or run it, use the GHCR image — see [Quick Start](#quick-start).
+
+```bash
+git clone https://github.com/Kit3713/resume-site.git
+cd resume-site
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+cp config.example.yaml config.yaml
+# Edit config.yaml
+python manage.py init-db
+flask run --debug    # or: python app.py --debug (with RESUME_SITE_DEV=1)
+```
+
+The dev-server entry point in `app.py` is gated behind
+`RESUME_SITE_DEV=1` and an explicit `--debug` flag (Phase 22.1) — the
+Werkzeug debug console is not reachable by accident in production.
+For the full developer workflow (running the test suite, ruff, bandit,
+container build, the upgrade-replay simulation), see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Contributing
 

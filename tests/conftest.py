@@ -40,6 +40,13 @@ def _write_test_config(tmp_path):
         f'database_path: "{db_path}"\n'
         f'photo_storage: "{photos_path}"\n'
         'session_cookie_secure: false\n'  # Tests use HTTP, so disable Secure flag
+        # Phase 22.6: mirror the standard dev setup where the Flask app
+        # sits behind a reverse proxy on 127.0.0.0/8. Admin IP-restriction
+        # tests set X-Forwarded-For to simulate an external client; the
+        # XFF value is only consulted when request.remote_addr (which
+        # Flask's test client hardcodes to 127.0.0.1) is inside this CIDR.
+        'trusted_proxies:\n'
+        '  - "127.0.0.0/8"\n'
         'admin:\n'
         '  username: "admin"\n'
         f'  password_hash: "{pw_hash}"\n'

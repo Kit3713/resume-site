@@ -15,6 +15,23 @@ photo_storage: "photos"
 # plain-HTTP development; keep true in production behind HTTPS.
 session_cookie_secure: true
 
+# Phase 22.6 — reverse-proxy IP allowlist.
+#
+# List the CIDR ranges your reverse proxy lives in. When populated, the
+# admin route will trust ``X-Forwarded-For`` ONLY for inbound TCP
+# connections whose peer IP falls inside one of these networks. Direct
+# inbound requests (no proxy) are always judged by ``remote_addr``.
+#
+# Leave empty ([]) when the app is exposed directly — XFF will then be
+# ignored and the admin IP allowlist is evaluated against the raw
+# remote_addr. For a typical Caddy-on-the-same-host deployment,
+# "127.0.0.0/8" is the right entry.
+#
+# The shared extraction across all five IP-trust callsites (contact
+# rate limit, API rate limit, analytics, /metrics gate, login throttle)
+# lands in v0.3.2 Phase 23.2 — issue #34.
+trusted_proxies: []
+
 # SMTP relay for contact form emails
 smtp:
   host: "smtp.gmail.com"

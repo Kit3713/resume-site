@@ -15,11 +15,26 @@ Description=resume-site portfolio engine
 After=network-online.target
 
 [Container]
-Image=ghcr.io/kit3713/resume-site:latest
+# Phase 35: shipped example pins to the immutable v0.3.1 version tag,
+# not the moving ``:latest`` alias. Pinning means a `podman auto-update`
+# run will NOT roll you forward to a new release without your explicit
+# action — which is the safe default. To opt into rolling auto-upgrades,
+# switch to ``ghcr.io/kit3713/resume-site:latest`` and uncomment the
+# AutoUpdate line below. For maximum reproducibility, pin to the digest
+# form (``ghcr.io/kit3713/resume-site@sha256:...``) — see
+# docs/PRODUCTION.md §3.0 for the verify-then-pin workflow.
+Image=ghcr.io/kit3713/resume-site:v0.3.1
 ContainerName=resume-site
-AutoUpdate=registry
+# AutoUpdate=registry    # only meaningful with a moving tag (:latest)
 
-PublishPort=8080:8080
+# Phase 22.5: bind to 127.0.0.1 only. The container is reachable solely
+# via a reverse proxy on the host (Caddy / nginx / Cloudflare Tunnel).
+# The previous ``PublishPort=8080:8080`` bound to every interface, which
+# — combined with the XFF trust model #16 ships with — would allow a
+# remote attacker to forge ``X-Forwarded-For: 127.0.0.1`` and bypass
+# the admin IP gate. See docs/PRODUCTION.md for the reverse-proxy
+# callout.
+PublishPort=127.0.0.1:8080:8080
 
 Volume=%h/resume-site/config.yaml:/app/config.yaml:ro,Z
 Volume=resume-site-data:/app/data:Z

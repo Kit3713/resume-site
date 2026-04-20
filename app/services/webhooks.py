@@ -47,8 +47,10 @@ from __future__ import annotations
 
 import contextlib
 import hmac
+import ipaddress
 import json
 import logging
+import socket
 import sqlite3
 import threading
 import time
@@ -56,9 +58,186 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from typing import NamedTuple
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 _log = logging.getLogger('app.webhooks')
+
+
+# ---------------------------------------------------------------------------
+# SSRF gate (Phase 22.3)
+#
+# Two-phase defence:
+#
+# 1. At write time, the admin/API routes call :func:`validate_webhook_target`
+#    to reject URLs whose host resolves to loopback, link-local, RFC 1918,
+#    CGNAT, or ULA.
+# 2. At delivery time, :func:`_deliver_and_record` re-resolves the host via
+#    the same helper so a DNS-rebinding attack that presented a public IP
+#    at create time but later swung to a private IP is still blocked.
+#
+# Operators with a genuine need to call an internal service (e.g., a
+# local Slack-bridge container) can set the ``webhook_allow_private_targets``
+# setting to ``true``. Documented as a foot-gun — the toggle is site-wide.
+# ---------------------------------------------------------------------------
+
+#: CIDR ranges the webhook target's resolved IP must NOT fall within.
+#: Covers the families audit issue #19 called out plus ULA (``fc00::/7``,
+#: the v6 analogue of RFC 1918) and ``0.0.0.0/8`` (``this network``),
+#: which would let an attacker smuggle in a socket-level bind trick.
+_SSRF_BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
+    ipaddress.ip_network('127.0.0.0/8'),  # loopback v4
+    ipaddress.ip_network('::1/128'),  # loopback v6
+    ipaddress.ip_network('169.254.0.0/16'),  # link-local v4
+    ipaddress.ip_network('fe80::/10'),  # link-local v6
+    ipaddress.ip_network('10.0.0.0/8'),  # RFC 1918 private v4
+    ipaddress.ip_network('172.16.0.0/12'),  # RFC 1918 private v4
+    ipaddress.ip_network('192.168.0.0/16'),  # RFC 1918 private v4
+    ipaddress.ip_network('100.64.0.0/10'),  # CGNAT (RFC 6598)
+    ipaddress.ip_network('fc00::/7'),  # unique-local v6 (ULA)
+    ipaddress.ip_network('0.0.0.0/8'),  # "this network"
+)
+
+
+def _ip_is_blocked(ip_text: str) -> bool:
+    """Return True when ``ip_text`` falls inside any :data:`_SSRF_BLOCKED_NETWORKS`."""
+    try:
+        ip = ipaddress.ip_address(ip_text)
+    except ValueError:
+        return False
+    return any(ip in net for net in _SSRF_BLOCKED_NETWORKS)
+
+
+def _resolve_target_ips(host: str) -> list[str]:
+    """Return every unique IP ``host`` resolves to (IPv4 + IPv6).
+
+    Raises :class:`socket.gaierror` on resolution failure — callers
+    should treat that as ``unable to validate`` rather than as a pass.
+    """
+    infos = socket.getaddrinfo(host, None)
+    return sorted({info[4][0] for info in infos})
+
+
+def validate_webhook_target(url: str, *, allow_private: bool = False) -> tuple[bool, str]:
+    """Return ``(ok, message)`` after URL parsing and DNS resolution.
+
+    * ``ok=False`` with a message if the URL is malformed, the scheme is
+      not http(s), the host is empty, DNS resolution fails, or **any**
+      resolved IP falls inside :data:`_SSRF_BLOCKED_NETWORKS`.
+    * ``ok=True`` with an empty message otherwise, or unconditionally
+      when ``allow_private`` is true (the operator opted in to private
+      targets via the ``webhook_allow_private_targets`` setting).
+
+    The SSRF check rejects on *any* resolved IP rather than *all* so a
+    DNS record that mixes public and private addresses (a common
+    DNS-rebinding staging trick) can't slip through.
+    """
+    if not url:
+        return False, 'URL is required'
+    parsed = urlparse(url)
+    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        return False, 'URL must be a valid http(s) address'
+    host = parsed.hostname
+    if not host:
+        return False, 'URL must include a hostname'
+    if allow_private:
+        return True, ''
+    # Fast-path rejection for URL hosts that are already literal IPs — no
+    # DNS round-trip needed, and DNS-rebinding can't apply. This also
+    # covers bracketed IPv6 hosts (``parsed.hostname`` strips the
+    # brackets).
+    with contextlib.suppress(ValueError):
+        literal_ip = ipaddress.ip_address(host)
+        if _ip_is_blocked(str(literal_ip)):
+            return (
+                False,
+                (
+                    f'webhook target {host!r} is in a loopback / private / '
+                    f'CGNAT / link-local range. Enable '
+                    f'`webhook_allow_private_targets` in Settings only if '
+                    f'you intentionally dispatch to an internal service.'
+                ),
+            )
+        # Literal public IP — no further DNS check needed.
+        return True, ''
+    try:
+        ips = _resolve_target_ips(host)
+    except socket.gaierror:
+        # Unresolvable *at this moment* is treated as pass at create time.
+        # A legitimate transient DNS outage shouldn't block an operator
+        # from saving a row; and a delivery-time re-resolution is what
+        # actually guards the outbound request from ever reaching an
+        # internal endpoint. ``deliver_now`` carries the real enforcement.
+        return True, ''
+    if not ips:
+        return True, ''
+    for ip in ips:
+        if _ip_is_blocked(ip):
+            return (
+                False,
+                (
+                    f'webhook target {host!r} resolves to {ip}, which is in a '
+                    f'loopback / private / CGNAT range. Enable '
+                    f'`webhook_allow_private_targets` in Settings only if you '
+                    f'intentionally dispatch to an internal service.'
+                ),
+            )
+    return True, ''
+
+
+# ---------------------------------------------------------------------------
+# No-redirect urlopen (Phase 22.3)
+#
+# Default ``urllib.request.urlopen`` silently follows 3xx responses via
+# ``HTTPRedirectHandler``. That turns an attacker-controlled redirect into a
+# fresh SSRF: an operator creates a webhook pointing at a legitimate service,
+# the service later responds ``302`` with a ``Location: http://169.254.169.254/latest/...``,
+# and delivery thread fetches internal metadata.
+#
+# We install a custom :class:`HTTPRedirectHandler` whose ``http_error_3xx``
+# hooks raise :class:`HTTPError` instead of returning a new ``Request``. The
+# existing ``except HTTPError`` branch in :func:`deliver_now` catches the
+# raise and records it as a failed delivery with the 3xx status code intact.
+#
+# The module symbol ``urlopen`` is redefined below so existing tests that
+# monkeypatch ``app.services.webhooks.urlopen`` keep working unchanged.
+# ---------------------------------------------------------------------------
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    """Refuse to follow 3xx responses — see Phase 22.3 comment above."""
+
+    def http_error_301(self, req, fp, code, msg, headers):
+        # Raising HTTPError preserves the status code and headers, which is
+        # exactly what the delivery log wants to record.
+        raise HTTPError(
+            req.full_url,
+            code,
+            f'refused redirect ({code}) — webhooks must POST to the declared URL',
+            headers,
+            fp,
+        )
+
+    http_error_302 = http_error_301
+    http_error_303 = http_error_301
+    http_error_307 = http_error_301
+    http_error_308 = http_error_301
+
+
+_no_redirect_opener = build_opener(_NoRedirectHandler())
+
+
+def urlopen(request, timeout=None):
+    """Webhook-scoped urlopen that refuses 3xx redirects.
+
+    Kept module-level so the long-standing test pattern
+    ``monkeypatch.setattr('app.services.webhooks.urlopen', ...)`` keeps
+    working unchanged. Production callers route through the custom
+    :class:`_NoRedirectHandler` by default.
+    """
+    # noqa: S310 / B310 — outbound URL is operator-supplied, see deliver_now docstring.
+    return _no_redirect_opener.open(request, timeout=timeout)  # noqa: S310
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -400,13 +579,43 @@ def _build_envelope(event_name, payload):
 
 
 def deliver_now(
-    webhook: Webhook, event_name: str, payload: dict, *, timeout: int = 5
+    webhook: Webhook,
+    event_name: str,
+    payload: dict,
+    *,
+    timeout: int = 5,
+    allow_private: bool = True,
 ) -> DeliveryResult:
     """Synchronously POST ``payload`` to ``webhook.url`` and return the result.
 
     Never raises — every failure mode is captured in the returned
     :class:`DeliveryResult` (status_code 0 for network errors / timeouts).
+
+    The ``allow_private`` kwarg defaults to ``True`` to keep narrow unit
+    tests of this function backward-compatible; production callers go
+    through :func:`_deliver_and_record`, which reads the operator's
+    ``webhook_allow_private_targets`` setting (default ``false``) and
+    passes the correct value. With ``allow_private=False`` the host is
+    re-resolved at delivery time and a private/loopback resolution
+    aborts the request with a clear error instead of being sent.
     """
+    # Re-resolve target IP at delivery time (Phase 22.3). Short-circuits
+    # an SSRF attempt that flipped DNS between create-time validation
+    # and delivery. Unresolvable hosts pass through to urlopen so the
+    # network error lands in the delivery log naturally; a resolution
+    # that lands inside a blocked range fails fast without ever
+    # sending the POST.
+    if not allow_private:
+        ok, msg = validate_webhook_target(webhook.url, allow_private=False)
+        if not ok:
+            return DeliveryResult(
+                webhook_id=webhook.id,
+                event=event_name,
+                status_code=0,
+                response_time_ms=0,
+                error=f'SSRF guard: {msg}',
+            )
+
     body = _build_envelope(event_name, payload)
     request = Request(  # noqa: S310  # nosec B310 — operator-supplied URL is the entire point of the feature
         webhook.url,
@@ -436,9 +645,10 @@ def deliver_now(
                 error='',
             )
     except HTTPError as exc:
-        # Server reachable but returned >=400. The status code is
-        # meaningful — record it rather than collapsing to 0 like the
-        # network-error branch.
+        # Server reachable but returned >=400 *or* 3xx (our
+        # _NoRedirectHandler raises rather than following). The status
+        # code is meaningful — record it rather than collapsing to 0
+        # like the network-error branch.
         elapsed_ms = int((time.monotonic() - start) * 1000)
         return DeliveryResult(
             webhook_id=webhook.id,
@@ -464,7 +674,16 @@ def deliver_now(
 # ---------------------------------------------------------------------------
 
 
-def _deliver_and_record(db_path, webhook_id, event_name, payload, *, timeout, threshold):
+def _deliver_and_record(
+    db_path,
+    webhook_id,
+    event_name,
+    payload,
+    *,
+    timeout,
+    threshold,
+    allow_private,
+):
     """Worker function: open a fresh DB connection, deliver, log, update.
 
     Runs on a daemon thread spawned by :func:`dispatch_event_async`.
@@ -480,7 +699,9 @@ def _deliver_and_record(db_path, webhook_id, event_name, payload, *, timeout, th
             webhook = get_webhook(conn, webhook_id)
             if webhook is None or not webhook.enabled:
                 return  # raced with admin delete / disable
-            result = deliver_now(webhook, event_name, payload, timeout=timeout)
+            result = deliver_now(
+                webhook, event_name, payload, timeout=timeout, allow_private=allow_private
+            )
             record_delivery(conn, result)
             ok = 200 <= result.status_code < 300
             if ok:
@@ -515,6 +736,7 @@ def dispatch_event_async(
     *,
     timeout: int = 5,
     threshold: int = 10,
+    allow_private: bool = False,
     _join_for_tests: bool = False,
 ) -> list[threading.Thread]:
     """Find matching enabled webhooks and spawn one daemon thread per delivery.
@@ -522,6 +744,11 @@ def dispatch_event_async(
     ``_join_for_tests`` is an undocumented kwarg used by the test suite
     to wait for every spawned thread to finish before assertions run.
     Production callers must NOT pass it — it negates the async-ness.
+
+    ``allow_private`` flows through to :func:`deliver_now` so its
+    re-resolution SSRF check can be disabled for the rare operator who
+    genuinely dispatches to an internal service
+    (``webhook_allow_private_targets`` setting, default ``false``).
 
     Returns the list of started ``threading.Thread`` objects so test
     helpers can ``join()`` them; production callers should ignore the
@@ -543,7 +770,11 @@ def dispatch_event_async(
         thread = threading.Thread(
             target=_deliver_and_record,
             args=(db_path, webhook.id, event_name, payload),
-            kwargs={'timeout': timeout, 'threshold': threshold},
+            kwargs={
+                'timeout': timeout,
+                'threshold': threshold,
+                'allow_private': allow_private,
+            },
             daemon=True,
             name=f'webhook-{webhook.id}-{event_name}',
         )
@@ -563,26 +794,29 @@ def dispatch_event_async(
 
 
 def _settings_snapshot(db_path):
-    """Read the three webhook-related settings without touching Flask.
+    """Read the four webhook-related settings without touching Flask.
 
-    Returns ``(enabled: bool, timeout: int, threshold: int)``. Falls
+    Returns ``(enabled, timeout, threshold, allow_private)``. Falls
     back to safe defaults on any error so the bus handler never raises
-    inside the dispatcher.
+    inside the dispatcher. ``allow_private`` defaults to ``False`` so
+    an unreadable settings table cannot silently disable the SSRF guard.
     """
     enabled = False
     timeout = 5
     threshold = 10
+    allow_private = False
     try:
         conn = sqlite3.connect(db_path, timeout=5)
         try:
             rows = conn.execute(
                 'SELECT key, value FROM settings WHERE key IN '
-                "('webhooks_enabled', 'webhook_timeout_seconds', 'webhook_failure_threshold')"
+                "('webhooks_enabled', 'webhook_timeout_seconds', "
+                "'webhook_failure_threshold', 'webhook_allow_private_targets')"
             ).fetchall()
         finally:
             conn.close()
     except Exception:  # noqa: BLE001 — settings unreachable → behave as disabled
-        return False, timeout, threshold
+        return False, timeout, threshold, False
 
     for key, value in rows:
         if key == 'webhooks_enabled':
@@ -593,7 +827,9 @@ def _settings_snapshot(db_path):
         elif key == 'webhook_failure_threshold':
             with contextlib.suppress(TypeError, ValueError):
                 threshold = max(0, int(value))
-    return enabled, timeout, threshold
+        elif key == 'webhook_allow_private_targets':
+            allow_private = str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+    return enabled, timeout, threshold, allow_private
 
 
 def register_bus_handlers(db_path: str) -> None:
@@ -632,7 +868,7 @@ def register_bus_handlers(db_path: str) -> None:
 
     def _make_handler(event_name):
         def _handler(**payload):
-            enabled, timeout, threshold = _settings_snapshot(db_path)
+            enabled, timeout, threshold, allow_private = _settings_snapshot(db_path)
             if not enabled:
                 return
             dispatch_event_async(
@@ -641,6 +877,7 @@ def register_bus_handlers(db_path: str) -> None:
                 payload,
                 timeout=timeout,
                 threshold=threshold,
+                allow_private=allow_private,
             )
 
         # Tags so re-registration can find and remove our previous closures.

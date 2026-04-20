@@ -12,8 +12,11 @@
     <!-- Upload Form -->
     <div class="admin-section">
         <h2 class="admin-section__title">{{ _('Upload New Photo') }}</h2>
-        <form method="POST" action="{{ url_for('admin.photos_upload') }}" enctype="multipart/form-data" class="admin-form admin-form--inline">
+        <form method="POST" action="{{ url_for('admin.photos_upload') }}" enctype="multipart/form-data" class="admin-form admin-form--inline" id="photo-upload-form">
             <div class="form-group">
+                <div id="photo-dropzone" class="photo-dropzone" aria-hidden="true">
+                    <span class="photo-dropzone__hint">{{ _('Drag an image here or use the file picker below') }}</span>
+                </div>
                 <input type="file" name="photo" accept="image/*" class="form-input" required id="photo-input">
                 <img id="photo-preview" style="display:none;max-height:120px;margin-top:0.5rem;border-radius:8px" alt="Preview">
             </div>
@@ -125,6 +128,49 @@ if (photoInput && preview) {
         } else {
             preview.style.display = 'none';
         }
+    });
+}
+
+// Drag-and-drop upload zone (Phase 36.2).
+// Progressive enhancement: falls back to the native <input type="file"> when
+// DataTransfer is unavailable (old browsers) or JS is disabled — the file
+// input remains the functional primary.
+var dropzone = document.getElementById('photo-dropzone');
+if (dropzone && photoInput && 'DataTransfer' in window) {
+    dropzone.style.display = 'block';
+    dropzone.setAttribute('aria-hidden', 'false');
+
+    var preventDefaults = function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    };
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(function(evt) {
+        dropzone.addEventListener(evt, preventDefaults);
+    });
+    ['dragenter', 'dragover'].forEach(function(evt) {
+        dropzone.addEventListener(evt, function() {
+            dropzone.classList.add('photo-dropzone--active');
+        });
+    });
+    ['dragleave', 'drop'].forEach(function(evt) {
+        dropzone.addEventListener(evt, function() {
+            dropzone.classList.remove('photo-dropzone--active');
+        });
+    });
+    dropzone.addEventListener('drop', function(e) {
+        var dt = e.dataTransfer;
+        if (!dt || !dt.files || !dt.files.length) return;
+        var file = dt.files[0];
+        if (!file.type.startsWith('image/')) return;
+        // Re-hydrate a DataTransfer so the <input> accepts the dropped file.
+        var container = new DataTransfer();
+        container.items.add(file);
+        photoInput.files = container.files;
+        // Fire a synthetic change event so the preview handler above picks it up.
+        photoInput.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    dropzone.addEventListener('click', function() {
+        photoInput.click();
     });
 }
 

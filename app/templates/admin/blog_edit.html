@@ -74,6 +74,8 @@
                 <label class="form-label" for="cover_image">{{ _('Cover Image URL') }}</label>
                 <input type="text" id="cover_image" name="cover_image" class="form-input"
                        value="{{ post.cover_image if post else '' }}" placeholder="/photos/abc123.jpg">
+                <img id="cover-preview" alt="{{ _('Cover preview') }}"
+                     style="display:none;max-height:120px;margin-top:0.5rem;border-radius:8px">
             </div>
 
             <div class="form-group">
@@ -124,5 +126,28 @@
     document.getElementById('blogForm').addEventListener('submit', function() {
         document.getElementById('contentInput').value = quill.root.innerHTML;
     });
+
+    // Cover image live preview (Phase 36.2) — mirrors the photo-upload preview.
+    // The cover_image field stores a URL string rather than a file blob, so the
+    // preview reacts to input changes; an onerror handler hides the thumbnail
+    // when the URL fails to resolve so the admin sees the failure immediately.
+    var coverInput = document.getElementById('cover_image');
+    var coverPreview = document.getElementById('cover-preview');
+    if (coverInput && coverPreview) {
+        var updateCoverPreview = function() {
+            var val = coverInput.value.trim();
+            if (val) {
+                coverPreview.src = val;
+                coverPreview.style.display = 'block';
+            } else {
+                coverPreview.style.display = 'none';
+            }
+        };
+        coverPreview.addEventListener('error', function() {
+            coverPreview.style.display = 'none';
+        });
+        coverInput.addEventListener('input', updateCoverPreview);
+        updateCoverPreview();
+    }
 </script>
 {% endblock %}

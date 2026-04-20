@@ -78,20 +78,57 @@ admin_bp = Blueprint('admin', __name__, template_folder='../templates')
 # ============================================================
 
 
+def _parse_cidr_list(entries):
+    """Translate a list / string of CIDR strings into ip_network objects.
+
+    Tolerant of None, empty, and malformed entries — malformed items are
+    skipped silently so a single typo can't crash every admin request.
+    Used by :func:`restrict_to_allowed_networks` to load the
+    ``trusted_proxies`` config.yaml entry.
+    """
+    if not entries:
+        return []
+    if isinstance(entries, str):
+        entries = [entries]
+    nets = []
+    for raw in entries:
+        try:
+            nets.append(ipaddress.ip_network(str(raw).strip(), strict=False))
+        except ValueError:
+            continue
+    return nets
+
+
 @admin_bp.before_request
 def restrict_to_allowed_networks():
     """Block admin access from IPs outside the configured allowed networks.
 
-    Runs before every admin route. Reads the client IP from X-Forwarded-For
-    (set by the Caddy reverse proxy) and checks it against the CIDR ranges
-    defined in config.yaml's admin.allowed_networks.
+    Runs before every admin route. Reads the client IP and checks it
+    against the CIDR ranges defined in ``config.yaml`` under
+    ``admin.allowed_networks``.
+
+    Phase 22.6 — #16 XFF-trust interim fix
+    --------------------------------------
+    ``X-Forwarded-For`` is only consulted when the TCP-level peer
+    (``request.remote_addr``) is inside the ``trusted_proxies`` CIDR
+    list in ``config.yaml``. A direct inbound request skips XFF
+    entirely, so an attacker that reaches the container directly
+    (bypassing Caddy) cannot forge ``X-Forwarded-For: 127.0.0.1`` to
+    pretend to be a local admin.
 
     Security notes:
-    - Trusts X-Forwarded-For because the app runs behind Caddy (the container
-      port is not directly exposed to the internet).
-    - Takes the leftmost IP from X-Forwarded-For (the original client).
-    - Fails closed: unparseable IPs get 403, malformed network entries are skipped.
-    - Uses Python's ipaddress module for CIDR matching (no external dependencies).
+    - Takes the leftmost IP from X-Forwarded-For (the original client),
+      but only when the request came from a trusted proxy.
+    - Fails closed: unparseable IPs get 403, malformed network entries
+      are skipped.
+    - Uses Python's ``ipaddress`` module for CIDR matching (no external
+      dependencies).
+
+    TODO(v0.3.2 Phase 23.2): the same logic lives verbatim in the
+    contact rate limit, API rate limit, analytics, ``/metrics`` access
+    control, and the login throttle — see audit issue #34. v0.3.1
+    ships the immediate fix here; the full extraction into a shared
+    ``get_client_ip()`` helper lands in v0.3.2.
     """
     config = current_app.config['SITE_CONFIG']
     allowed = config.get('admin', {}).get('allowed_networks', [])
@@ -100,10 +137,22 @@ def restrict_to_allowed_networks():
     if not allowed:
         return
 
-    # Extract the real client IP from the proxy chain
-    client_ip_str = request.headers.get('X-Forwarded-For', request.remote_addr)
-    if client_ip_str and ',' in client_ip_str:
-        client_ip_str = client_ip_str.split(',')[0].strip()
+    trusted_proxies = _parse_cidr_list(config.get('trusted_proxies'))
+    direct_ip_str = request.remote_addr or ''
+    forwarded_raw = request.headers.get('X-Forwarded-For')
+
+    # Default: trust only the TCP peer. Only swap to XFF when the peer
+    # is itself a trusted proxy.
+    client_ip_str = direct_ip_str
+    if forwarded_raw and trusted_proxies:
+        try:
+            direct_ip = ipaddress.ip_address(direct_ip_str)
+        except (ValueError, TypeError):
+            direct_ip = None
+        if direct_ip is not None and any(direct_ip in net for net in trusted_proxies):
+            first = forwarded_raw.split(',')[0].strip()
+            if first:
+                client_ip_str = first
 
     # Parse the client IP (fail closed on invalid values)
     try:
@@ -433,6 +482,37 @@ def dashboard():
         pass
     total_errors = sum(error_summary.values())
 
+    # Translation completeness matrix (Phase 36.3). Reads the
+    # ``available_locales`` setting and produces one aggregate query per
+    # translatable content type. Wrapped defensively so a missing junction
+    # table (pre-migration-011 deployments) never breaks the dashboard.
+    translation_matrix: list = []
+    translation_locales: list[str] = []
+    try:
+        from app.services.settings_svc import get_all_cached as _get_settings_cached
+        from app.services.translations import get_coverage_matrix
+
+        settings_row = _get_settings_cached(db, current_app.config['DATABASE_PATH'])
+        default_locale = (settings_row.get('default_locale') or 'en').strip() or 'en'
+        raw_locales = settings_row.get('available_locales') or default_locale
+        translation_locales = [loc.strip() for loc in raw_locales.split(',') if loc.strip()]
+        if default_locale not in translation_locales:
+            translation_locales.insert(0, default_locale)
+        translation_matrix = get_coverage_matrix(db, translation_locales, default_locale)
+    except Exception:  # noqa: BLE001 — diagnostic widget, never break the dashboard
+        translation_matrix = []
+        translation_locales = []
+
+    # In-app alerting widget (Phase 36.5). Reads the parsed alerting-rules.yaml
+    # thresholds (cached at app startup) and compares them against the same
+    # in-memory counters the "Errors (since restart)" card already consumes.
+    try:
+        from app.services.alerting import get_active_alerts
+
+        active_alerts = get_active_alerts(error_summary)
+    except Exception:  # noqa: BLE001 — never break the dashboard
+        active_alerts = []
+
     return render_template(
         'admin/dashboard.html',
         total_views=total_views,
@@ -449,6 +529,9 @@ def dashboard():
         recent_backups=recent_backups,
         total_errors=total_errors,
         error_summary=error_summary,
+        translation_matrix=translation_matrix,
+        translation_locales=translation_locales,
+        active_alerts=active_alerts,
     )
 
 
@@ -570,12 +653,11 @@ def photos_upload():
         ),
     )
     db.commit()
-    with contextlib.suppress(Exception):
-        log_action(db, 'Uploaded photo', 'photos', title or result['filename'])
 
-    # Phase 19.1 event bus — fire `photo.uploaded` so subscribers can
-    # react (e.g. webhook to a CDN purge, image-recognition pipeline).
-    # Mirrors the API-side emission in app.routes.api.portfolio_create.
+    # Phase 19.1 event bus + Phase 36.7 subscribers — emitting
+    # ``photo.uploaded`` now drives both the activity-log entry and the
+    # Prometheus-style counter via ``app.services.event_subscribers``.
+    # Mirrors the API-side emission in ``app.routes.api.portfolio_create``.
     from app.events import Events as _Events
     from app.events import emit as _emit
 
@@ -818,16 +900,23 @@ def api_tokens_generate():
         token_id=result.id,
     )
 
-    # Stash the raw value for a one-time reveal on the next GET. The
-    # session cookie is signed + same-origin, and we pop the key on
-    # read, so refresh / back-button do not re-show the token.
-    session['_api_token_reveal'] = {
-        'id': result.id,
-        'raw': result.raw,
-        'name': result.name,
-        'scope': result.scope,
-        'expires_at': result.expires_at or '',
-    }
+    # Phase 22.4 — the raw token never lands in the Flask session cookie
+    # (signed, not encrypted). Stash it in ``api_token_reveals`` keyed by
+    # a random reveal_id; put only the reveal_id in the session.
+    from app.services.api_token_reveals import create_reveal, prune_expired_reveals
+
+    prune_expired_reveals(db)
+    reveal_id = create_reveal(
+        db,
+        token_id=result.id,
+        raw=result.raw,
+        name=result.name,
+        scope=result.scope,
+        token_expires_at=result.expires_at or '',
+    )
+    # Drop any legacy cookie slot carried over from a pre-22.4 session.
+    session.pop('_api_token_reveal', None)
+    session['_api_token_reveal_id'] = reveal_id
     return redirect(url_for('admin.api_tokens_reveal'))
 
 
@@ -836,18 +925,51 @@ def api_tokens_generate():
 def api_tokens_reveal():
     """Display a freshly-generated token exactly once.
 
-    The session slot populated by :func:`api_tokens_generate` is popped
-    on read — a refresh or back-button returns to the token list with
-    no token shown.
+    Phase 22.4: the raw token lives in a server-side
+    ``api_token_reveals`` row keyed by the ``reveal_id`` stashed in the
+    session. Look-up / delete / expiry-check are atomic in
+    :func:`consume_reveal` — a second GET, browser refresh, or back
+    button lands on the missing-row branch.
     """
-    data = session.pop('_api_token_reveal', None)
-    if not data:
+    from app.services.api_token_reveals import consume_reveal, prune_expired_reveals
+
+    db = get_db()
+    reveal_id = session.pop('_api_token_reveal_id', None)
+    # Also drop any pre-22.4 session slot that a long-lived session
+    # might still carry (the plaintext-in-cookie shape).
+    session.pop('_api_token_reveal', None)
+    # Consume must run *before* the prune so the status/expiry check
+    # for the caller's own reveal row isn't pre-empted by the bulk
+    # DELETE. Prune runs afterwards as opportunistic cleanup of any
+    # other rows whose TTL lapsed while the admin was idle.
+    status, payload = consume_reveal(db, reveal_id or '')
+    prune_expired_reveals(db)
+    if status == 'expired':
+        # 410 Gone is the semantically correct status for a resource
+        # that existed but is now permanently unavailable — matches the
+        # contract the #58 audit finding documented.
+        return (
+            render_template(
+                'admin/api_tokens_reveal.html',
+                token=None,
+                expired=True,
+            ),
+            410,
+        )
+    if status != 'ok' or payload is None:
         flash(
             _('No token to reveal. Generate a new one from the API Tokens page.'),
             'info',
         )
         return redirect(url_for('admin.api_tokens'))
-    return render_template('admin/api_tokens_reveal.html', token=data)
+    token_ctx = {
+        'id': payload.token_id,
+        'raw': payload.raw,
+        'name': payload.name,
+        'scope': payload.scope,
+        'expires_at': payload.token_expires_at or '',
+    }
+    return render_template('admin/api_tokens_reveal.html', token=token_ctx, expired=False)
 
 
 @admin_bp.route('/api-tokens/<int:token_id>/revoke', methods=['POST'])
@@ -941,7 +1063,8 @@ def webhooks():
 @login_required
 def webhooks_create():
     """Create a new webhook subscription."""
-    from app.services.webhooks import create_webhook
+    from app.services.settings_svc import get as get_setting
+    from app.services.webhooks import create_webhook, validate_webhook_target
 
     db = get_db()
     name = (request.form.get('name') or '').strip()
@@ -956,9 +1079,19 @@ def webhooks_create():
     if not url:
         flash(_('URL is required.'), 'error')
         return redirect(url_for('admin.webhooks'))
-    parsed = urlparse(url)
-    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
-        flash(_('URL must be a valid http(s) address.'), 'error')
+    # Phase 22.3 — SSRF gate. Reject loopback / private / link-local /
+    # CGNAT / ULA targets unless the operator has opted in via the
+    # `webhook_allow_private_targets` setting. DNS-resolves the host
+    # now; delivery-time code re-resolves to defeat DNS rebinding.
+    allow_private = get_setting(db, 'webhook_allow_private_targets', 'false').strip().lower() in {
+        '1',
+        'true',
+        'yes',
+        'on',
+    }
+    ok, msg = validate_webhook_target(url, allow_private=allow_private)
+    if not ok:
+        flash(msg, 'error')
         return redirect(url_for('admin.webhooks'))
 
     wh_id = create_webhook(
@@ -988,7 +1121,8 @@ def webhooks_update(webhook_id):
     masks the existing secret so an operator can rotate it without
     being able to read it back).
     """
-    from app.services.webhooks import get_webhook, update_webhook
+    from app.services.settings_svc import get as get_setting
+    from app.services.webhooks import get_webhook, update_webhook, validate_webhook_target
 
     db = get_db()
     existing = get_webhook(db, webhook_id)
@@ -1002,9 +1136,12 @@ def webhooks_update(webhook_id):
     if 'url' in request.form:
         url = (request.form.get('url') or '').strip()
         if url:
-            parsed = urlparse(url)
-            if parsed.scheme not in ('http', 'https') or not parsed.netloc:
-                flash(_('URL must be a valid http(s) address.'), 'error')
+            allow_private = get_setting(
+                db, 'webhook_allow_private_targets', 'false'
+            ).strip().lower() in {'1', 'true', 'yes', 'on'}
+            ok, msg = validate_webhook_target(url, allow_private=allow_private)
+            if not ok:
+                flash(msg, 'error')
                 return redirect(url_for('admin.webhooks'))
             fields['url'] = url
     if 'events' in request.form:
@@ -1281,6 +1418,61 @@ def theme():
     )
 
 
+def _validate_custom_nav_links(raw):
+    """Parse + validate the ``custom_nav_links`` JSON field (Phase 22.2 #17).
+
+    Returns ``(ok, cleaned_json, error_message)``:
+
+    * ``ok=True``  — the JSON parses, every entry's ``url`` matches
+      :func:`app.services.content.validate_safe_url`, and the result
+      has at most 10 entries. ``cleaned_json`` is the serialised form
+      (with stripped whitespace / reordered keys) that should be
+      written to the settings table.
+    * ``ok=False`` — JSON is malformed or at least one entry carries
+      an unsafe URL. ``error_message`` is the user-visible flash.
+
+    Empty string is treated as "no custom links" and accepted — the
+    default-locale nav shows the built-in items.
+    """
+    import json as _json
+
+    from app.services.content import validate_safe_url
+
+    if raw is None:
+        return True, '', ''
+    text = (raw or '').strip()
+    if not text:
+        return True, '', ''
+    try:
+        parsed = _json.loads(text)
+    except ValueError as exc:
+        return False, text, f'custom_nav_links is not valid JSON: {exc}'
+    if not isinstance(parsed, list):
+        return False, text, 'custom_nav_links must be a JSON array.'
+    if len(parsed) > 10:
+        return False, text, 'custom_nav_links accepts at most 10 entries.'
+    cleaned = []
+    for idx, entry in enumerate(parsed):
+        if not isinstance(entry, dict):
+            return False, text, f'custom_nav_links entry #{idx + 1} is not an object.'
+        url = str(entry.get('url', '')).strip()
+        if not validate_safe_url(url):
+            return (
+                False,
+                text,
+                (
+                    f'custom_nav_links entry #{idx + 1} has an unsafe URL '
+                    f'({url!r}). Only http(s):// , mailto: , and /-relative '
+                    f'paths are accepted — scheme-relative // and '
+                    f'javascript: / data: / vbscript: are rejected.'
+                ),
+            )
+        label = str(entry.get('label', '')).strip()[:120]
+        new_tab = bool(entry.get('new_tab'))
+        cleaned.append({'label': label, 'url': url, 'new_tab': new_tab})
+    return True, _json.dumps(cleaned), ''
+
+
 @admin_bp.route('/settings', methods=['GET', 'POST'])
 @login_required
 def settings():
@@ -1288,7 +1480,31 @@ def settings():
     db = get_db()
 
     if request.method == 'POST':
-        save_settings(db, request.form)
+        # Phase 22.2 (#17) — validate custom_nav_links BEFORE the
+        # generic save_settings call so a bad entry is rejected with a
+        # 400 and a user-visible error, not silently written into the
+        # DB. A valid payload is re-serialised canonically so later
+        # read paths see the cleaned-up shape.
+        nav_raw = request.form.get('custom_nav_links')
+        if nav_raw is not None:
+            ok, cleaned, err = _validate_custom_nav_links(nav_raw)
+            if not ok:
+                flash(err, 'error')
+                grouped = get_grouped_settings(db)
+                all_settings = get_all_settings_svc(db)
+                return (
+                    render_template(
+                        'admin/settings.html',
+                        settings=all_settings,
+                        grouped=grouped,
+                    ),
+                    400,
+                )
+            form_data = request.form.copy()
+            form_data.setlist('custom_nav_links', [cleaned])
+        else:
+            form_data = request.form
+        save_settings(db, form_data)
         with contextlib.suppress(Exception):
             log_action(db, 'Updated settings', 'settings')
 
@@ -1374,6 +1590,43 @@ _SEARCH_TYPE_URLS = {
 }
 
 
+#: Phase 22.2 (#44) — unique sentinels fed to SQLite's snippet() so we can
+#: tell the FTS-supplied highlight marks apart from attacker-controlled
+#: ``<mark>`` bytes that might live inside the indexed content. The
+#: sentinels contain characters that can never appear in either HTML or
+#: an attacker's search hit (the `^` + random token bytes are chosen so
+#: no legitimate text contains them).
+_SEARCH_SNIPPET_START = '\x02mark_start_2cc2\x02'
+_SEARCH_SNIPPET_END = '\x02mark_end_2cc2\x02'
+
+
+def _render_search_snippet(raw_snippet):
+    """Escape a FTS5 snippet and then re-inject the highlight marks.
+
+    SQLite's ``snippet()`` returns a string that interleaves attacker-
+    controlled text (indexed review / blog body) with our sentinel
+    delimiters. Passing that verbatim through ``| safe`` was the
+    audit-called-out XSS (#44): a review containing ``<script>...``
+    would render as live script. Autoescape alone would defang the
+    XSS but also destroy the highlight markup.
+
+    Strategy: escape the whole string (defangs everything attacker-
+    controlled), then replace the sentinels with real ``<mark>`` /
+    ``</mark>`` markup, and wrap in ``Markup`` so Jinja renders the
+    final HTML without re-escaping.
+    """
+    from markupsafe import Markup, escape
+
+    escaped = str(escape(raw_snippet))
+    escaped = escaped.replace(escape(_SEARCH_SNIPPET_START), '<mark>')
+    escaped = escaped.replace(escape(_SEARCH_SNIPPET_END), '</mark>')
+    # Attacker-controlled bytes were already escaped above; the only
+    # unescaped HTML substrings are the server-controlled ``<mark>``
+    # markers. Marking the result safe is therefore the intentional
+    # result — the alternative is losing highlight markup entirely.
+    return Markup(escaped)  # noqa: S704  # nosec B704 — pre-escaped, delimiters server-constant
+
+
 @admin_bp.route('/search')
 @login_required
 def search():
@@ -1384,9 +1637,10 @@ def search():
         db = get_db()
         try:
             rows = db.execute(
-                'SELECT content_type, content_id, title, snippet(search_index, 3, "<mark>", "</mark>", "…", 32) AS snippet '
+                'SELECT content_type, content_id, title, '
+                'snippet(search_index, 3, ?, ?, "…", 32) AS snippet '
                 'FROM search_index WHERE search_index MATCH ? ORDER BY rank LIMIT 50',
-                (q,),
+                (_SEARCH_SNIPPET_START, _SEARCH_SNIPPET_END, q),
             ).fetchall()
             for row in rows:
                 results.append(
@@ -1394,7 +1648,7 @@ def search():
                         'type': row['content_type'],
                         'id': row['content_id'],
                         'title': row['title'],
-                        'snippet': row['snippet'],
+                        'snippet': _render_search_snippet(row['snippet']),
                     }
                 )
         except Exception:  # noqa: BLE001, S110 — FTS5 table may not exist yet

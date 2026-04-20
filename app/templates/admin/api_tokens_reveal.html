@@ -6,9 +6,26 @@
 {% block content %}
 <div class="admin-page">
     <div class="admin-page__header">
-        <h1 class="admin-page__title">{{ _('API Token Generated') }}</h1>
+        <h1 class="admin-page__title">
+            {% if expired %}{{ _('API Token Reveal Expired') }}{% else %}{{ _('API Token Generated') }}{% endif %}
+        </h1>
     </div>
 
+    {% if expired %}
+    {# Phase 22.4: the reveal row's 5-minute TTL elapsed before the admin
+       opened this page. Serve 410 Gone so the operator must rotate or
+       regenerate — the raw token is already unrecoverable. #}
+    <div class="admin-section admin-section--warning">
+        <p>
+            <strong>{{ _('This one-time reveal has expired.') }}</strong>
+            {{ _('The raw token was only cached server-side for five minutes after generation. Rotate or regenerate the token to display a fresh value.') }}
+        </p>
+    </div>
+
+    <div class="admin-section">
+        <a href="{{ url_for('admin.api_tokens') }}" class="btn btn--primary btn--sm">{{ _('Back to API Tokens') }}</a>
+    </div>
+    {% else %}
     <div class="admin-section admin-section--warning">
         <p>
             <strong>{{ _('Save this token now.') }}</strong>
@@ -43,29 +60,30 @@
     <div class="admin-section">
         <a href="{{ url_for('admin.api_tokens') }}" class="btn btn--primary btn--sm">{{ _('Back to API Tokens') }}</a>
     </div>
-</div>
 
-<script nonce="{{ csp_nonce }}">
-(function () {
-    var btn = document.getElementById('api-token-copy');
-    var code = document.getElementById('api-token-reveal');
-    if (!btn || !code) return;
-    btn.addEventListener('click', function () {
-        var raw = code.getAttribute('data-token') || code.textContent;
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(raw).then(function () {
-                var original = btn.textContent;
-                btn.textContent = '{{ _('Copied') }}';
-                setTimeout(function () { btn.textContent = original; }, 1500);
-            });
-        } else {
-            var range = document.createRange();
-            range.selectNodeContents(code);
-            var sel = window.getSelection();
-            sel.removeAllRanges();
-            sel.addRange(range);
-        }
-    });
-})();
-</script>
+    <script nonce="{{ csp_nonce }}">
+    (function () {
+        var btn = document.getElementById('api-token-copy');
+        var code = document.getElementById('api-token-reveal');
+        if (!btn || !code) return;
+        btn.addEventListener('click', function () {
+            var raw = code.getAttribute('data-token') || code.textContent;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(raw).then(function () {
+                    var original = btn.textContent;
+                    btn.textContent = '{{ _('Copied') }}';
+                    setTimeout(function () { btn.textContent = original; }, 1500);
+                });
+            } else {
+                var range = document.createRange();
+                range.selectNodeContents(code);
+                var sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+        });
+    })();
+    </script>
+    {% endif %}
+</div>
 {% endblock %}

@@ -16,11 +16,27 @@
 
 services:
   resume-site:
-    image: ghcr.io/kit3713/resume-site:latest
+    # Phase 35: shipped example pins to the immutable v0.3.1 version
+    # tag, not the moving ``:latest`` alias. ``podman compose pull``
+    # will NOT roll you forward to a new release without your explicit
+    # edit to this file — which is the safe default. For maximum
+    # reproducibility, switch to the digest form
+    # (``ghcr.io/kit3713/resume-site@sha256:...``) after running
+    # ``cosign verify`` — see docs/PRODUCTION.md §3.0.
+    image: ghcr.io/kit3713/resume-site:v0.3.1
     container_name: resume-site
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      # Phase 22.5: bind to 127.0.0.1 only so the container is reachable
+      # ONLY through a reverse proxy on the host (Caddy / nginx /
+      # Cloudflare Tunnel). Binding to ``"8080:8080"`` exposed the app
+      # on every interface, which — combined with the XFF trust model
+      # #16 ships with — would allow a remote attacker to forge
+      # ``X-Forwarded-For: 127.0.0.1`` and take the admin IP gate off.
+      # If you genuinely need direct public exposure, first configure
+      # ``trusted_proxies`` in ``config.yaml`` per PRODUCTION.md, then
+      # switch this to ``"0.0.0.0:8080:8080"``.
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./config.yaml:/app/config.yaml:ro,Z
       - resume-site-data:/app/data:Z

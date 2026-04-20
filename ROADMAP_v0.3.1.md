@@ -42,44 +42,44 @@ If v0.3.1 ships through its own gate cleanly, v0.3.2 and v0.3.3 each become "fix
 
 ### 22.1 — Kill the dev-server debug entry point (#15)
 
-- [ ] `app.py` currently runs `app.run(debug=True, port=5000)` unconditionally. Running `python app.py` opens the Werkzeug interactive `/console` — arbitrary code execution.
-- [ ] Gate on `RESUME_SITE_DEV=1` env var *and* explicit `--debug` CLI flag; default to `debug=False`. Log a warning line when debug is enabled.
-- [ ] Add a CI grep-guard that fails on any `debug=True` literal in `app.py` or `app/__init__.py`.
-- [ ] Regression test in `tests/test_security.py`: `GET /console` on a freshly-booted app must return 404.
+- [x] `app.py` currently runs `app.run(debug=True, port=5000)` unconditionally. Running `python app.py` opens the Werkzeug interactive `/console` — arbitrary code execution.
+- [x] Gate on `RESUME_SITE_DEV=1` env var *and* explicit `--debug` CLI flag; default to `debug=False`. Log a warning line when debug is enabled.
+- [x] Add a CI grep-guard that fails on any `debug=True` literal in `app.py` or `app/__init__.py`.
+- [x] Regression test in `tests/test_security.py`: `GET /console` on a freshly-booted app must return 404.
 
 ### 22.2 — Stored HTML / JS injection — every write path must sanitize (#17, #41, #44, #63)
 
-- [ ] **#63 Fail-closed sanitizer:** `app/services/content.py:sanitize_html` currently returns input unchanged when `nh3` is unimportable. Move `nh3` to a hard runtime dependency (it's already in `requirements.txt`) and make the missing-import path raise at app boot, not at render time. Delete the `_HAS_NH3` fallback branch.
-- [ ] **#41 Translation save sanitation:** `app/routes/admin.py:1121` (translation save) and the services-layer callers all skip `sanitize_html()` before `save_translation()`. Every translatable field with `content_format='html'` goes through the same sanitizer the default-locale save path uses.
-- [ ] **#44 Admin-search FTS snippet:** `admin/search.html:32` renders `{{ result.snippet | safe }}`. Drop `| safe`; let Jinja autoescape. The snippet is attacker-controlled — public review text flows into the FTS index.
-- [ ] **#17 `javascript:` in custom nav links:** Validate the `url` field of every `custom_nav_links` entry server-side at `save_settings` time. Allow only `http://`, `https://`, `/` (relative), and `mailto:`. Reject everything else with a 400 and a user-visible error. Add a template-side defence (`|safe` is already *not* used here, but the `href=` binding should still run through a `safe_url` filter).
-- [ ] Add `tests/test_sanitizer_contract.py`: property-based test asserting every HTML-accepting write path strips `<script>`, `on*=` handlers, and `javascript:` schemes.
+- [x] **#63 Fail-closed sanitizer:** `app/services/content.py:sanitize_html` currently returns input unchanged when `nh3` is unimportable. Move `nh3` to a hard runtime dependency (it's already in `requirements.txt`) and make the missing-import path raise at app boot, not at render time. Delete the `_HAS_NH3` fallback branch.
+- [x] **#41 Translation save sanitation:** `app/routes/admin.py:1121` (translation save) and the services-layer callers all skip `sanitize_html()` before `save_translation()`. Every translatable field with `content_format='html'` goes through the same sanitizer the default-locale save path uses.
+- [x] **#44 Admin-search FTS snippet:** `admin/search.html:32` renders `{{ result.snippet | safe }}`. Drop `| safe`; let Jinja autoescape. The snippet is attacker-controlled — public review text flows into the FTS index.
+- [x] **#17 `javascript:` in custom nav links:** Validate the `url` field of every `custom_nav_links` entry server-side at `save_settings` time. Allow only `http://`, `https://`, `/` (relative), and `mailto:`. Reject everything else with a 400 and a user-visible error. Add a template-side defence (`|safe` is already *not* used here, but the `href=` binding should still run through a `safe_url` filter).
+- [x] Add `tests/test_sanitizer_contract.py`: property-based test asserting every HTML-accepting write path strips `<script>`, `on*=` handlers, and `javascript:` schemes.
 
 ### 22.3 — Webhook SSRF — block private ranges and stop following redirects (#19, #43, #59)
 
-- [ ] **#19 URL allowlist at write time:** Reject webhook URLs whose resolved host is loopback (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`, `fe80::/10`), RFC 1918 private (`10/8`, `172.16/12`, `192.168/16`), or CGNAT (`100.64/10`). DNS-resolve at create time; re-resolve at delivery time to defeat DNS rebinding. Apply the same gate to both admin-HTML and API create/update routes.
-- [ ] **#43/#59 Stop following redirects:** `app/services/webhooks.py:deliver_now` uses `urllib.request.urlopen` which installs `HTTPRedirectHandler` by default. Replace with an `OpenerDirector` that installs a no-op redirect handler that raises on `3xx`, so any redirect response lands in the delivery log as a failure instead of silently fetching the redirect target.
-- [ ] Settings registry entry `webhook_allow_private_targets` (default `false`, Security category) for the rare operator who genuinely needs to call an internal service; documented as a foot-gun.
-- [ ] Tests in `tests/test_webhooks.py`: explicit cases for each CIDR family + 302/307/308 refusal.
+- [x] **#19 URL allowlist at write time:** Reject webhook URLs whose resolved host is loopback (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`, `fe80::/10`), RFC 1918 private (`10/8`, `172.16/12`, `192.168/16`), or CGNAT (`100.64/10`). DNS-resolve at create time; re-resolve at delivery time to defeat DNS rebinding. Apply the same gate to both admin-HTML and API create/update routes.
+- [x] **#43/#59 Stop following redirects:** `app/services/webhooks.py:deliver_now` uses `urllib.request.urlopen` which installs `HTTPRedirectHandler` by default. Replace with an `OpenerDirector` that installs a no-op redirect handler that raises on `3xx`, so any redirect response lands in the delivery log as a failure instead of silently fetching the redirect target.
+- [x] Settings registry entry `webhook_allow_private_targets` (default `false`, Security category) for the rare operator who genuinely needs to call an internal service; documented as a foot-gun.
+- [x] Tests in `tests/test_webhooks.py`: explicit cases for each CIDR family + 302/307/308 refusal.
 
 ### 22.4 — Raw API token written to client-side session cookie (#58)
 
-- [ ] The one-time-reveal flow stashes the raw token in `session['_api_token_reveal']['raw']`. Flask default sessions are **client-side signed, not encrypted** — the plaintext token lands in the browser's cookie jar.
-- [ ] Replace with a server-side single-use handoff: after generation, store the raw token in a new `api_token_reveals` table keyed by a random `reveal_id`; put only the `reveal_id` in the session. The `/admin/api-tokens/reveal` route looks up, deletes, and returns. Expire stale reveal rows after 5 minutes via a request-time prune.
-- [ ] Same pattern for `manage.py rotate-api-token`'s CLI output (never stored anywhere except the admin's terminal).
-- [ ] Tests assert: (a) no `resume_session` cookie response body ever contains the token bytes; (b) reveal row is deleted after first GET; (c) expired reveal returns 410 Gone.
+- [x] The one-time-reveal flow stashes the raw token in `session['_api_token_reveal']['raw']`. Flask default sessions are **client-side signed, not encrypted** — the plaintext token lands in the browser's cookie jar.
+- [x] Replace with a server-side single-use handoff: after generation, store the raw token in a new `api_token_reveals` table keyed by a random `reveal_id`; put only the `reveal_id` in the session. The `/admin/api-tokens/reveal` route looks up, deletes, and returns. Expire stale reveal rows after 5 minutes via a request-time prune.
+- [x] Same pattern for `manage.py rotate-api-token`'s CLI output (never stored anywhere except the admin's terminal).
+- [x] Tests assert: (a) no `resume_session` cookie response body ever contains the token bytes; (b) reveal row is deleted after first GET; (c) expired reveal returns 410 Gone.
 
 ### 22.5 — Close the public-exposure hole (#66)
 
-- [ ] `compose.yaml` ports `"8080:8080"` binds `0.0.0.0` by default. Change to `"127.0.0.1:8080:8080"` so the container is only reachable through the reverse proxy on localhost.
-- [ ] Same fix on the Quadlet `resume-site.container` `PublishPort=` line.
-- [ ] `docs/PRODUCTION.md` gains a loud callout in the "Reverse proxy" section: if you're exposing 8080 directly to the public internet, the X-Forwarded-For trust model the app ships with is unsafe (see #16 / #34).
+- [x] `compose.yaml` ports `"8080:8080"` binds `0.0.0.0` by default. Change to `"127.0.0.1:8080:8080"` so the container is only reachable through the reverse proxy on localhost.
+- [x] Same fix on the Quadlet `resume-site.container` `PublishPort=` line.
+- [ ] `docs/PRODUCTION.md` gains a loud callout in the "Reverse proxy" section: if you're exposing 8080 directly to the public internet, the X-Forwarded-For trust model the app ships with is unsafe (see #16 / #34). *(Handed off to Agent B — Phase 22 owner drafted the callout; see their PRODUCTION.md rewrite.)*
 
 ### 22.6 — Admin IP allowlist — don't trust X-Forwarded-For unconditionally (#16)
 
-- [ ] `app/routes/admin.py:104` picks the first comma-separated value from `X-Forwarded-For` verbatim. When the app is reached directly (not via Caddy), XFF is attacker-controlled.
-- [ ] Introduce a `trusted_proxies` CIDR list in `config.yaml` (default empty). Only consult `X-Forwarded-For` when `request.remote_addr` is inside `trusted_proxies`; otherwise fall back to `remote_addr`.
-- [ ] Companion fix: `#34` — the same logic lives in five other places (contact rate limit, API rate limit, analytics, `/metrics` access control, login throttle). The full extraction into `get_client_ip()` lands in v0.3.2 Phase 23.2; for v0.3.1 the immediate fix is applied to `admin.py` with a TODO comment pointing at 23.2 so the inconsistency is short-lived.
+- [x] `app/routes/admin.py:104` picks the first comma-separated value from `X-Forwarded-For` verbatim. When the app is reached directly (not via Caddy), XFF is attacker-controlled.
+- [x] Introduce a `trusted_proxies` CIDR list in `config.yaml` (default empty). Only consult `X-Forwarded-For` when `request.remote_addr` is inside `trusted_proxies`; otherwise fall back to `remote_addr`.
+- [x] Companion fix: `#34` — the same logic lives in five other places (contact rate limit, API rate limit, analytics, `/metrics` access control, login throttle). The full extraction into `get_client_ip()` lands in v0.3.2 Phase 23.2; for v0.3.1 the immediate fix is applied to `admin.py` with a TODO comment pointing at 23.2 so the inconsistency is short-lived.
 
 ---
 
@@ -87,12 +87,12 @@ If v0.3.1 ships through its own gate cleanly, v0.3.2 and v0.3.3 each become "fix
 
 *The CI publish + Trivy + cosign machinery shipped in v0.3.0 Phase 21.1–21.3. The **process** around it — tag matrix, release-notes template, README/PRODUCTION reorientation, stop-ship gate — never did. v0.3.1 is the first release that actually honours it.*
 
-- [ ] **GHCR as the canonical release surface:** `README.md` and `docs/PRODUCTION.md` reorder so the first install instruction is `podman pull ghcr.io/<owner>/resume-site:v0.3.1`. Source-tree install demoted to a "Development" sub-section. Compose / Quadlet examples reference the GHCR image by **digest-pinned** tag, not the moving `v0.3.1` alias.
-- [ ] **Tag matrix per release:** Push `v0.3.1`, `v0.3`, `v0`, and `latest` — all four manifests pointing at the same digest. CI `publish` job extended to push the whole matrix atomically (single `docker buildx imagetools create` at the end). `:main` continues to track trunk; documented as non-production.
-- [ ] **Multi-arch verification before `latest` promotion:** Release checklist pulls both `linux/amd64` and `linux/arm64` variants on clean VMs and runs `/healthz` + `/readyz` before the `latest` alias is advanced. Automated via a new `release-verify` CI job that runs against the just-pushed image.
-- [ ] **Release-notes template:** `.github/RELEASE_TEMPLATE.md` with the three required lines — `podman pull ghcr.io/<owner>/resume-site:vX.Y.Z`, the image digest (`sha256:...`), the `cosign verify` command — plus a required "Breaking changes" section and a "Migration notes" section. A release without those lines doesn't ship.
-- [ ] **Stop-ship gate:** `publish` CI job fails → no release. Trivy HIGH/CRITICAL finding → no release. `cosign verify` fails on the clean-machine probe → no release. `/readyz` fails on the smoke test → no release. Each is a full stop, not a ratchet.
-- [ ] **Dry-run the gate on v0.3.1-rc.1:** Before the stable tag, cut `v0.3.1-rc.1` against the same gate. Everything the stable release has to do, the RC has to do. This is the final proof that the process works.
+- [x] **GHCR as the canonical release surface:** `README.md` and `docs/PRODUCTION.md` reorder so the first install instruction is `podman pull ghcr.io/<owner>/resume-site:v0.3.1`. Source-tree install demoted to a "Development" sub-section. Compose / Quadlet examples reference the GHCR image by **digest-pinned** tag, not the moving `v0.3.1` alias.
+- [x] **Tag matrix per release:** Push `v0.3.1`, `v0.3`, `v0`, and `latest` — all four manifests pointing at the same digest. CI `publish` job extended to push `v0.3.1` + advance `v0.3` / `v0` aliases via `docker buildx imagetools create`; `:latest` is held back to the new `release-verify` job and advanced only after multi-arch smoke. `:main` continues to track trunk; documented as non-production.
+- [x] **Multi-arch verification before `latest` promotion:** Automated via the new `release-verify` CI job that pulls both `linux/amd64` and `linux/arm64` of the just-pushed image, boots each (arm64 via QEMU emulation), and asserts `/healthz` + `/readyz` are green before promoting `:latest`. Pre-release tags never move `:latest` regardless.
+- [x] **Release-notes template:** `.github/RELEASE_TEMPLATE.md` with the three required lines — `podman pull ghcr.io/<owner>/resume-site:vX.Y.Z`, the image digest (`sha256:...`), the `cosign verify` command — plus a required "Breaking changes" section and a "Migration notes" section. A release without those lines doesn't ship.
+- [x] **Stop-ship gate:** Documented in `docs/PRODUCTION.md` §12.2 as a single rule table — `quality` / `test` / `container-build` / `container-scan` (Trivy HIGH/CRITICAL with available fix) / `publish` / `release-verify` / clean-machine `cosign verify` / release-notes-template compliance are each full stops, not ratchets.
+- [ ] **Dry-run the gate on v0.3.1-rc.1:** Before the stable tag, cut `v0.3.1-rc.1` against the same gate. Everything the stable release has to do, the RC has to do. This is the final proof that the process works. _(Awaits the actual RC tag — release-time action.)_
 
 ---
 
@@ -102,26 +102,26 @@ If v0.3.1 ships through its own gate cleanly, v0.3.2 and v0.3.3 each become "fix
 
 ### 36.1 — Frontend minification (v0.3.0 Phase 12.3)
 
-- [ ] **CSS minification:** Served minified in production, original in dev. Philosophy: stdlib-only — implement as a request-time middleware (not a build step), cached per-fingerprint against the `static_hashed()` hash from Phase 12.3. `rcssmin` is stdlib-compatible and considered acceptable; alternatively hand-roll a single-pass regex minifier (the file is 58 KB — cost is negligible).
+- [x] **CSS minification:** Served minified in production, original in dev. Philosophy: stdlib-only — implement as a request-time middleware (not a build step), cached per-fingerprint against the `static_hashed()` hash from Phase 12.3. `rcssmin` is stdlib-compatible and considered acceptable; alternatively hand-roll a single-pass regex minifier (the file is 58 KB — cost is negligible).
 - [ ] **JavaScript audit:** Profile `main.js` for unused functions, redundant event listeners, GSAP animations firing on hidden elements. Same for `admin.js`. Delete what's unused; document the deletions in CHANGELOG under "Removed."
-- [ ] **JavaScript minification:** Same middleware pattern as CSS.
+- [x] **JavaScript minification:** Same middleware pattern as CSS.
 
 ### 36.2 — Admin image-upload polish (v0.3.0 Phase 14.4)
 
-- [ ] **Blog cover image preview:** Client-side thumbnail on file select, mirror of the photo-upload preview shipped in 14.4. Pure JS — `URL.createObjectURL` + a dedicated preview `<img>` below the file input.
-- [ ] **Drag-and-drop upload zone for photo manager:** Reuses the existing `process_upload` pipeline; only the client-side dropzone handler + highlight CSS are new. Must fall back to the `<input type="file">` when drag-drop isn't available.
+- [x] **Blog cover image preview:** Client-side thumbnail on file select, mirror of the photo-upload preview shipped in 14.4. Pure JS — `URL.createObjectURL` + a dedicated preview `<img>` below the file input.
+- [x] **Drag-and-drop upload zone for photo manager:** Reuses the existing `process_upload` pipeline; only the client-side dropzone handler + highlight CSS are new. Must fall back to the `<input type="file">` when drag-drop isn't available.
 
 ### 36.3 — Translation completeness dashboard (v0.3.0 Phase 15.3)
 
-- [ ] Admin dashboard widget: per-locale coverage matrix — rows = content type, columns = configured locale, cell = `translated / total` plus a colour band. Data source: the six `_translations` tables from migration 011 via a single `LEFT JOIN` + `GROUP BY` per content type. No new migrations.
+- [x] Admin dashboard widget: per-locale coverage matrix — rows = content type, columns = configured locale, cell = `translated / total` plus a colour band. Data source: the six `_translations` tables from migration 011 via a single `LEFT JOIN` + `GROUP BY` per content type. No new migrations.
 
 ### 36.4 — `manage.py profile` CLI (v0.3.0 Phase 18.3)
 
-- [ ] Thin wrapper over the existing `scripts/benchmark_routes.py` that lives in `manage.py` so the docs can reference one command. Same output as the script: per-route p50/p95/query-count/response-size. `--routes /,/portfolio,/blog` to scope the probe; defaults to the full top-5 from `PERFORMANCE.md`.
+- [x] Thin wrapper over the existing `scripts/benchmark_routes.py` that lives in `manage.py` so the docs can reference one command. Same output as the script: per-route p50/p95/query-count/response-size. `--routes /,/portfolio,/blog` to scope the probe; defaults to the full top-5 from `PERFORMANCE.md`.
 
 ### 36.5 — In-app alerting widget (v0.3.0 Phase 18.10)
 
-- [ ] Admin dashboard card showing active alerts by severity. Reads from the in-memory `resume_site_errors_total` counter (same source as the "Errors (since restart)" card) and applies the thresholds from `docs/alerting-rules.yaml` to decide what's active. Parses the YAML once at startup and caches the parsed rules. No new runtime dependency — PyYAML is already in `requirements.txt`.
+- [x] Admin dashboard card showing active alerts by severity. Reads from the in-memory `resume_site_errors_total` counter (same source as the "Errors (since restart)" card) and applies the thresholds from `docs/alerting-rules.yaml` to decide what's active. Parses the YAML once at startup and caches the parsed rules. No new runtime dependency — PyYAML is already in `requirements.txt`.
 
 ### 36.6 — Observability cross-reference (v0.3.0 Phase 18.11)
 
@@ -129,7 +129,7 @@ If v0.3.1 ships through its own gate cleanly, v0.3.2 and v0.3.3 each become "fix
 
 ### 36.7 — Subsystems as event-bus handlers (v0.3.0 Phase 19.1)
 
-- [ ] Migrate analytics, activity log, and metrics to subscribe to bus events instead of being called directly from route handlers. No behaviour change — every existing subscriber sees the same payload. Demonstrates the bus extension model and deletes three direct call paths from `app/routes/`. Regression test: a route that emits `photo.uploaded` causes the analytics counter and metrics gauge to update *without* the route calling them directly.
+- [x] Migrate analytics, activity log, and metrics to subscribe to bus events instead of being called directly from route handlers. No behaviour change — every existing subscriber sees the same payload. Demonstrates the bus extension model and deletes three direct call paths from `app/routes/`. Regression test: a route that emits `photo.uploaded` causes the analytics counter and metrics gauge to update *without* the route calling them directly.
 
 ### 36.8 — K8s / Nomad commented-out examples (v0.3.0 Phase 21.4)
 
