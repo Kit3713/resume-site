@@ -46,6 +46,12 @@ def send_contact_email(name: str, email: str, message: str) -> bool:
     user = config.get('user', '')
     password = config.get('password', '')
     recipient = config.get('recipient', '')
+    # Decouple the ``From`` header from the SMTP login identity. Needed
+    # for relay providers (Resend, SendGrid, Mailgun) that authenticate
+    # as a fixed service user but require ``From`` to be an operator-
+    # controlled verified-domain address. Falls back to ``user`` when
+    # unset — identical to the pre-v0.3.1-beta-2 behavior.
+    from_address = config.get('from_address') or user
 
     # Bail out if SMTP is not fully configured
     if not all([host, user, password, recipient]):
@@ -53,7 +59,7 @@ def send_contact_email(name: str, email: str, message: str) -> bool:
 
     # Compose the email
     msg = MIMEMultipart()
-    msg['From'] = user
+    msg['From'] = from_address
     msg['To'] = recipient
     msg['Reply-To'] = email  # Allows the admin to reply directly to the submitter
     msg['Subject'] = f'New Contact: {name}'

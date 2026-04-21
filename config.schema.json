@@ -51,6 +51,7 @@
         "user": { "type": "string" },
         "password": { "type": "string" },
         "password_file": { "type": "string", "description": "Path to file containing SMTP password (Docker/Podman secrets)." },
+        "from_address": { "type": "string", "description": "Optional. Address used in the From header of outbound mail. Falls back to `user` when unset. Needed for relay providers (Resend, SendGrid, Mailgun) where the SMTP login identity differs from the verified sender address." },
         "recipient": { "type": "string", "description": "Email address for contact form submissions." }
       },
       "additionalProperties": false

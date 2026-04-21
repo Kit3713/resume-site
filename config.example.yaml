@@ -38,6 +38,15 @@ smtp:
   port: 587
   user: "your@email.com"
   password: "app-password"
+  # Optional: decouple the From header from the SMTP login identity.
+  # Needed for relay providers where you authenticate as a fixed
+  # service user but must send from your own verified domain:
+  #   Resend   → user: "resend",   from_address: "contact@yourdomain.com"
+  #   SendGrid → user: "apikey",   from_address: "contact@yourdomain.com"
+  #   Mailgun  → user: "postmaster@mg.yourdomain.com", from_address: "contact@yourdomain.com"
+  # When unset, from_address falls back to `user` — no change for
+  # Gmail / Outlook / self-hosted Postfix setups.
+  # from_address: "contact@yourdomain.com"
   recipient: "your@email.com"
 
 # Admin panel access

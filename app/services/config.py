@@ -47,6 +47,7 @@ _DEFAULT_CONFIG = {
         'user': '',
         'password': '',
         'password_file': '',  # Docker/Podman secrets: path to file containing password
+        'from_address': '',  # Optional: From header address; falls back to `user` when empty. Needed for Resend/SendGrid/Mailgun-style relays.
         'recipient': '',  # Admin's personal email for form submissions
     },
     'admin': {
@@ -75,6 +76,7 @@ _ENV_VAR_MAP = {
     'RESUME_SITE_SMTP_USER': 'smtp.user',
     'RESUME_SITE_SMTP_PASSWORD': 'smtp.password',
     'RESUME_SITE_SMTP_PASSWORD_FILE': 'smtp.password_file',
+    'RESUME_SITE_SMTP_FROM_ADDRESS': 'smtp.from_address',
     'RESUME_SITE_SMTP_RECIPIENT': 'smtp.recipient',
     'RESUME_SITE_ADMIN_USERNAME': 'admin.username',
     'RESUME_SITE_ADMIN_PASSWORD_HASH': 'admin.password_hash',
