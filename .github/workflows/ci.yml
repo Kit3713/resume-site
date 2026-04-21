@@ -385,13 +385,18 @@ jobs:
           curl -fsS http://localhost:18080/healthz      || (docker logs upgrade-new && exit 1)
           curl -fsS http://localhost:18080/readyz       || (docker logs upgrade-new && exit 1)
           curl -fsS http://localhost:18080/             || (docker logs upgrade-new && exit 1)
-          # /admin/login is IP-gated to private ranges; on the
-          # GitHub-hosted runner the request comes from the host
-          # loopback into the container's network, which appears as an
-          # allowed private address. Any 2xx (form render) or 302
-          # (session redirect) passes; anything else means either the
-          # IP gate regressed or the admin blueprint failed to register.
-          status=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:18080/admin/login)
+          # /admin/login is IP-gated to ``admin.allowed_networks``. A
+          # host-side request via the published port arrives with
+          # ``remote_addr=172.17.0.1`` (Docker bridge gateway), which is
+          # NOT in the default allowlist — the 172.16/12 range is
+          # deliberately omitted so sibling containers on the host
+          # bridge can't reach /admin. Probe through loopback *inside*
+          # the container so ``remote_addr=127.0.0.1``, which is how
+          # production traffic actually arrives (reverse proxy on the
+          # host forwarding to 127.0.0.1:8080). Any 2xx (form render)
+          # or 302 (session redirect) passes; anything else means the
+          # admin blueprint failed to register or the IP gate regressed.
+          status=$(docker exec upgrade-new curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/admin/login)
           if [ "$status" != "200" ] && [ "$status" != "302" ]; then
             echo "ERROR: /admin/login returned $status on the upgraded container"
             docker logs upgrade-new
