@@ -26,7 +26,7 @@ resume-site is a configurable portfolio website designed around the idea that **
 - **SEO ready** -- Open Graph meta tags, auto-generated sitemap.xml, robots.txt, hreflang tags.
 - **Mobile-first responsive** -- Equal priority desktop and mobile experience.
 - **Zero personal data in repo** -- All private info lives in your config file and database, never committed.
-- **CI pipeline** -- GitHub Actions running pytest + flake8 across Python 3.11/3.12 with container build verification and GHCR publishing.
+- **CI pipeline** -- GitHub Actions gate: ruff/bandit/vulture quality, pytest across Python 3.11/3.12 with coverage floor, container build + Trivy CVE scan (HIGH/CRITICAL), rolling-upgrade replay against the previous `:latest`, cosign-signed GHCR publish. Every gate is a full stop — a failure anywhere blocks the image from reaching the registry.
 
 ## Tech Stack
 
@@ -485,9 +485,12 @@ podman rm resume-site
 
 Your data and photos persist in volumes. Pending database migrations
 apply automatically on container start (or via `manage.py migrate`
-inside the running container). For the upgrade-survivability story —
-how the rolling-upgrade replay test works in CI, what the
-`pre-restore-*` sidecars are for, and how to roll back — see
+inside the running container). A release only reaches GHCR after the
+CI's rolling-upgrade replay boots the previous `:latest` against seed
+volumes, swaps to the freshly-built image on the same volumes, and
+passes `/healthz` + `/readyz` + the landing page + the admin login
+probe — a failure blocks publication. For what the `pre-restore-*`
+sidecars are for and how to roll back, see
 [`docs/UPGRADE.md`](docs/UPGRADE.md).
 
 ## Private Deployment Fork
