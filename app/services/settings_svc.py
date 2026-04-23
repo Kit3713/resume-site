@@ -225,6 +225,27 @@ SETTINGS_REGISTRY = {
         ),
     },
     # --- Content ---
+    'services_label': {
+        'type': 'str',
+        'default': '',
+        'label': 'Services Section Label',
+        'category': 'Content',
+        'description': (
+            'Override the "Services" heading and nav link '
+            '(e.g., "Skills", "What I Do", "Expertise"). '
+            'Empty = use the default "Services".'
+        ),
+    },
+    'services_subtitle': {
+        'type': 'str',
+        'default': '',
+        'label': 'Services Page Subtitle',
+        'category': 'Content',
+        'description': (
+            'Shown under the section heading on the Services page. '
+            'Empty = use the default "What I can do for you".'
+        ),
+    },
     'case_studies_enabled': {
         'type': 'bool',
         'default': 'false',

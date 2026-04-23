@@ -208,3 +208,10 @@ def create_block(db: sqlite3.Connection, slug: str, title: str, content_html: st
     )
     db.commit()
     return slug
+
+
+def delete_block(db: sqlite3.Connection, slug: str) -> bool:
+    """Remove a content block by slug. Returns True if a row was deleted."""
+    cur = db.execute('DELETE FROM content_blocks WHERE slug = ?', (slug,))
+    db.commit()
+    return cur.rowcount > 0

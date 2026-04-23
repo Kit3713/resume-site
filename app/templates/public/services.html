@@ -7,13 +7,14 @@
 #}
 {% extends "base.html" %}
 
-{% block title %}{{ _('Services') }} — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
+{% set services_label = site_settings.get('services_label') or _('Services') %}
+{% block title %}{{ services_label }} — {{ site_settings.get('site_title', 'Portfolio') }}{% endblock %}
 
 {% block content %}
 <section class="page-header">
     <div class="page-header__container">
-        <h1 class="page-header__title">{{ _('Services') }}</h1>
-        <p class="page-header__subtitle">{{ _('What I can do for you') }}</p>
+        <h1 class="page-header__title">{{ services_label }}</h1>
+        <p class="page-header__subtitle">{{ site_settings.get('services_subtitle') or _('What I can do for you') }}</p>
     </div>
 </section>
 
@@ -38,7 +39,7 @@
     <div class="section__container">
         <div class="empty-state">
             <svg class="empty-state__icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
-            <p class="empty-state__text">{{ _('Services information coming soon.') }}</p>
+            <p class="empty-state__text">{{ _('%(label)s information coming soon.', label=services_label) }}</p>
         </div>
     </div>
 </section>

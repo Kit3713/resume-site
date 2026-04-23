@@ -139,6 +139,9 @@
                            name="{{ item.key }}" class="form-input"
                            value="{{ item.value }}"
                            {% if 'url' in item.key %}placeholder="https://..."{% endif %}>
+                    {% if item.get('description') %}
+                    <p class="settings-description">{{ item.description }}</p>
+                    {% endif %}
                     {% endif %}
                 </div>
                 {% endfor %}

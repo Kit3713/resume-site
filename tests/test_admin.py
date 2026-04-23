@@ -234,6 +234,65 @@ def test_content_new_post_no_slug_redirects(auth_client):
     assert response.status_code == 302
 
 
+def test_content_new_normalizes_mixed_case_slug(auth_client, app):
+    """Slug 'About' should be normalized to 'about' on create."""
+    auth_client.post(
+        '/admin/content/new',
+        data={'slug': 'About', 'title': 'About', 'content': '<p>x</p>'},
+    )
+    with app.app_context():
+        from app.db import get_db
+        from app.services.content import get_block_by_slug
+
+        db = get_db()
+        assert get_block_by_slug(db, 'about') is not None
+        assert get_block_by_slug(db, 'About') is None
+
+
+def test_content_new_duplicate_slug_flashes_error(auth_client):
+    """Creating a second block with an existing slug should flash an error
+    and redirect to the edit page, not silently clobber or no-op."""
+    auth_client.post(
+        '/admin/content/new',
+        data={'slug': 'about', 'title': 'First', 'content': '<p>first</p>'},
+    )
+    response = auth_client.post(
+        '/admin/content/new',
+        data={'slug': 'About', 'title': 'Second', 'content': '<p>second</p>'},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert '/admin/content/edit/about' in response.headers['Location']
+
+
+def test_content_delete_removes_block(auth_client, app):
+    """POST /admin/content/delete/<slug> should remove the row and redirect."""
+    auth_client.post(
+        '/admin/content/new',
+        data={'slug': 'scratch', 'title': 'Scratch', 'content': '<p>x</p>'},
+    )
+    response = auth_client.post(
+        '/admin/content/delete/scratch',
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    with app.app_context():
+        from app.db import get_db
+        from app.services.content import get_block_by_slug
+
+        db = get_db()
+        assert get_block_by_slug(db, 'scratch') is None
+
+
+def test_content_delete_unknown_slug_is_safe(auth_client):
+    """Deleting a non-existent slug should flash an error but not 500."""
+    response = auth_client.post(
+        '/admin/content/delete/does-not-exist',
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+
+
 # ============================================================
 # SERVICES CRUD
 # ============================================================

@@ -14,11 +14,14 @@
         <a href="{{ url_for('admin.content') }}" class="btn btn--secondary btn--sm">{{ _('Back') }}</a>
     </div>
 
-    <form method="POST" class="admin-form">
+    <form method="POST" class="admin-form" id="contentForm">
         {% if not block %}
         <div class="form-group">
             <label class="form-label" for="slug">{{ _('Slug (identifier)') }}</label>
             <input type="text" id="slug" name="slug" class="form-input" value="{{ slug }}" placeholder="e.g., about" required>
+            <p class="form-hint" style="color:var(--color-text-tertiary);font-size:var(--fs-sm);margin-top:var(--space-xs)">
+                {{ _('Use "about" to populate the About section on the homepage. Lowercase letters, numbers, and underscores only.') }}
+            </p>
         </div>
         {% endif %}
 
@@ -29,8 +32,12 @@
 
         <div class="form-group">
             <label class="form-label">{{ _('Content') }}</label>
+            {# Pre-fill hidden input with the existing block content so the save
+               path works even if Quill fails to load / initialise — the
+               operator still keeps whatever was already there. Quill then
+               replaces this live via the `text-change` listener below. #}
             <div id="editor" class="admin-editor">{{ block.content | safe if block else '' }}</div>
-            <input type="hidden" name="content" id="contentInput">
+            <input type="hidden" name="content" id="contentInput" value="{{ block.content if block else '' }}">
         </div>
 
         <button type="submit" class="btn btn--primary">{{ _('Save') }}</button>
@@ -41,6 +48,21 @@
 {% block scripts_extra %}
 <script src="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.js"></script>
 <script nonce="{{ csp_nonce }}">
+(function() {
+    var contentInput = document.getElementById('contentInput');
+    var form = document.getElementById('contentForm');
+    if (typeof Quill === 'undefined') {
+        // CDN failed — fall back to a plain textarea so the operator can still save.
+        var editor = document.getElementById('editor');
+        var ta = document.createElement('textarea');
+        ta.className = 'form-input';
+        ta.style.minHeight = '300px';
+        ta.style.fontFamily = 'monospace';
+        ta.value = contentInput.value;
+        editor.replaceWith(ta);
+        form.addEventListener('submit', function() { contentInput.value = ta.value; });
+        return;
+    }
     var quill = new Quill('#editor', {
         theme: 'snow',
         modules: {
@@ -53,8 +75,12 @@
             ]
         }
     });
-    document.querySelector('form').addEventListener('submit', function() {
-        document.getElementById('contentInput').value = quill.root.innerHTML;
-    });
+    // Keep the hidden input continuously in sync, not only on submit — if the
+    // submit handler fires before Quill has attached, the input still has the
+    // latest value from text-change and the save is not lost.
+    function syncToInput() { contentInput.value = quill.root.innerHTML; }
+    quill.on('text-change', syncToInput);
+    form.addEventListener('submit', syncToInput);
+})();
 </script>
 {% endblock %}

@@ -7,6 +7,20 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.1 (Keystone)
 
+### Added — Content block delete + duplicate-safe create
+- New `POST /admin/content/delete/<slug>` route + Delete button on each row of `/admin/content`. The button lives in a tiny POST form with a `confirm()` prompt so an accidental click still needs a second confirmation. Previously the only way to remove a block was raw SQL against the SQLite file — an obvious gap given the admin UI lets you create and edit them.
+- `POST /admin/content/new` now detects a duplicate slug (after normalising to lowercase + underscores). When a collision exists it flashes `A content block with slug "<slug>" already exists. Edit it instead.` and redirects to the edit form for that existing block, instead of silently no-op'ing via `INSERT OR IGNORE` and falsely flashing "Content block created."
+- After a successful create, the operator is now redirected to the edit page for the new block (not the list). Eliminates the extra click to open the editor and populate content.
+- The content editor (`admin/content_edit.html`) pre-fills the hidden `contentInput` with the existing block content and subscribes to Quill's `text-change` event (not only the form-submit event). If the CDN fails, Quill errors during init, or the submit handler is not attached in time, the save still carries the existing content instead of zeroing it out. Added a plain-`<textarea>` fallback branch for the case where the Quill script never loads.
+- 4 regression tests in `tests/test_admin.py`: slug normalisation ("About" → "about"), duplicate-slug flash + redirect-to-edit, delete removes the row, delete of unknown slug is a 302 (not a 500).
+
+### Fixed — Theme editor save crash
+- `POST /admin/theme` raised `ImportError: cannot import name 'save_setting'` on every save, returning a 500 to the operator. Root cause: the route imported a symbol that was never exported by `app/services/settings_svc.py` (the module exports `set_one` / `save_many`). Swapped `save_setting` → `set_one` (which already commits + invalidates cache), so accent / preset / font / custom_css all persist through the form. Locked in with `test_theme_editor_save_persists_values` in `tests/test_customization.py` — a regression here now fails CI instead of reaching production.
+
+### Added — Customizable "Services" label
+- New `services_label` and `services_subtitle` settings under the Content category. Overrides the "Services" heading, nav link, page title, and CTA button text across the public site (homepage preview, /services page, nav bar). Empty = fall back to the default "Services". Typical use: rebrand the section to "Skills", "What I Do", "Expertise", etc. without editing code.
+- `admin/settings.html` now surfaces each registered setting's `description` field for `str`-type inputs — previously only `textarea` inputs showed help text, so the new settings' descriptions (and any future str-type descriptions) render in the form.
+
 ### Added — SMTP sender decoupling (v0.3.1-beta-2)
 - New `smtp.from_address` config field + `RESUME_SITE_SMTP_FROM_ADDRESS` env var. Populates the `From` header of outbound mail independently of the SMTP login identity — required for relay providers where the authenticated user is a fixed service account but the sender must be an operator-controlled verified-domain address. Known-good pairings: Resend (`user: "resend"` + `from_address: "contact@yourdomain.com"`), SendGrid (`user: "apikey"` + verified sender), Mailgun (`user: "postmaster@mg.yourdomain.com"` + verified sender). Falls back to `smtp.user` when unset — no behavior change or config migration required for existing Gmail / Outlook / self-hosted Postfix deployments.
 - `config.schema.json` and `config.example.yaml` updated. Schema validator accepts the new key; example shows the three provider pairings inline so operators can copy-paste.

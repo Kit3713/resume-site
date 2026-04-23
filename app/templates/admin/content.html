@@ -1,4 +1,4 @@
-{# Content Block List — Table of all editable content blocks with edit links. #}
+{# Content Block List — Table of all editable content blocks with edit + delete actions. #}
 {% extends "admin/base_admin.html" %}
 
 {% block title %}{{ _('Content') }}{% endblock %}
@@ -9,6 +9,10 @@
         <h1 class="admin-page__title">{{ _('Content Blocks') }}</h1>
         <a href="{{ url_for('admin.content_new') }}" class="btn btn--primary btn--sm">{{ _('New Block') }}</a>
     </div>
+
+    <p class="admin-hint" style="color:var(--color-text-tertiary);margin-bottom:var(--space-md);font-size:var(--fs-sm)">
+        {{ _('Homepage sections read content blocks by slug. The "About" section on your homepage uses the block with slug') }} <code>about</code>.
+    </p>
 
     {% if blocks %}
     <table class="admin-table">
@@ -21,7 +25,12 @@
                 <td><code>{{ block.slug }}</code></td>
                 <td>{{ block.title or '—' }}</td>
                 <td>{{ block.updated_at[:10] }}</td>
-                <td><a href="{{ url_for('admin.content_edit', slug=block.slug) }}" class="btn btn--secondary btn--sm">{{ _('Edit') }}</a></td>
+                <td style="display:flex;gap:var(--space-xs)">
+                    <a href="{{ url_for('admin.content_edit', slug=block.slug) }}" class="btn btn--secondary btn--sm">{{ _('Edit') }}</a>
+                    <form method="POST" action="{{ url_for('admin.content_delete', slug=block.slug) }}" style="display:inline" data-confirm="{{ _('Delete content block') }} &quot;{{ block.slug }}&quot;?">
+                        <button type="submit" class="btn btn--danger btn--sm">{{ _('Delete') }}</button>
+                    </form>
+                </td>
             </tr>
             {% endfor %}
         </tbody>
@@ -30,4 +39,14 @@
     <p class="admin-empty">{{ _('No content blocks yet. Create one to manage section text.') }}</p>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script nonce="{{ csp_nonce }}">
+document.querySelectorAll('form[data-confirm]').forEach(function(form) {
+    form.addEventListener('submit', function(e) {
+        if (!confirm(form.dataset.confirm)) e.preventDefault();
+    });
+});
+</script>
 {% endblock %}

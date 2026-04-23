@@ -52,7 +52,7 @@ from app import limiter
 from app.db import get_db
 from app.models import AdminUser
 from app.services.activity_log import get_recent_activity, log_action
-from app.services.content import create_block, get_all_blocks, save_block
+from app.services.content import create_block, delete_block, get_all_blocks, save_block
 from app.services.reviews import (
     approve_review,
     get_reviews_by_status,
@@ -578,14 +578,37 @@ def content_new():
     """Create a new content block with a unique slug identifier."""
     if request.method == 'POST':
         db = get_db()
-        slug = request.form.get('slug', '').strip()
+        from app.services.content import get_block_by_slug
+
+        raw_slug = request.form.get('slug', '').strip()
+        normalized = raw_slug.lower().replace(' ', '_')
         title = request.form.get('title', '').strip()
         content_html = request.form.get('content', '')
-        if slug:
-            create_block(db, slug, title, content_html)
-            flash(_('Content block created.'), 'success')
-        return redirect(url_for('admin.content'))
+        if not normalized:
+            flash(_('Slug is required.'), 'error')
+            return redirect(url_for('admin.content'))
+        if get_block_by_slug(db, normalized):
+            flash(
+                _('A content block with slug "%(slug)s" already exists. Edit it instead.', slug=normalized),
+                'error',
+            )
+            return redirect(url_for('admin.content_edit', slug=normalized))
+        create_block(db, raw_slug, title, content_html)
+        flash(_('Content block created.'), 'success')
+        return redirect(url_for('admin.content_edit', slug=normalized))
     return render_template('admin/content_edit.html', block=None, slug='')
+
+
+@admin_bp.route('/content/delete/<slug>', methods=['POST'])
+@login_required
+def content_delete(slug):
+    """Delete a content block by slug."""
+    db = get_db()
+    if delete_block(db, slug):
+        flash(_('Content block "%(slug)s" deleted.', slug=slug), 'success')
+    else:
+        flash(_('Content block "%(slug)s" not found.', slug=slug), 'error')
+    return redirect(url_for('admin.content'))
 
 
 # ============================================================
@@ -1396,15 +1419,14 @@ def theme():
     db = get_db()
 
     if request.method == 'POST':
-        from app.services.settings_svc import save_setting
+        from app.services.settings_svc import set_one
 
         data = request.form
-        save_setting(db, 'accent_color', data.get('accent_color', '#0071e3'))
-        save_setting(db, 'color_preset', data.get('color_preset', 'default'))
-        save_setting(db, 'font_pairing', data.get('font_pairing', 'inter'))
+        set_one(db, 'accent_color', data.get('accent_color', '#0071e3'))
+        set_one(db, 'color_preset', data.get('color_preset', 'default'))
+        set_one(db, 'font_pairing', data.get('font_pairing', 'inter'))
         custom_css = _sanitize_custom_css(data.get('custom_css', ''))
-        save_setting(db, 'custom_css', custom_css)
-        db.commit()
+        set_one(db, 'custom_css', custom_css)
         flash(_('Theme saved.'), 'success')
         return redirect(url_for('admin.theme'))
 

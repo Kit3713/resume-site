@@ -145,7 +145,7 @@
                 #}
                 {% set nav_items = {
                     'about':          {'label': _('About'),          'url': url_for('public.index') ~ '#about',        'hide': site_settings.get('nav_hide_about', 'false') == 'true'},
-                    'services':       {'label': _('Services'),       'url': url_for('public.services'),                 'hide': site_settings.get('nav_hide_services', 'false') == 'true'},
+                    'services':       {'label': site_settings.get('services_label') or _('Services'),       'url': url_for('public.services'),                 'hide': site_settings.get('nav_hide_services', 'false') == 'true'},
                     'portfolio':      {'label': _('Portfolio'),      'url': url_for('public.portfolio'),                'hide': site_settings.get('nav_hide_portfolio', 'false') == 'true'},
                     'projects':       {'label': _('Projects'),       'url': url_for('public.projects'),                 'hide': site_settings.get('nav_hide_projects', 'false') == 'true'},
                     'testimonials':   {'label': _('Testimonials'),   'url': url_for('public.testimonials'),             'hide': site_settings.get('nav_hide_testimonials', 'false') == 'true'},

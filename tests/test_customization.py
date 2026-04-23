@@ -362,3 +362,70 @@ def test_settings_save_nav_visibility(auth_client, app):
 
         db = get_db()
         assert get_setting(db, 'nav_hide_projects') == 'true'
+
+
+# ============================================================
+# THEME EDITOR (regression test for ImportError crash)
+# ============================================================
+
+
+def test_theme_editor_save_persists_values(auth_client, app):
+    """POST /admin/theme must persist accent/preset/font/custom_css.
+
+    Regression test: the route used to import a non-existent
+    ``save_setting`` symbol, so every save raised ImportError → 500.
+    """
+    response = auth_client.post(
+        '/admin/theme',
+        data={
+            'accent_color': '#ff3366',
+            'color_preset': 'coral',
+            'font_pairing': 'dm-sans',
+            'custom_css': 'body { color: red; }',
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 302  # redirect on success, not 500
+
+    with app.app_context():
+        from app.db import get_db
+        from app.models import get_setting
+
+        db = get_db()
+        assert get_setting(db, 'accent_color') == '#ff3366'
+        assert get_setting(db, 'color_preset') == 'coral'
+        assert get_setting(db, 'font_pairing') == 'dm-sans'
+        assert get_setting(db, 'custom_css') == 'body { color: red; }'
+
+
+# ============================================================
+# CUSTOMIZABLE SERVICES LABEL (Skills rename)
+# ============================================================
+
+
+def test_services_label_overrides_nav_and_heading(auth_client, app):
+    """Setting services_label should replace "Services" everywhere it's shown."""
+    auth_client.post(
+        '/admin/settings',
+        data={
+            'services_label': 'Skills',
+            'services_subtitle': 'Tools I use',
+            'site_title': 'Label Test',
+        },
+    )
+
+    public_client = app.test_client()
+    home = public_client.get('/').data
+    services = public_client.get('/services').data
+
+    assert b'>Skills</a>' in home  # nav link
+    assert b'Tools I use' in services  # subtitle
+    assert b'>Skills</h1>' in services  # page header
+    assert b'<title>Skills' in services  # browser tab title
+
+
+def test_services_label_empty_falls_back_to_default(client):
+    """With services_label blank (the default), the nav/heading render 'Services'."""
+    response = client.get('/services')
+    assert b'>Services</h1>' in response.data
+    assert b'What I can do for you' in response.data
