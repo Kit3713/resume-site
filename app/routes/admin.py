@@ -589,7 +589,10 @@ def content_new():
             return redirect(url_for('admin.content'))
         if get_block_by_slug(db, normalized):
             flash(
-                _('A content block with slug "%(slug)s" already exists. Edit it instead.', slug=normalized),
+                _(
+                    'A content block with slug "%(slug)s" already exists. Edit it instead.',
+                    slug=normalized,
+                ),
                 'error',
             )
             return redirect(url_for('admin.content_edit', slug=normalized))
