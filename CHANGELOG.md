@@ -7,6 +7,37 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.2 (Shield)
 
+### Security — Phase 23.2: one `get_client_ip()` helper (#34)
+
+- Extracted `app/services/request_ip.py:get_client_ip(request)` that walks `X-Forwarded-For` right-to-left against the `trusted_proxies` set and returns the first untrusted IP (the real client). Previously the XFF-trust logic was copy-pasted across five files with subtly different shapes — four of them (`contact.py`, `api.py`, `analytics.py`, `metrics.py`, `__init__.py`'s login-throttle hash) trusted XFF blindly, which let any direct-exposure caller spoof their source IP for rate limiting, analytics bucketing, and login lockout. The v0.3.1 Phase 22.6 interim fix on `admin.py` used a "leftmost when peer is trusted" algorithm that was still spoofable from behind an honest proxy; the right-to-left walk is the correct boundary.
+- Every inlined XFF split replaced with a call to the helper. The `test_no_inlined_xff_logic_remaining` grep-guard scans `app/**/*.py` and fails CI if a future route grows its own copy.
+- Seven unit tests cover the algorithm: no-XFF, empty-trusted, peer-not-trusted, right-to-left walk with forged leftmost, all-entries-trusted fallback, IPv6, malformed middle entry.
+
+### Security — Phase 23.3: constant-time admin credentials (#38, #46)
+
+- Username compare switched to `hmac.compare_digest`. The old `==` compare leaked bytewise match progress through wall-clock timing — enough signal to brute-force the admin username a character at a time over ~200 requests per character.
+- `check_password_hash` now runs **always**, even on a username miss. A module-level dummy hash (`generate_password_hash(secrets.token_urlsafe(32))`) absorbs the scrypt work when the username doesn't match, so "unknown username" and "valid username, bad password" take the same wall-clock time within the scrypt noise floor. Before this fix, a single request answered "does this username exist" in microseconds.
+- Regression test asserts the real-vs-dummy scrypt cost is within 2x (both > 1 ms — i.e. both are paying real scrypt work, not a degraded cheap-path). Second test confirms both failure branches record a `login_attempts` row so neither short-circuits past the lockout counter.
+
+### Security — Phase 23.4: weak `secret_key` is fatal at boot (#48) — BREAKING CHANGE
+
+- `_validate_secret_key` now **rejects** (aborts app startup) on three conditions that were previously warn-and-continue: (a) length under 32 chars, (b) well-known placeholder values, (c) missing entirely (already fatal). The warn paths silently shipped a site signing cookies with a guessable key, trivially forgeable.
+- The weak-key set picks up `CHANGE-ME-generate-a-random-key` (the `config.example.yaml` default, which was previously missed by the exact-match check) plus other common placeholders. The internal test marker `test-secret-key-for-testing-only` was removed from the set — it's 32 chars exactly and the conftest fixtures use it; not a realistic production placeholder.
+- **Breaking change for operators running a placeholder / short key**: the container will fail to start with a readable error pointing to `python manage.py generate-secret`. Generate a real key, update `config.yaml` / the `RESUME_SITE_SECRET_KEY` secret, restart. Forget to, and every admin session cookie issued after the rotation is invalid (the session epoch bump from logout won't help — the signing key itself changed) — visitors keep browsing, admin just re-logs in once. No data migration needed.
+
+### Security — Phase 23.5: header injection, body limits, tabnabbing, host-header spoof
+
+- **#35 Email header injection on contact form:** added `_contains_header_injection` guard that rejects CR/LF/NUL in submitter name or email before constructing the `MIMEMultipart`. Reply-To switched from raw string assignment to `email.utils.formataddr` so display-name encoding handles accented characters correctly. Regression tests for both name-field and email-field injection attempts; one test asserts an accented `Amélie Dupont` legitimate name still sends.
+- **#37 `MAX_CONTENT_LENGTH`:** set `app.config['MAX_CONTENT_LENGTH']` (default 16 MiB, overridable via new YAML key `max_request_size`). Werkzeug rejects oversized requests before any view code runs; the existing WAF-lite request filter may pre-empt with 400. Regression test asserts rejection regardless of which layer catches it.
+- **#57 Host header injection:** new `canonical_host` YAML key + `app/services/urls.py:canonical_url_root()` helper. `/sitemap.xml`, `/robots.txt`, and `/blog/feed.xml` now build absolute URLs via the helper instead of `request.url_root`. When `canonical_host` is unset, fallback to `request.url_root` preserves pre-23.5 behaviour so existing deployments are unchanged until they opt in. Two tests: Host spoof against `canonical_host` is ignored; unset fallback still works.
+- **#67 `target="_blank"` tabnabbing:** removed the `link_rel=None` override in `sanitize_html` so nh3 injects `rel="noopener noreferrer"` on every admin-authored `<a>`. Had to drop `rel` from `_ALLOWED_ATTRS['a']` (nh3 panics otherwise) — admin links can no longer carry custom rel values, but the default is now safe for every one of them.
+
+### Security — Phase 23.6: settings and upload input validation
+
+- **#18 `save_many` bool flip** — rewrote to iterate over submitted form keys, not `SETTINGS_REGISTRY`. Previously a save from one category silently reset every bool in every OTHER category to `false`. The admin form happened to submit every bool as a `<select>` so the HTML path was not observably affected, but API callers and any future partial-save flow were exposed. Two regression tests: `preserves_unrelated_bools` and `writes_submitted_bool_false`.
+- **#25 JSON settings validators** — `nav_order` and `homepage_layout` are now validated at POST time by `_validate_json_list_of_strings` and `_validate_homepage_layout`. Malformed JSON or wrong type or missing required fields → 400 with a human-readable flash. `contextlib.suppress` still protects the display-side read so a legacy bad row doesn't crash the site.
+- **#50 `display_tier` on photo upload** — HTML upload handler now validates `display_tier` against `{featured, grid, hidden}` before the INSERT, rejecting unknown values and cleaning up the quarantine file. The REST API path already had this check; the HTML path catches up.
+
 ### Security — Phase 23.1: session revocation (#33, #51)
 
 - **#51 Cookie replay bypass on `blog_admin_bp` closed.** `check_session_epoch` was registered as a `before_request` hook on `admin_bp` only; the sibling `blog_admin_bp` (everything under `/admin/blog`) did not re-register it, so a captured pre-logout cookie kept authenticating against the blog admin routes for the cookie's full lifetime. Re-registered the guard on `blog_admin_bp` and added `test_admin_blueprint_middleware_parity` in `tests/test_security.py` that asserts the security-critical middleware set matches between the two blueprints — a future `*_admin_bp` forgetting the guard now fails CI.

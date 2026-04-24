@@ -1390,15 +1390,15 @@ def portfolio_delete(photo_id):
 
 
 def _client_ip_from_request():
-    """Return the real client IP, honouring X-Forwarded-For from a proxy.
+    """Return the real client IP via the central Phase 23.2 helper.
 
-    Mirrors the logic in :mod:`app.routes.contact` so the API and the
-    HTML form agree on "whose" submission is whose for rate limiting.
+    Thin compat shim — kept because callers expect the ``'unknown'``
+    sentinel. The inlined logic moved to
+    :mod:`app.services.request_ip` during #34's extraction.
     """
-    forwarded = request.headers.get('X-Forwarded-For', request.remote_addr)
-    if forwarded and ',' in forwarded:
-        forwarded = forwarded.split(',')[0].strip()
-    return forwarded or 'unknown'
+    from app.services.request_ip import get_client_ip
+
+    return get_client_ip(request) or 'unknown'
 
 
 @api_bp.route('/contact', methods=['POST'])

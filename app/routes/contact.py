@@ -65,10 +65,13 @@ def contact_page():
             flash(_('Please enter a valid email address.'), 'error')
             return render_template('public/contact.html')
 
-        # Rate limiting — extract the real client IP from the proxy chain
-        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-        if client_ip and ',' in client_ip:
-            client_ip = client_ip.split(',')[0].strip()
+        # Rate limiting — resolve the real client IP via the central
+        # helper (Phase 23.2). Before the extraction, this inlined a
+        # blind X-Forwarded-For read that was spoofable on any direct-
+        # exposure deployment (audit #34).
+        from app.services.request_ip import get_client_ip
+
+        client_ip = get_client_ip(request)
 
         if count_recent_submissions(db, client_ip) >= 5:
             flash(_('Too many submissions. Please try again later.'), 'error')

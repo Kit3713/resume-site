@@ -41,7 +41,18 @@
       "type": "array",
       "items": { "type": "string" },
       "default": [],
-      "description": "Phase 22.6: CIDR ranges whose inbound connections may legitimately carry an X-Forwarded-For header. The admin IP allowlist consults XFF only when request.remote_addr falls inside this list; otherwise XFF is ignored and remote_addr is used directly. Full rollout to every IP-trusting callsite lands in v0.3.2 Phase 23.2."
+      "description": "Phase 22.6: CIDR ranges whose inbound connections may legitimately carry an X-Forwarded-For header. The admin IP allowlist consults XFF only when request.remote_addr falls inside this list; otherwise XFF is ignored and remote_addr is used directly. Phase 23.2 extends the same trust model to every IP-trusting callsite via get_client_ip()."
+    },
+    "canonical_host": {
+      "type": "string",
+      "default": "",
+      "description": "Phase 23.5 (#57): optional canonical origin (e.g. 'https://example.com') used when building absolute URLs in /sitemap.xml, /robots.txt, and /blog/feed.xml. When unset, falls back to request.url_root (the pre-23.5 behaviour) — set this on any deployment where the origin is reachable under multiple Host headers to prevent a spoofed Host from poisoning cached SEO artifacts and RSS subscriptions."
+    },
+    "max_request_size": {
+      "type": "integer",
+      "minimum": 1024,
+      "default": 16777216,
+      "description": "Phase 23.5 (#37): Flask MAX_CONTENT_LENGTH cap (bytes) for the total request body. Werkzeug rejects with 413 before any view code runs when Content-Length exceeds this. Default 16 MiB covers a 10 MB photo upload plus form overhead; raise only if a specific upload path needs more."
     },
     "smtp": {
       "type": "object",

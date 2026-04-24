@@ -50,7 +50,13 @@ _ALLOWED_TAGS = {
 }
 
 _ALLOWED_ATTRS = {
-    'a': {'href', 'target', 'rel'},
+    # Phase 23.5 (#67) — ``rel`` removed from the allowed set for
+    # ``<a>`` so nh3's built-in ``link_rel="noopener noreferrer"``
+    # injection can run without an assertion-failure panic (ammonia
+    # refuses to inject rel when it's already in the attribute
+    # allowlist). The admin no longer authors rel attributes; the
+    # sanitiser attaches them on every link.
+    'a': {'href', 'target'},
     'img': {'src', 'alt', 'width', 'height'},
     '*': {'class'},
 }
@@ -64,6 +70,15 @@ def sanitize_html(html: str) -> str:
     The previous ``_HAS_NH3`` fallback branch was removed because a
     missing ``nh3`` import silently disabled sanitisation for every
     write path the admin panel exposes.
+
+    Phase 23.5 (#67) — the ``link_rel=None`` override was removed.
+    nh3's default ``rel="noopener noreferrer"`` injection now applies
+    to every ``<a>`` tag the admin authors, so an admin-authored
+    ``<a target="_blank" href="https://external">`` no longer opens
+    a tabnabbing opportunity. The contract on admin-authored content
+    is "we control it", but the admin is a human who can paste
+    someone else's HTML — defaulting to safer rel attrs has no
+    downside beyond the single tag rendering.
     """
     if not html:
         return html
@@ -71,7 +86,6 @@ def sanitize_html(html: str) -> str:
         html,
         tags=_ALLOWED_TAGS,
         attributes=_ALLOWED_ATTRS,
-        link_rel=None,  # Don't forcibly add rel="noopener" — we control content
     )
 
 

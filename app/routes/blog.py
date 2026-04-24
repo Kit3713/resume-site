@@ -204,7 +204,14 @@ def blog_feed():
 
     site_title = get_setting(db, 'site_title', 'Portfolio')
     blog_title = get_setting(db, 'blog_title', 'Blog')
-    base_url = request.url_root.rstrip('/')
+    # Phase 23.5 (#57) — RSS readers cache the feed URL and every
+    # inside-feed link for the lifetime of a subscription. A spoofed
+    # Host header would permanently redirect subscribers to the wrong
+    # origin; the canonical helper pins this to ``canonical_host``
+    # when set.
+    from app.services.urls import canonical_url_root
+
+    base_url = canonical_url_root().rstrip('/')
     self_href = f'{base_url}/blog/feed.xml'
     if feed_locale != default_locale:
         self_href += f'?lang={feed_locale}'

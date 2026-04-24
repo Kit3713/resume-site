@@ -55,11 +55,13 @@ def track_page_view() -> None:
 
         db = get_db()
 
-        # Extract the real client IP from the proxy chain
-        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-        if client_ip and ',' in client_ip:
-            # X-Forwarded-For may contain multiple IPs; the leftmost is the client
-            client_ip = client_ip.split(',')[0].strip()
+        # Phase 23.2 — route the XFF decision through the one helper
+        # (see app/services/request_ip.py). Before the extraction, this
+        # trusted X-Forwarded-For blindly (audit #34), which let a
+        # direct-exposure caller spoof their origin.
+        from app.services.request_ip import get_client_ip
+
+        client_ip = get_client_ip(request)
 
         db.execute(
             'INSERT INTO page_views (path, referrer, user_agent, ip_address) VALUES (?, ?, ?, ?)',

@@ -770,3 +770,367 @@ def test_logout_revokes_cookie_on_blog_admin_routes(app):
     assert resp.status_code in (302, 401), (
         f'blog_admin accepted stale cookie post-logout: {resp.status_code}'
     )
+
+
+# ============================================================
+# CLIENT-IP RESOLUTION — Phase 23.2 (#34)
+# ============================================================
+
+
+class _FakeHeaders:
+    def __init__(self, data):
+        self._data = data
+
+    def get(self, key, default=''):
+        return self._data.get(key, default)
+
+
+class _FakeRequest:
+    """Minimal request stub for unit-testing get_client_ip.
+
+    The helper only reads ``remote_addr`` and ``headers.get`` — avoids
+    pulling the full Flask test-client stack in for a pure-function test.
+    """
+
+    def __init__(self, remote_addr, xff=None):
+        self.remote_addr = remote_addr
+        data = {}
+        if xff is not None:
+            data['X-Forwarded-For'] = xff
+        self.headers = _FakeHeaders(data)
+
+
+def _mk_req(remote_addr, xff=None):
+    return _FakeRequest(remote_addr, xff)
+
+
+def test_get_client_ip_no_xff_returns_remote_addr():
+    """Phase 23.2: with no XFF header, the TCP peer IS the client."""
+    from app.services.request_ip import get_client_ip
+
+    assert get_client_ip(_mk_req('1.2.3.4'), trusted_proxies=[]) == '1.2.3.4'
+
+
+def test_get_client_ip_xff_ignored_when_no_trusted_proxies():
+    """#34 headline: with trusted_proxies empty, XFF is ALWAYS ignored.
+
+    This is the direct-exposure default. Without this rule, a
+    non-proxied deployment accepted spoofed XFF headers for the contact
+    rate limit, API rate limit, analytics, /metrics, and login throttle.
+    """
+    from app.services.request_ip import get_client_ip
+
+    req = _mk_req('1.2.3.4', xff='127.0.0.1')
+    assert get_client_ip(req, trusted_proxies=[]) == '1.2.3.4'
+
+
+def test_get_client_ip_xff_ignored_when_peer_not_trusted():
+    """Phase 23.2: peer is not a trusted proxy → XFF ignored entirely.
+
+    Even with a trusted_proxies set, an attacker that reaches the
+    container directly (bypassing the reverse proxy) must not be able
+    to spoof their origin by setting XFF — the TCP peer IS them.
+    """
+    import ipaddress
+
+    from app.services.request_ip import get_client_ip
+
+    req = _mk_req('9.9.9.9', xff='127.0.0.1, 5.5.5.5')
+    trusted = [ipaddress.ip_network('10.0.0.0/24')]
+    assert get_client_ip(req, trusted_proxies=trusted) == '9.9.9.9'
+
+
+def test_get_client_ip_walks_right_to_left():
+    """Phase 23.2: with a proxy chain, the first right-to-left untrusted
+    IP is the client. Forged leftmost entries are correctly discarded.
+
+    Scenario: trusted proxy 10.0.0.5 forwards a request whose original
+    attacker set ``X-Forwarded-For: 127.0.0.1`` before the proxy appended
+    the real attacker IP. The leftmost-trust strategy (the v0.3.1
+    interim fix) would return the forged 127.0.0.1. Right-to-left
+    returns the real attacker.
+    """
+    import ipaddress
+
+    from app.services.request_ip import get_client_ip
+
+    req = _mk_req('10.0.0.5', xff='127.0.0.1, 9.9.9.9, 10.0.0.5')
+    trusted = [ipaddress.ip_network('10.0.0.0/24')]
+    assert get_client_ip(req, trusted_proxies=trusted) == '9.9.9.9'
+
+
+def test_get_client_ip_all_entries_trusted_falls_back_to_peer():
+    """Phase 23.2: if every XFF entry is a trusted proxy, we have no
+    real client IP to return — fall back to remote_addr."""
+    import ipaddress
+
+    from app.services.request_ip import get_client_ip
+
+    req = _mk_req('10.0.0.5', xff='10.0.0.1, 10.0.0.2, 10.0.0.5')
+    trusted = [ipaddress.ip_network('10.0.0.0/24')]
+    assert get_client_ip(req, trusted_proxies=trusted) == '10.0.0.5'
+
+
+def test_get_client_ip_handles_ipv6_chains():
+    """Phase 23.2: IPv6 in both peer and XFF is handled by the same walk."""
+    import ipaddress
+
+    from app.services.request_ip import get_client_ip
+
+    req = _mk_req(
+        'fd00:1::5',
+        xff='::1, 2001:db8::1, fd00:1::2',
+    )
+    trusted = [ipaddress.ip_network('fd00::/16')]
+    assert get_client_ip(req, trusted_proxies=trusted) == '2001:db8::1'
+
+
+def test_get_client_ip_malformed_xff_entry_is_skipped():
+    """Phase 23.2: a garbage token inside XFF doesn't break the walk."""
+    import ipaddress
+
+    from app.services.request_ip import get_client_ip
+
+    req = _mk_req('10.0.0.5', xff='8.8.8.8, not-an-ip, 10.0.0.5')
+    trusted = [ipaddress.ip_network('10.0.0.0/24')]
+    assert get_client_ip(req, trusted_proxies=trusted) == '8.8.8.8'
+
+
+def test_max_content_length_rejects_oversized_body(app):
+    """Phase 23.5 (#37): a request body larger than MAX_CONTENT_LENGTH
+    must be rejected before any view code runs. Werkzeug returns 413
+    when it reaches this path; the existing WAF-lite request filter
+    may preempt with 400 earlier in the chain. Either rejection is
+    acceptable — the contract is "oversized body is not processed",
+    not "specifically a 413".
+    """
+    client = app.test_client()
+    # MAX_CONTENT_LENGTH default = 16 MiB; send one byte past it.
+    limit = app.config['MAX_CONTENT_LENGTH']
+    oversized = b'A' * (limit + 1)
+    resp = client.post('/contact', data={'payload': oversized})
+    assert resp.status_code in (400, 413), (
+        f'expected 400 or 413 for oversized body, got {resp.status_code}'
+    )
+
+
+def test_max_content_length_config_keys_wired():
+    """Phase 23.5 (#37): Flask config keys are present and positive."""
+    # Build a plain app (no test client) to inspect startup config.
+    import tempfile
+    from pathlib import Path
+
+    from app import create_app
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        (tmp_path / 'config.yaml').write_text(
+            'secret_key: "' + 'x' * 64 + '"\n'
+            f'database_path: "{tmp_path}/site.db"\n'
+            f'photo_storage: "{tmp_path}/photos"\n'
+            'session_cookie_secure: false\n'
+            'admin:\n'
+            '  username: "admin"\n'
+            '  password_hash: ""\n'
+            '  allowed_networks:\n'
+            '    - "127.0.0.0/8"\n'
+        )
+        flask_app = create_app(config_path=str(tmp_path / 'config.yaml'))
+
+        assert flask_app.config.get('MAX_CONTENT_LENGTH', 0) > 0
+        assert flask_app.config['MAX_CONTENT_LENGTH'] >= 1024 * 1024  # >= 1 MiB
+
+
+def test_sanitize_html_adds_rel_noopener_to_links():
+    """Phase 23.5 (#67): admin-authored <a target="_blank"> must render
+    with rel="noopener noreferrer" injected by nh3's default link_rel.
+
+    Pre-23.5 the call used ``link_rel=None`` which disabled the
+    injection, leaving every target="_blank" link tabnabbable.
+    """
+    from app.services.content import sanitize_html
+
+    html = '<p><a href="https://external.example" target="_blank">go</a></p>'
+    result = sanitize_html(html)
+    assert 'rel="noopener noreferrer"' in result or 'rel="nofollow noopener noreferrer"' in result
+
+
+def test_canonical_url_root_uses_config_when_set(app):
+    """Phase 23.5 (#57): when ``canonical_host`` is set, url-rooting
+    helpers return it verbatim (trailing slash normalised) regardless
+    of the inbound Host header."""
+    with app.test_request_context('/', headers={'Host': 'attacker.example'}):
+        app.config['SITE_CONFIG'] = {
+            **app.config.get('SITE_CONFIG', {}),
+            'canonical_host': 'https://trusted.example',
+        }
+        from app.services.urls import canonical_url_root
+
+        assert canonical_url_root() == 'https://trusted.example/'
+
+
+def test_canonical_url_root_falls_back_to_request_when_unset(app):
+    """Phase 23.5 (#57): with canonical_host unset, fallback to the
+    inbound request.url_root — preserves pre-change behaviour."""
+    with app.test_request_context('/'):
+        app.config['SITE_CONFIG'] = {
+            k: v for k, v in app.config.get('SITE_CONFIG', {}).items() if k != 'canonical_host'
+        }
+        from app.services.urls import canonical_url_root
+
+        result = canonical_url_root()
+        # Flask's test request context gives http://localhost/
+        assert result.endswith('/')
+        assert '://' in result
+
+
+def test_weak_secret_key_short_is_fatal():
+    """Phase 23.4 (#48): a secret_key under 32 chars must abort app
+    creation, not boot with a warning that operators skim past."""
+    from app.services.config import _validate_secret_key
+
+    assert _validate_secret_key('too-short') is False
+    assert _validate_secret_key('x' * 31) is False
+    assert _validate_secret_key('x' * 32) is True
+
+
+def test_weak_secret_key_placeholder_is_fatal():
+    """Phase 23.4 (#48): the well-known placeholder values are fatal."""
+    from app.services.config import _validate_secret_key
+
+    for placeholder in (
+        'CHANGE-ME-generate-a-random-key',  # config.example.yaml default
+        'generate-a-random-key',
+        'change-me',
+        'secret',
+    ):
+        assert _validate_secret_key(placeholder) is False, (
+            f'placeholder {placeholder!r} must be rejected'
+        )
+
+
+def test_strong_secret_key_accepted():
+    """Phase 23.4 (#48): a 32+ char non-placeholder value is accepted."""
+    import secrets
+
+    from app.services.config import _validate_secret_key
+
+    assert _validate_secret_key(secrets.token_hex(32)) is True
+
+
+def test_login_scrypt_cost_paid_on_username_miss():
+    """Phase 23.3 (#46): a bad username must take roughly as long to
+    reject as a bad password on a valid username.
+
+    The before-23.3 path short-circuited ``check_password_hash`` on a
+    username mismatch (boolean ``and``), so a bad-username attempt
+    returned in microseconds while a valid-username bad-password
+    attempt paid the full scrypt cost. That is a timing oracle that
+    confirms username existence in a single request.
+
+    Methodology: 20 trials each of bad-username vs. good-username-bad-
+    password. Assert the ratio of the medians is within 2x, which is
+    well below the scrypt cost's ~100x headroom and tolerates the
+    variance you see on a shared test runner.
+    """
+    import statistics
+    import time
+
+    # Generate a real hash once so the test's own work doesn't dominate
+    # the measurement.
+    from werkzeug.security import check_password_hash, generate_password_hash
+
+    from app.routes.admin import _DUMMY_PASSWORD_HASH
+
+    real_hash = generate_password_hash('correct-horse-battery-staple')
+
+    def _measure(hash_value):
+        t0 = time.perf_counter()
+        check_password_hash(hash_value, 'not-the-password')
+        return time.perf_counter() - t0
+
+    # Warmup.
+    for _ in range(3):
+        _measure(real_hash)
+        _measure(_DUMMY_PASSWORD_HASH)
+
+    real_times = [_measure(real_hash) for _ in range(20)]
+    dummy_times = [_measure(_DUMMY_PASSWORD_HASH) for _ in range(20)]
+
+    real_median = statistics.median(real_times)
+    dummy_median = statistics.median(dummy_times)
+
+    # Both paths must pay a meaningful scrypt cost (> 1ms on any box
+    # the test runs on). Without this, the dummy hash could silently
+    # have degraded to a cheap algorithm and the test would pass for
+    # the wrong reason.
+    assert real_median > 0.001, f'real scrypt too fast: {real_median * 1000:.2f}ms'
+    assert dummy_median > 0.001, f'dummy scrypt too fast: {dummy_median * 1000:.2f}ms'
+
+    # Ratio within 2x — both are scrypt, so costs should be close.
+    ratio = max(real_median, dummy_median) / min(real_median, dummy_median)
+    assert ratio < 2.0, (
+        f'scrypt cost mismatch: real={real_median * 1000:.2f}ms, '
+        f'dummy={dummy_median * 1000:.2f}ms (ratio {ratio:.2f})'
+    )
+
+
+def test_login_username_miss_does_not_short_circuit(app):
+    """Phase 23.3 (#46) end-to-end: a login with the wrong username and
+    a login with the right username + wrong password must both reach
+    the credential-check branch. The observable is that both increment
+    the failed-login counter (a short-circuit would skip the counter
+    for the unknown-user path).
+    """
+    client = app.test_client()
+
+    # Wrong username.
+    r1 = client.post(
+        '/admin/login',
+        data={'username': 'not-admin', 'password': 'whatever'},
+    )
+    # Right username, wrong password.
+    r2 = client.post(
+        '/admin/login',
+        data={'username': 'admin', 'password': 'not-the-real-one'},
+    )
+
+    # Neither path should 302-to-dashboard.
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+
+    # Both paths should have recorded a failed attempt.
+    with app.app_context():
+        from app.db import get_db
+
+        db = get_db()
+        rows = db.execute('SELECT COUNT(*) FROM login_attempts WHERE success = 0').fetchone()
+        assert rows[0] >= 2, f'expected ≥2 failed login records, got {rows[0]}'
+
+
+def test_no_inlined_xff_logic_remaining():
+    """Regression: #34 is closed when no application file reimplements
+    the XFF-split logic inline. If a new route grows its own copy
+    instead of calling get_client_ip(), this grep-guard fails CI.
+    """
+    from pathlib import Path
+
+    app_dir = Path(__file__).parent.parent / 'app'
+    offenders = []
+    for py_file in app_dir.rglob('*.py'):
+        if py_file.name == 'request_ip.py':
+            continue
+        text = py_file.read_text()
+        # The specific anti-pattern: taking X-Forwarded-For with a
+        # request.remote_addr fallback and splitting on comma to grab
+        # the leftmost. That's the exact shape #34 extracted.
+        if (
+            "headers.get('X-Forwarded-For'" in text
+            and 'remote_addr' in text
+            and ".split(',')" in text
+        ):
+            offenders.append(str(py_file.relative_to(app_dir.parent)))
+    assert not offenders, (
+        f'New inlined XFF logic detected in {offenders} — '
+        f'call app.services.request_ip.get_client_ip instead.'
+    )

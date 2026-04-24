@@ -139,6 +139,14 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
     app.config['DATABASE_PATH'] = site_config.get('database_path', 'data/site.db')
     app.config['PHOTO_STORAGE'] = site_config.get('photo_storage', 'photos')
     app.config['MAX_UPLOAD_SIZE'] = site_config.get('max_upload_size', 10 * 1024 * 1024)
+    # Phase 23.5 (#37) — cap the total request body at 16 MB so a
+    # caller can't bypass the per-field upload check by streaming a
+    # multi-GB payload at any endpoint. Werkzeug rejects with 413 as
+    # soon as Content-Length exceeds the limit, before any view code
+    # runs. The 16 MB figure = ``MAX_UPLOAD_SIZE`` (10 MB default
+    # photo) + room for a second file and form overhead; operators
+    # who need more can override via ``max_request_size`` in config.
+    app.config['MAX_CONTENT_LENGTH'] = site_config.get('max_request_size', 16 * 1024 * 1024)
     app.config['SESSION_TIMEOUT_MINUTES'] = site_config.get('session_timeout_minutes', 60)
     app.config['SITE_CONFIG'] = site_config  # Full config dict available to services
     app.config['WTF_CSRF_TIME_LIMIT'] = 3600  # CSRF token expires after 1 hour
@@ -256,11 +264,20 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
     # --- 7b. Request-timing + client-IP hashing (Phase 18.1) ---
     # Runs after _assign_request_id so g.request_id is available to the
     # _RequestContextFilter installed by configure_logging().
+    #
+    # Phase 23.2 (#34) — hash the effective client IP via the central
+    # get_client_ip() helper instead of raw remote_addr. Without this,
+    # a reverse-proxied deployment bucketed every visitor under the
+    # proxy's IP for the login-throttle hash (so one brute-forcer
+    # locked out every legitimate user, or — worse — avoided lockout
+    # by rotating XFF). The helper returns remote_addr when there's no
+    # trust chain, preserving behaviour for direct-exposure setups.
     from app.services.logging import hash_client_ip
+    from app.services.request_ip import get_client_ip
 
     def _start_request_timer():
         g.request_start = time.monotonic()
-        g.client_ip_hash = hash_client_ip(request.remote_addr or '', app.secret_key or '')
+        g.client_ip_hash = hash_client_ip(get_client_ip(request) or '', app.secret_key or '')
 
     app.before_request(_start_request_timer)
 

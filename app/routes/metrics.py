@@ -57,11 +57,16 @@ def _resolve_allowed_networks(settings, site_config):
 
 
 def _client_ip():
-    """Return the real client IP, honouring X-Forwarded-For from Caddy."""
-    forwarded = request.headers.get('X-Forwarded-For', request.remote_addr)
-    if forwarded and ',' in forwarded:
-        forwarded = forwarded.split(',')[0].strip()
-    return forwarded
+    """Return the real client IP via the central Phase 23.2 helper.
+
+    Thin wrapper — kept for clarity at the one internal call site.
+    Before the #34 extraction this inlined a blind X-Forwarded-For
+    read that let a direct-exposure caller spoof their origin against
+    the /metrics IP gate.
+    """
+    from app.services.request_ip import get_client_ip
+
+    return get_client_ip(request)
 
 
 @metrics_bp.route('/metrics')

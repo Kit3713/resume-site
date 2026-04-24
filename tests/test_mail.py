@@ -87,4 +87,68 @@ def test_reply_to_always_the_submitter_not_from_address(app):
 
     msg = captured[0]
     assert msg['From'] == 'contact@collverkit.com'
-    assert msg['Reply-To'] == 'visitor@example.com'
+    # Phase 23.5 (#35) — Reply-To now uses email.utils.formataddr to
+    # include the submitter's display name. The visitor's email must
+    # still be the ONLY reply target (not the from_address), which is
+    # what this test locks in regardless of the display-name format.
+    reply_to = msg['Reply-To']
+    assert 'visitor@example.com' in reply_to
+    assert 'contact@collverkit.com' not in reply_to
+
+
+# ============================================================
+# Phase 23.5 — header injection rejection (#35)
+# ============================================================
+
+
+def test_header_injection_in_name_rejects_send(app):
+    """A name containing CR/LF must cause ``send_contact_email`` to
+    return False without invoking SMTP, so the injected ``Bcc:`` (or
+    any other forged header) never reaches the wire.
+    """
+    captured = []
+    smtp_patch, sent_fn = _patched_smtp(captured)
+
+    with smtp_patch, app.app_context():
+        app.config['SITE_CONFIG'] = {'smtp': _smtp_config()}
+        result = send_contact_email(
+            'Evil\r\nBcc: exfil@attacker.example',
+            'v@example.com',
+            'hi',
+        )
+
+    assert result is False
+    assert captured == []  # No message composed or sent.
+
+
+def test_header_injection_in_email_rejects_send(app):
+    """Injection through the email field must also be rejected."""
+    captured = []
+    smtp_patch, _ = _patched_smtp(captured)
+
+    with smtp_patch, app.app_context():
+        app.config['SITE_CONFIG'] = {'smtp': _smtp_config()}
+        result = send_contact_email(
+            'Dana',
+            'v@example.com\nBcc: exfil@attacker.example',
+            'hi',
+        )
+
+    assert result is False
+    assert captured == []
+
+
+def test_benign_name_with_accented_chars_still_sends(app):
+    """23.5 must not regress non-ASCII legitimate names — formataddr
+    handles MIME-encoding for display names with accented characters.
+    """
+    captured = []
+    smtp_patch, _ = _patched_smtp(captured)
+
+    with smtp_patch, app.app_context():
+        app.config['SITE_CONFIG'] = {'smtp': _smtp_config()}
+        result = send_contact_email('Amélie Dupont', 'a@example.com', 'bonjour')
+
+    assert result is True
+    assert len(captured) == 1
+    assert 'a@example.com' in captured[0]['Reply-To']

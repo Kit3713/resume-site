@@ -24,6 +24,7 @@ Admin features:
 """
 
 import contextlib
+import hmac
 import ipaddress
 import os
 import re
@@ -46,7 +47,7 @@ from flask import (
 )
 from flask_babel import gettext as _
 from flask_login import current_user, login_required, login_user, logout_user
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from app import limiter
 from app.db import get_db
@@ -73,63 +74,46 @@ from app.services.stats import add_stat, delete_stat, get_all_stats, update_stat
 admin_bp = Blueprint('admin', __name__, template_folder='../templates')
 
 
+# Phase 23.3 (#46) — dummy password hash used when the submitted
+# username does not match the configured admin username, so the scrypt
+# cost is paid on every login attempt regardless of whether the name
+# was valid. The hash is generated once per process from a fresh random
+# password; the plaintext is discarded immediately so nothing can match
+# it. Same algorithm defaults as ``generate_password_hash`` produces for
+# an operator who runs ``manage.py hash-password``, so the verification
+# cost matches the real hash within the scrypt noise floor.
+_DUMMY_PASSWORD_HASH = generate_password_hash(secrets.token_urlsafe(32))
+
+# Phase 23.6 (#50) — photo display_tier is a closed enum. Every write
+# path (this HTML handler and the service-layer API path) validates
+# against this set before inserting, so the column can never carry an
+# unknown value that would silently bypass the public visibility
+# filter in ``get_visible_photos``.
+_VALID_PHOTO_DISPLAY_TIERS = {'featured', 'grid', 'hidden'}
+
+
 # ============================================================
 # IP RESTRICTION MIDDLEWARE
 # ============================================================
-
-
-def _parse_cidr_list(entries):
-    """Translate a list / string of CIDR strings into ip_network objects.
-
-    Tolerant of None, empty, and malformed entries — malformed items are
-    skipped silently so a single typo can't crash every admin request.
-    Used by :func:`restrict_to_allowed_networks` to load the
-    ``trusted_proxies`` config.yaml entry.
-    """
-    if not entries:
-        return []
-    if isinstance(entries, str):
-        entries = [entries]
-    nets = []
-    for raw in entries:
-        try:
-            nets.append(ipaddress.ip_network(str(raw).strip(), strict=False))
-        except ValueError:
-            continue
-    return nets
 
 
 @admin_bp.before_request
 def restrict_to_allowed_networks():
     """Block admin access from IPs outside the configured allowed networks.
 
-    Runs before every admin route. Reads the client IP and checks it
-    against the CIDR ranges defined in ``config.yaml`` under
-    ``admin.allowed_networks``.
+    Runs before every admin route. Reads the effective client IP via
+    :func:`app.services.request_ip.get_client_ip` (the one helper that
+    correctly walks ``X-Forwarded-For`` right-to-left against the
+    ``trusted_proxies`` set — see that module's docstring for the
+    algorithm and the Phase 22.6 → 23.2 history) and checks it against
+    the CIDR ranges in ``config.yaml`` ``admin.allowed_networks``.
 
-    Phase 22.6 — #16 XFF-trust interim fix
-    --------------------------------------
-    ``X-Forwarded-For`` is only consulted when the TCP-level peer
-    (``request.remote_addr``) is inside the ``trusted_proxies`` CIDR
-    list in ``config.yaml``. A direct inbound request skips XFF
-    entirely, so an attacker that reaches the container directly
-    (bypassing Caddy) cannot forge ``X-Forwarded-For: 127.0.0.1`` to
-    pretend to be a local admin.
-
-    Security notes:
-    - Takes the leftmost IP from X-Forwarded-For (the original client),
-      but only when the request came from a trusted proxy.
-    - Fails closed: unparseable IPs get 403, malformed network entries
-      are skipped.
-    - Uses Python's ``ipaddress`` module for CIDR matching (no external
-      dependencies).
-
-    TODO(v0.3.2 Phase 23.2): the same logic lives verbatim in the
-    contact rate limit, API rate limit, analytics, ``/metrics`` access
-    control, and the login throttle — see audit issue #34. v0.3.1
-    ships the immediate fix here; the full extraction into a shared
-    ``get_client_ip()`` helper lands in v0.3.2.
+    Fails closed: unparseable IP → 403; malformed allowlist entry is
+    skipped. An empty allowlist is permissive (the explicit "no gate"
+    opt-in for trusted-LAN deployments).
     """
+    from app.services.request_ip import get_client_ip, parse_cidr_list
+
     config = current_app.config['SITE_CONFIG']
     allowed = config.get('admin', {}).get('allowed_networks', [])
 
@@ -137,22 +121,8 @@ def restrict_to_allowed_networks():
     if not allowed:
         return
 
-    trusted_proxies = _parse_cidr_list(config.get('trusted_proxies'))
-    direct_ip_str = request.remote_addr or ''
-    forwarded_raw = request.headers.get('X-Forwarded-For')
-
-    # Default: trust only the TCP peer. Only swap to XFF when the peer
-    # is itself a trusted proxy.
-    client_ip_str = direct_ip_str
-    if forwarded_raw and trusted_proxies:
-        try:
-            direct_ip = ipaddress.ip_address(direct_ip_str)
-        except (ValueError, TypeError):
-            direct_ip = None
-        if direct_ip is not None and any(direct_ip in net for net in trusted_proxies):
-            first = forwarded_raw.split(',')[0].strip()
-            if first:
-                client_ip_str = first
+    trusted_proxies = parse_cidr_list(config.get('trusted_proxies'))
+    client_ip_str = get_client_ip(request, trusted_proxies)
 
     # Parse the client IP (fail closed on invalid values)
     try:
@@ -340,12 +310,30 @@ def login():
                 {'Retry-After': str(status.seconds_remaining)},
             )
 
-        # Verify credentials against YAML config
-        if (
-            username == admin_config.get('username', 'admin')
-            and admin_config.get('password_hash')
-            and check_password_hash(admin_config['password_hash'], password)
-        ):
+        # Verify credentials against YAML config.
+        #
+        # Phase 23.3 (#38) — ``hmac.compare_digest`` makes the username
+        # compare take a wall-clock time that's independent of how many
+        # leading bytes match, so the attacker can't brute-force the
+        # admin username one character at a time off the timing signal.
+        #
+        # Phase 23.3 (#46) — ``check_password_hash`` is ALWAYS run, even
+        # on a username miss or when no ``password_hash`` is set. The
+        # dummy hash below has the same scrypt cost as the real hash, so
+        # the wall-clock delta between "valid user / bad password" and
+        # "unknown user" is below the noise floor. Without this the
+        # scrypt work only ran on a username hit, exposing a timing
+        # oracle that confirmed username existence in a single request
+        # (useful to an attacker who guessed the wrong name).
+        expected_username = admin_config.get('username', 'admin') or ''
+        real_hash = admin_config.get('password_hash', '') or ''
+        username_match = hmac.compare_digest(
+            username.encode('utf-8'),
+            expected_username.encode('utf-8'),
+        )
+        hash_to_check = real_hash if (username_match and real_hash) else _DUMMY_PASSWORD_HASH
+        password_ok = check_password_hash(hash_to_check, password)
+        if username_match and real_hash and password_ok:
             record_successful_login(db, ip_hash)
             user = AdminUser(username)
             login_user(user)
@@ -682,7 +670,19 @@ def photos_upload():
     title = request.form.get('title', '')
     description = request.form.get('description', '')
     category = request.form.get('category', '')
+    # Phase 23.6 (#50) — validate display_tier against the allowed set
+    # before inserting. The API path already rejected unknown tiers in
+    # the service layer; the HTML admin form accepted the value
+    # verbatim, so a manually-crafted form could stuff any string into
+    # the column (which then broke the public visibility filter that
+    # relied on the enum being one of the three known values).
     display_tier = request.form.get('display_tier', 'grid')
+    if display_tier not in _VALID_PHOTO_DISPLAY_TIERS:
+        flash(_('Invalid display tier.'), 'error')
+        # Clean up the quarantine file so a rejected upload doesn't leak disk.
+        with contextlib.suppress(Exception):
+            os.remove(os.path.join(current_app.config['PHOTO_STORAGE'], result['storage_name']))
+        return redirect(url_for('admin.photos'))
 
     cursor = db.execute(
         'INSERT INTO photos '
@@ -1466,6 +1466,56 @@ def theme():
     )
 
 
+def _validate_json_list_of_strings(raw, field_name, max_len=20):
+    """Phase 23.6 (#25) — validate ``raw`` is a JSON array of strings.
+
+    Used for ``nav_order`` in the settings form. Empty is handled by
+    the caller (treated as "use defaults"), so this function is only
+    called on non-empty input.
+    """
+    import json as _json
+
+    try:
+        parsed = _json.loads(raw)
+    except ValueError as exc:
+        return False, f'{field_name} is not valid JSON: {exc}'
+    if not isinstance(parsed, list):
+        return False, f'{field_name} must be a JSON array, got {type(parsed).__name__}'
+    if len(parsed) > max_len:
+        return False, f'{field_name} has {len(parsed)} entries; max {max_len}'
+    for i, entry in enumerate(parsed):
+        if not isinstance(entry, str):
+            return False, f'{field_name}[{i}] must be a string, got {type(entry).__name__}'
+        if len(entry) > 64:
+            return False, f'{field_name}[{i}] too long (>64 chars)'
+    return True, ''
+
+
+def _validate_homepage_layout(raw, max_len=20):
+    """Phase 23.6 (#25) — validate ``homepage_layout`` is a JSON array
+    of ``{section: str, visible: bool}`` dicts.
+    """
+    import json as _json
+
+    try:
+        parsed = _json.loads(raw)
+    except ValueError as exc:
+        return False, f'homepage_layout is not valid JSON: {exc}'
+    if not isinstance(parsed, list):
+        return False, 'homepage_layout must be a JSON array'
+    if len(parsed) > max_len:
+        return False, f'homepage_layout has {len(parsed)} entries; max {max_len}'
+    for i, entry in enumerate(parsed):
+        if not isinstance(entry, dict):
+            return False, f'homepage_layout[{i}] must be an object'
+        section = entry.get('section')
+        if not isinstance(section, str) or not section:
+            return False, f'homepage_layout[{i}].section must be a non-empty string'
+        if 'visible' in entry and not isinstance(entry['visible'], bool):
+            return False, f'homepage_layout[{i}].visible must be true or false'
+    return True, ''
+
+
 def _validate_custom_nav_links(raw):
     """Parse + validate the ``custom_nav_links`` JSON field (Phase 22.2 #17).
 
@@ -1552,6 +1602,34 @@ def settings():
             form_data.setlist('custom_nav_links', [cleaned])
         else:
             form_data = request.form
+
+        # Phase 23.6 (#25) — validate the JSON layout fields BEFORE
+        # saving so a malformed value doesn't silently land in the DB
+        # (where the template-side `contextlib.suppress` would eat the
+        # error and render the defaults, masking the bug). Accepts
+        # empty / unset as "use defaults".
+        nav_order_raw = form_data.get('nav_order')
+        if nav_order_raw:
+            ok, err = _validate_json_list_of_strings(nav_order_raw, 'nav_order', max_len=20)
+            if not ok:
+                flash(err, 'error')
+                grouped = get_grouped_settings(db)
+                all_settings = get_all_settings_svc(db)
+                return render_template(
+                    'admin/settings.html', settings=all_settings, grouped=grouped
+                ), 400
+
+        homepage_raw = form_data.get('homepage_layout')
+        if homepage_raw:
+            ok, err = _validate_homepage_layout(homepage_raw)
+            if not ok:
+                flash(err, 'error')
+                grouped = get_grouped_settings(db)
+                all_settings = get_all_settings_svc(db)
+                return render_template(
+                    'admin/settings.html', settings=all_settings, grouped=grouped
+                ), 400
+
         save_settings(db, form_data)
         with contextlib.suppress(Exception):
             log_action(db, 'Updated settings', 'settings')

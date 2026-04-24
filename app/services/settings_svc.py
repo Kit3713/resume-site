@@ -705,24 +705,35 @@ def get_uncached(db: sqlite3.Connection, key: str, default: str = '') -> str:
 def save_many(db: sqlite3.Connection, form_data: Mapping[str, Any]) -> None:
     """Save multiple settings from a form submission dict.
 
-    Only keys present in SETTINGS_REGISTRY are accepted. Unknown keys
-    are silently ignored to prevent injection of arbitrary settings.
-    Boolean settings use checkbox behavior: present in form_data means
-    'true', absent means 'false'.
+    Phase 23.6 (#18) — only keys present in ``form_data`` are written.
+    Previously this iterated every registered bool and wrote ``false``
+    when the key wasn't in the form, which turned "save the Navigation
+    category" into "reset every bool in every other category to
+    ``false``": a Content category save silently disabled the contact
+    form, a Security category save wiped the case-studies toggle, etc.
+    The regression test ``test_save_many_preserves_unrelated_bools``
+    locks this in.
+
+    Unknown keys (not in ``SETTINGS_REGISTRY``) are still silently
+    ignored to prevent form-injected arbitrary settings.
+
+    Callers that DO want the "unchecked checkbox = false" semantics
+    (a category save that includes hidden `<input name="foo" value="false">`
+    for every bool being toggled) continue to work: the template emits
+    the hidden input, the form has the key, this function upserts the
+    submitted value.
     """
-    for key, meta in SETTINGS_REGISTRY.items():
+    for key, value in form_data.items():
+        meta = SETTINGS_REGISTRY.get(key)
+        if meta is None:
+            continue  # Unknown key — ignored
         if meta['type'] == 'bool':
-            # Checkboxes: present = true, absent = false
-            # But select-based bools submit their value directly
-            if key in form_data:
-                value = form_data[key]
-                if value not in ('true', 'false'):
-                    value = 'true'
-            else:
-                value = 'false'
-            _upsert(db, key, value)
-        elif key in form_data:
-            _upsert(db, key, str(form_data[key]))
+            val = str(value).lower() if value is not None else 'false'
+            if val not in ('true', 'false'):
+                val = 'true'
+            _upsert(db, key, val)
+        else:
+            _upsert(db, key, str(value))
     db.commit()
     invalidate_cache()
 

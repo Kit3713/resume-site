@@ -315,10 +315,19 @@ def test_bulk_save_invalidates_cache(client, no_rate_limits, api_admin_token, ap
 # ---------------------------------------------------------------------------
 
 
-def test_save_many_treats_absent_bool_as_false(app):
-    """Form-submit path: a boolean key absent from ``form_data`` means
-    the checkbox was unchecked → store 'false'. This mirrors HTML form
-    semantics and is the reason the HTML handler must POST every key.
+def test_save_many_preserves_unrelated_bools(app):
+    """Phase 23.6 (#18): a ``save_many`` call must only update keys
+    present in ``form_data``. Bool keys omitted from the form stay at
+    whatever value they already have.
+
+    Before 23.6 the function iterated every registered bool and wrote
+    ``'false'`` for any absent key — so a "save the Navigation
+    category" submit silently disabled the contact form, wiped the
+    case-studies toggle, reset the blog enable flag, etc. The admin
+    form happens to emit every bool in every category as a ``<select>``
+    (so the form was never actually empty of a given bool in HTML),
+    which masked the bug for form submits while leaving API callers
+    and future partial-save flows exposed.
     """
     from app.services.settings_svc import save_many
 
@@ -333,8 +342,61 @@ def test_save_many_treats_absent_bool_as_false(app):
 
         save_many(db, {'site_title': 'abc'})  # no dark_mode_default key
 
-    # The admin form semantic flipped it to 'false'
+    # Regression: the unrelated bool must remain 'true', NOT flip to 'false'.
+    assert _read_raw_value(app, 'dark_mode_default') == 'true'
+
+
+def test_save_many_writes_submitted_bool_false(app):
+    """Phase 23.6 (#18): an explicit ``false`` in form_data still
+    writes ``'false'`` — this is the path the admin form actually uses
+    (every bool is a <select> that posts its current value)."""
+    from app.services.settings_svc import save_many
+
+    with app.app_context():
+        from app.db import get_db
+
+        db = get_db()
+        db.execute(
+            "INSERT OR REPLACE INTO settings(key, value) VALUES ('dark_mode_default', 'true')"
+        )
+        db.commit()
+
+        save_many(db, {'dark_mode_default': 'false'})
+
     assert _read_raw_value(app, 'dark_mode_default') == 'false'
+
+
+def test_nav_order_json_validation_rejects_bad_input(auth_client):
+    """Phase 23.6 (#25): a non-JSON or wrong-type ``nav_order`` is
+    rejected at the form POST with 400, not silently written to the DB
+    where the context processor would just ignore it."""
+    resp = auth_client.post(
+        '/admin/settings',
+        data={'nav_order': '{"not": "a list"}', 'site_title': 'Test'},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 400
+
+
+def test_homepage_layout_json_validation_rejects_bad_input(auth_client):
+    """Phase 23.6 (#25): a malformed ``homepage_layout`` JSON (missing
+    required ``section`` field) is rejected with 400."""
+    resp = auth_client.post(
+        '/admin/settings',
+        data={'homepage_layout': '[{"visible": true}]', 'site_title': 'Test'},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 400
+
+
+def test_nav_order_accepts_valid_json(auth_client):
+    """Phase 23.6 (#25): a well-formed JSON array of strings still saves."""
+    resp = auth_client.post(
+        '/admin/settings',
+        data={'nav_order': '["about", "services"]', 'site_title': 'Test'},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
 
 
 def test_save_many_accepts_present_bool_true(app):

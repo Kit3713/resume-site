@@ -78,7 +78,8 @@ def seeded_config(tmp_path):
     """Return a config.yaml path with a handful of plausible values."""
     cfg = tmp_path / 'config.yaml'
     cfg.write_text(
-        'secret_key: "test-secret"\ndatabase_path: "data/site.db"\nphoto_storage: "photos"\n'
+        'secret_key: "test-secret-key-for-backup-tests-padded"\n'
+        'database_path: "data/site.db"\nphoto_storage: "photos"\n'
     )
     return str(cfg)
 

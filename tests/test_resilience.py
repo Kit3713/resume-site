@@ -414,7 +414,7 @@ def _write_minimal_config(tmp_path, db_path):
     """Write just enough config.yaml to make manage.py happy."""
     config_path = tmp_path / 'config.yaml'
     config_path.write_text(
-        'secret_key: "test-secret-key-for-resilience"\n'
+        'secret_key: "test-secret-key-for-resilience-tests-padded"\n'
         f'database_path: "{db_path}"\n'
         f'photo_storage: "{tmp_path}/photos"\n'
         'admin:\n'

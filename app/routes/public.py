@@ -358,7 +358,11 @@ def sitemap():
     from app.models import get_visible_projects as _visible_projects
 
     db = get_db()
-    base_url = request.url_root.rstrip('/')
+    # Phase 23.5 (#57) — use the canonical URL helper so a spoofed
+    # Host header can't poison cached sitemap entries.
+    from app.services.urls import canonical_url_root
+
+    base_url = canonical_url_root().rstrip('/')
 
     # Static pages with their SEO priority
     pages = [
@@ -426,7 +430,9 @@ def robots():
     Allows all crawlers on public pages, blocks /admin routes,
     and points to the sitemap for discovery.
     """
-    base_url = request.url_root.rstrip('/')
+    from app.services.urls import canonical_url_root
+
+    base_url = canonical_url_root().rstrip('/')
     txt = f'User-agent: *\nAllow: /\nDisallow: /admin\nSitemap: {base_url}/sitemap.xml\n'
     response = make_response(txt)
     response.headers['Content-Type'] = 'text/plain'

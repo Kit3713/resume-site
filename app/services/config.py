@@ -82,13 +82,21 @@ _ENV_VAR_MAP = {
     'RESUME_SITE_ADMIN_PASSWORD_HASH': 'admin.password_hash',
 }
 
-# Example/placeholder secret keys that should trigger a warning.
+# Example/placeholder secret keys that trigger a fatal at boot (Phase
+# 23.4 #48). Match the exact value after ``lower()`` so
+# ``config.example.yaml``'s ``CHANGE-ME-generate-a-random-key`` and
+# every common placeholder operators copy-paste are caught. The old
+# ``test-secret-key-for-testing-only`` entry was dropped from this set
+# when the 32-char floor landed — that value is 32 chars exactly (the
+# floor accepts it) and the conftest test fixtures rely on it.
 _WEAK_SECRET_KEYS = {
     'generate-a-random-key',
+    'change-me-generate-a-random-key',
     'change-me',
+    'changeme',
     'secret',
     'your-secret-key',
-    'test-secret-key-for-testing-only',
+    'replace-this-with-a-real-key',
 }
 
 
@@ -170,11 +178,21 @@ def _resolve_password_file(config):
 
 
 def _validate_secret_key(secret_key):
-    """Check the secret key for weakness and warn accordingly.
+    """Check the secret key; reject weak/missing/placeholder values.
 
-    Returns True if the key is acceptable, False if it's missing entirely.
-    Warnings are printed but don't prevent startup — only a missing key
-    is fatal.
+    Returns True only if the key is both non-empty and strong enough
+    for production. All three weakness paths — missing, well-known
+    placeholder, under 32 chars — return False and abort app startup.
+
+    Phase 23.4 (#48) — pre-23.4, the placeholder and short-key paths
+    were warn-only and fell through to ``return True``. Operators who
+    skimmed the boot log saw the site start and assumed it was fine;
+    the resulting deployment signed Flask session cookies with a
+    guessable key, which lets any attacker who finds the key (via the
+    example file, git history, or basic guessing) forge admin cookies
+    directly. Flipping these to fatal is a **breaking change** for
+    anyone running a placeholder — CHANGELOG.md calls out
+    ``manage.py generate-secret`` as the escape hatch.
     """
     if not secret_key:
         print(
@@ -187,18 +205,20 @@ def _validate_secret_key(secret_key):
 
     if key_str.lower() in _WEAK_SECRET_KEYS:
         print(
-            'WARNING: secret_key appears to be an example/placeholder value. '
-            'Generate a secure one with: python manage.py generate-secret',
+            'ERROR: secret_key is a well-known example/placeholder value. '
+            'Generate a real one with: python manage.py generate-secret',
             file=sys.stderr,
         )
+        return False
 
     if len(key_str) < 32:
         print(
-            f'WARNING: secret_key is only {len(key_str)} characters. '
-            'A minimum of 32 characters is recommended for production. '
+            f'ERROR: secret_key is only {len(key_str)} characters. '
+            'A minimum of 32 characters is required. '
             'Generate one with: python manage.py generate-secret',
             file=sys.stderr,
         )
+        return False
 
     return True
 

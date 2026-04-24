@@ -21,8 +21,27 @@ saves to the database first, so no submission is lost even if SMTP fails.
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formataddr
 
 from flask import current_app
+
+
+def _contains_header_injection(value: str) -> bool:
+    """Return True if ``value`` contains a byte that can split a header.
+
+    Phase 23.5 (#35). RFC 5322 separates headers with CRLF; an attacker
+    who can inject a ``\\r\\n`` sequence into a value that ends up as
+    ``msg['Subject']`` or ``msg['Reply-To']`` can append arbitrary
+    headers (notably ``Bcc:``) to the outbound message and silently
+    exfiltrate every contact submission to a third-party address.
+
+    We also reject the bare ``\\n`` variant because some SMTP servers /
+    libraries normalise LF to CRLF, and null bytes as belt-and-braces
+    against any transport that treats them as terminators.
+    """
+    if value is None:
+        return False
+    return any(ch in value for ch in ('\r', '\n', '\0'))
 
 
 def send_contact_email(name: str, email: str, message: str) -> bool:
@@ -38,6 +57,8 @@ def send_contact_email(name: str, email: str, message: str) -> bool:
 
     Returns:
         bool: True if the email was sent successfully, False otherwise.
+            Returns False on SMTP failure AND on header-injection
+            attempts — a tampered submission is never forwarded.
     """
     # Read SMTP configuration from the app's YAML config
     config = current_app.config['SITE_CONFIG'].get('smtp', {})
@@ -57,11 +78,25 @@ def send_contact_email(name: str, email: str, message: str) -> bool:
     if not all([host, user, password, recipient]):
         return False
 
+    # Phase 23.5 (#35) — reject any submitted name / email containing a
+    # header-splitting byte before it reaches the MIMEMultipart
+    # constructor. ``email.policy`` does sanitise in modern Python, but
+    # belt-and-braces is cheap and makes the threat model explicit at
+    # the boundary. The contact route already records the raw
+    # submission in SQLite via ``save_contact_submission`` before this
+    # function runs, so admin visibility is preserved even when the
+    # email delivery is suppressed.
+    if _contains_header_injection(name) or _contains_header_injection(email):
+        return False
+
     # Compose the email
     msg = MIMEMultipart()
     msg['From'] = from_address
     msg['To'] = recipient
-    msg['Reply-To'] = email  # Allows the admin to reply directly to the submitter
+    # ``formataddr`` quotes the display name if needed and is the
+    # library-blessed way to attach a Reply-To with a submitter's
+    # address — safer than interpolating the raw string.
+    msg['Reply-To'] = formataddr((name, email))
     msg['Subject'] = f'New Contact: {name}'
 
     body = f'Name: {name}\nEmail: {email}\n\n---\n\n{message}'
