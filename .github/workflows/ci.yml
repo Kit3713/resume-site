@@ -149,7 +149,7 @@ jobs:
         run: |
           # Start container with minimal config
           cat > /tmp/config.yaml <<EOF
-          secret_key: "ci-test-key-not-for-production"
+          secret_key: "ci-test-key-not-for-production-32-chars-minimum-ok"
           database_path: "/app/data/site.db"
           photo_storage: "/app/photos"
           admin:

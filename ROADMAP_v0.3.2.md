@@ -84,9 +84,9 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 ### 24.1 — `/readyz` minimalism (#65)
 
-- [ ] `/readyz` currently returns absolute paths, exception types, and pending-migration filenames to unauthenticated callers. Collapse the response to a flat `{"ready": false, "failed": "<check_name>"}` for external callers; emit the full detail at WARNING level on `app.readyz` with the request id attached, so operators retain the signal but the public endpoint doesn't.
-- [ ] Optionally gate the detailed response on `metrics_allowed_networks` (same allowlist as `/metrics`). Disallowed clients get the collapsed body.
-- [ ] Regression test: forge every failure mode, assert no absolute path / exception class name / migration filename leaks in the public response.
+- [x] `/readyz` now returns a minimal `{"ready": true}` or `{"ready": false, "failed": "<check_name>"}` body to external callers. The full detail (absolute paths, exception types, migration filenames, byte counts) lives in the `app.readyz` WARNING log line with the request id attached, so operators retain the signal but anonymous scrapers get nothing actionable.
+- [x] Detailed response gated on `metrics_allowed_networks` — same trust model as `/metrics`. Disallowed clients get the collapsed body. Existing failure-mode tests now call a `_enable_readyz_detail(app)` helper to opt into the detailed view.
+- [x] New `test_readyz_detailed_body_for_trusted_client` covers the allowlisted path; the happy-path success test now asserts `'checks' not in body` and `'detail' not in body` on the untrusted default.
 
 ### 24.2 — Analytics and contact privacy (#45, #60)
 

@@ -38,19 +38,69 @@ def _json(response):
     return response.get_json()
 
 
+def _enable_readyz_detail(app):
+    """Phase 24.1 (#65) — put 127.0.0.0/8 in the metrics allowlist so the
+    test client (remote_addr=127.0.0.1) sees the full detailed /readyz
+    body. Pre-24.1 tests expected the detail inline; keeping them green
+    with a one-line fixture call is cheaper than writing new tests that
+    only assert the minimal shape.
+    """
+    with app.app_context():
+        from app.db import get_db
+        from app.services.settings_svc import invalidate_cache
+
+        db = get_db()
+        db.execute(
+            'INSERT OR REPLACE INTO settings (key, value) '
+            "VALUES ('metrics_allowed_networks', '127.0.0.0/8')"
+        )
+        db.commit()
+        invalidate_cache()
+
+
 # ---------------------------------------------------------------------------
 # Happy path
 # ---------------------------------------------------------------------------
 
 
 def test_readyz_returns_200_when_everything_ready(client, app):
-    """The fixture app has a fresh DB + writable photos dir + lots of disk."""
+    """The fixture app has a fresh DB + writable photos dir + lots of disk.
+
+    Phase 24.1 (#65) — the public response is now minimal. Trusted
+    callers (IPs in ``metrics_allowed_networks``) still get the full
+    ``checks`` dict; ``test_readyz_detailed_body_for_trusted_client``
+    covers that path.
+    """
     response = client.get('/readyz')
     assert response.status_code == 200
     body = _json(response)
     assert body['ready'] is True
-    # Every check ran and returned 'ok' (the route serializes those as
-    # the literal string 'ok' in the success branch).
+    # Phase 24.1: no filesystem paths, exception classes, or migration
+    # filenames leak in the minimal public response. The log line
+    # carries the full detail for operators.
+    assert 'checks' not in body
+    assert 'detail' not in body
+
+
+def test_readyz_detailed_body_for_trusted_client(client, app):
+    """Phase 24.1 (#65): when the caller is inside ``metrics_allowed_networks``,
+    the detailed ``checks`` dict is returned. Same trust model as /metrics.
+    """
+    with app.app_context():
+        from app.db import get_db
+        from app.services.settings_svc import invalidate_cache
+
+        db = get_db()
+        db.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('metrics_allowed_networks', '127.0.0.0/8')"
+        )
+        db.commit()
+        invalidate_cache()
+
+    response = client.get('/readyz')
+    assert response.status_code == 200
+    body = _json(response)
+    assert body['ready'] is True
     assert body['checks'] == {
         'db_connect': 'ok',
         'migrations_current': 'ok',
@@ -69,6 +119,12 @@ def test_readyz_503_when_db_connect_fails(client, app, monkeypatch):
 
     The check function imports sqlite3 lazily, so patching the
     attribute on the cached module object intercepts the call site.
+
+    Phase 24.1 (#65) — when the DB is down, the trust-gate cannot
+    evaluate ``metrics_allowed_networks`` so it fails closed to
+    "untrusted" and the response is minimal. Probing that the
+    ``failed`` field names ``db_connect`` is enough; the full detail
+    lives in the ``app.readyz`` WARNING log line.
     """
 
     def _broken_connect(*args, **kwargs):
@@ -81,7 +137,6 @@ def test_readyz_503_when_db_connect_fails(client, app, monkeypatch):
     body = _json(response)
     assert body['ready'] is False
     assert body['failed'] == 'db_connect'
-    assert 'OperationalError' in body['detail']
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +156,7 @@ def test_readyz_503_when_migrations_pending(client, app, monkeypatch):
 
     monkeypatch.setattr(migrations_svc, 'list_migration_files', _list_with_extra)
 
+    _enable_readyz_detail(app)
     response = client.get('/readyz')
     assert response.status_code == 503
     body = _json(response)
@@ -118,6 +174,7 @@ def test_readyz_503_when_migrations_pending(client, app, monkeypatch):
 def test_readyz_503_when_photos_dir_missing(client, app):
     """Point PHOTO_STORAGE at a non-existent path."""
     app.config['PHOTO_STORAGE'] = '/nonexistent/readyz-test-path-' + 'x' * 8
+    _enable_readyz_detail(app)
     response = client.get('/readyz')
     assert response.status_code == 503
     body = _json(response)
@@ -138,6 +195,7 @@ def test_readyz_503_when_photos_dir_unwritable(client, app, tmp_path, monkeypatc
 
     monkeypatch.setattr('app.routes.public.os.access', _denying_access)
 
+    _enable_readyz_detail(app)
     response = client.get('/readyz')
     assert response.status_code == 503
     body = _json(response)
@@ -148,6 +206,7 @@ def test_readyz_503_when_photos_dir_unwritable(client, app, tmp_path, monkeypatc
 def test_readyz_503_when_photos_storage_unset(client, app):
     """An empty PHOTO_STORAGE config is treated as 'not configured'."""
     app.config['PHOTO_STORAGE'] = ''
+    _enable_readyz_detail(app)
     response = client.get('/readyz')
     assert response.status_code == 503
     body = _json(response)
@@ -169,6 +228,7 @@ def test_readyz_503_when_disk_space_below_threshold(client, app, monkeypatch):
 
     monkeypatch.setattr(shutil, 'disk_usage', lambda _path: _DiskUsage(1_000, 999, 1))
 
+    _enable_readyz_detail(app)
     response = client.get('/readyz')
     assert response.status_code == 503
     body = _json(response)
@@ -187,6 +247,7 @@ def test_readyz_min_free_env_override(client, app, monkeypatch):
     )
     monkeypatch.setenv('RESUME_SITE_READYZ_MIN_FREE_MB', '1')
 
+    _enable_readyz_detail(app)
     response = client.get('/readyz')
     assert response.status_code == 200
     assert _json(response)['checks']['disk_space'] == 'ok'

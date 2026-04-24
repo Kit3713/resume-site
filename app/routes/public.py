@@ -587,11 +587,23 @@ def readyz():
     4. ``disk_space`` — the database's host filesystem has at least
        ``RESUME_SITE_READYZ_MIN_FREE_MB`` (default 100MB) free.
 
-    Returns 200 with ``{"ready": true, "checks": {...}}`` on success;
-    503 with ``{"ready": false, "failed": "<name>", "detail": "..."}``
-    on the first failure.
+    Phase 24.1 (#65) — the public response body is minimal:
+    ``{"ready": true}`` on success, ``{"ready": false, "failed": "<name>"}``
+    on failure. No filesystem paths, no exception class names, no
+    migration filenames, no byte counts. Operators retain full detail
+    via ``app.readyz`` WARNING log lines (request_id attached), so
+    diagnosis doesn't lose fidelity — it just stops leaking to every
+    anonymous scraper that finds the endpoint.
+
+    When the caller's IP falls inside the existing ``metrics_allowed_networks``
+    allowlist (the /metrics gate), the detailed response is returned
+    instead, matching the trust model already established for
+    observability endpoints.
     """
     from flask import current_app
+
+    from app.services.logging import get_logger
+    from app.services.request_ip import get_client_ip
 
     db_path = current_app.config.get('DATABASE_PATH', '')
     photos_dir = current_app.config.get('PHOTO_STORAGE', '')
@@ -608,9 +620,47 @@ def readyz():
         ok, detail = fn()
         results[name] = 'ok' if ok else detail
         if not ok:
-            return (
-                jsonify(ready=False, failed=name, detail=detail, checks=results),
-                503,
+            # Log the full detail at WARNING regardless of the public
+            # response shape — operators have the signal, the internet
+            # doesn't.
+            get_logger('app.readyz').warning(
+                'readyz failed: %s — %s',
+                name,
+                detail,
             )
+            # Trusted network (metrics allowlist) sees the full detail;
+            # everyone else gets the minimal shape.
+            if _readyz_client_is_trusted(get_client_ip(request)):
+                return (
+                    jsonify(ready=False, failed=name, detail=detail, checks=results),
+                    503,
+                )
+            return jsonify(ready=False, failed=name), 503
 
-    return jsonify(ready=True, checks=results), 200
+    if _readyz_client_is_trusted(get_client_ip(request)):
+        return jsonify(ready=True, checks=results), 200
+    return jsonify(ready=True), 200
+
+
+def _readyz_client_is_trusted(client_ip: str) -> bool:
+    """Return True if ``client_ip`` is allowed to see the full response.
+
+    Piggy-backs on the ``metrics_allowed_networks`` setting (same trust
+    boundary as /metrics). A blank/unset setting means "no detailed
+    response to anyone" — operators scrape via the log lines instead.
+    """
+    from flask import current_app
+
+    from app.services.metrics import client_ip_in_networks, parse_cidr_list
+    from app.services.settings_svc import get_all_cached
+
+    try:
+        db = get_db()
+        settings = get_all_cached(db, current_app.config['DATABASE_PATH'])
+    except Exception:  # noqa: BLE001 — DB down → treat as untrusted
+        return False
+
+    networks = parse_cidr_list(settings.get('metrics_allowed_networks', ''))
+    if not networks:
+        return False
+    return client_ip_in_networks(client_ip, networks)
