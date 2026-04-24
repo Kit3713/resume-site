@@ -7,6 +7,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.3 (Proof)
 
+### Performance — Phase 26.2: Gunicorn `--preload` and worker recycling (#28, #53)
+
+- `docker-entrypoint.sh` now starts Gunicorn with `--preload --max-requests 2000 --max-requests-jitter 200`. `--preload` forks workers from a pre-loaded master (500-800 ms cold-start win, lower steady-state RSS via CoW). Worker recycling guards against Pillow / Jinja / SQLite statement-cache memory creep. The page_views drainer (25.2) and webhook thread pool (25.3) lazy-start on first use after fork, so `--preload` is safe.
+
 ### Performance — Phase 26.1: translations N+1 eliminated (#52)
 
 - `overlay_posts_translations` rewritten from a per-post `get_translated` loop to a single batched `SELECT * FROM blog_post_translations WHERE post_id IN (...) AND locale IN (?, ?)` query, merged in Python. Before the rewrite every post in a listing paid two queries (parent re-fetch + per-post translation lookup); at a 20-post `/blog/feed.xml` that was 40 extra hot-path SELECTs. Fallback-locale chain preserved; fast-path when active locale equals fallback is unchanged (zero queries).

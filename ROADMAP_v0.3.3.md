@@ -51,8 +51,8 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 ### 26.2 — Gunicorn `--preload` and worker recycling (#28, #53)
 
-- [ ] **#53 `--preload`:** Add to `docker-entrypoint.sh`. Documented 500-800 ms cold-start win + lower steady-state RSS via CoW. Verify no thread-affinity landmines on the event bus or the `page_views` drainer (both are started post-fork via `worker_int`/`post_fork` hooks if needed).
-- [ ] **#28 `--max-requests` / `--max-requests-jitter`:** Add `--max-requests 2000 --max-requests-jitter 200` so workers recycle. Guards against Pillow/Jinja/SQLite statement-cache creep. Documented in `PERFORMANCE.md` and `docs/PRODUCTION.md`.
+- [x] **#53 `--preload`:** Added to `docker-entrypoint.sh`. 500-800 ms cold-start win + lower steady-state RSS via copy-on-write. The page_views drainer (25.2) and webhook thread pool (25.3) are started lazily on first use, *after* fork, so `--preload` is safe.
+- [x] **#28 `--max-requests` / `--max-requests-jitter`:** Added `--max-requests 2000 --max-requests-jitter 200`. Workers recycle every ~2000 requests with a random 0-200 jitter so they don't all recycle simultaneously. Pairs with `--preload` — the recycled worker re-forks from the pre-loaded master, so recycling is cheap.
 
 ### 26.3 — Paginate `/admin/blog` (#54)
 
