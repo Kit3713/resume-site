@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.2 (Shield)
 
+### Performance — Phase 25.2: `page_views` off the hot path (#49)
+
+- `track_page_view` replaced its synchronous INSERT+COMMIT with an enqueue onto a bounded `queue.Queue` (10 000 cap). A single daemon drainer thread flushes in batches (500 events or 2 s, whichever first). Under burst load the SQLite write lock no longer contends with every other writer on the hot path. Queue-full drops silently + increments an exposed drop counter (`get_dropped_total()` for the future /metrics integration). Final flush on `atexit` so the last drain window isn't lost on process shutdown.
+- Test-bypass (`app.config['TESTING']`) keeps the synchronous write path so `tests/` assertions that read `page_views` immediately after a `client.get(...)` continue to work without having to sleep for a drain interval.
+- Four regression tests in `tests/test_page_views_batching.py` cover batch-flush correctness, atexit flush-remaining, queue-full drop counting, and 5-producer × 100-event concurrent enqueue without row loss.
+
 ### Fixed — Phase 27.2: review submission atomicity (#26)
 
 - `create_review` + `mark_token_used` now run inside an explicit `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` transaction with a third in-transaction token re-validate. Before, two separate statements without a transaction meant two concurrent submissions of the same token could both succeed (race between "token valid" check and "mark used" update). Now exactly one wins; the losing caller rolls back cleanly. `app.db._InstrumentedConnection` doesn't forward the context-manager protocol so the explicit form is used instead of `with db:`.
