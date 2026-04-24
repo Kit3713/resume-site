@@ -98,11 +98,18 @@
     })();
 
     // Bulk action helper (Phase 14.3). Call from page-specific scripts.
+    // Phase 27.1 (#20) — send the CSRF token in the X-CSRFToken header so
+    // Flask-WTF accepts the request. Before this fix every bulk action
+    // returned 400 (CSRF token missing), breaking the feature on every
+    // admin page that wired up a bulk action button.
     window.bulkAction = function(table, action, ids, params) {
         if (!ids.length) return Promise.resolve();
         return fetch('{{ url_for("admin.bulk_action") }}', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': token
+            },
             body: JSON.stringify({table: table, action: action, ids: ids, params: params || {}})
         }).then(function(r) { return r.json(); });
     };

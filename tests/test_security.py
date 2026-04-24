@@ -985,6 +985,82 @@ def test_canonical_url_root_falls_back_to_request_when_unset(app):
 
 
 # ============================================================
+# Phase 27.6 — set-locale open redirect (#21, #40)
+# ============================================================
+
+
+def test_set_locale_rejects_external_referrer(client):
+    """Phase 27.6: a Referer header pointing at an external origin must
+    NOT be echoed in the 302 Location — that's the open-redirect hole."""
+    resp = client.get(
+        '/set-locale/en',
+        headers={'Referer': 'https://attacker.example/phishing'},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    loc = resp.headers.get('Location', '')
+    assert 'attacker.example' not in loc
+    assert loc in ('/', 'http://localhost/')
+
+
+def test_set_locale_accepts_same_origin_referrer(client):
+    """Phase 27.6: a same-origin Referer is allowed — this is the
+    legitimate path the language switcher relies on."""
+    resp = client.get(
+        '/set-locale/en',
+        headers={'Referer': 'http://localhost/portfolio'},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers['Location'].endswith('/portfolio')
+
+
+def test_set_locale_scheme_relative_referrer_rejected(client):
+    """Phase 27.6: a scheme-relative '//evil.example' must not bypass
+    the same-origin check."""
+    resp = client.get(
+        '/set-locale/en',
+        headers={'Referer': '//attacker.example/phishing'},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    loc = resp.headers.get('Location', '')
+    assert 'attacker.example' not in loc
+
+
+# ============================================================
+# Phase 27.7 — /csp-report rate limit + content-type gate (#32)
+# ============================================================
+
+
+def test_csp_report_rejects_non_json_content_type(client):
+    """Phase 27.7: a non-JSON / non-CSP content type is silently
+    dropped (204) without touching the log — prevents an attacker
+    from flooding app.security via raw POSTs of arbitrary bodies."""
+    resp = client.post(
+        '/csp-report',
+        data='arbitrary',
+        headers={'Content-Type': 'text/plain'},
+    )
+    assert resp.status_code == 204
+
+
+def test_csp_report_accepts_application_csp_report(client):
+    """Phase 27.7: the browser-native content type is accepted."""
+    payload = (
+        b'{"csp-report": {"violated-directive": "script-src", '
+        b'"blocked-uri": "https://x.example", '
+        b'"document-uri": "http://localhost/"}}'
+    )
+    resp = client.post(
+        '/csp-report',
+        data=payload,
+        headers={'Content-Type': 'application/csp-report'},
+    )
+    assert resp.status_code == 204
+
+
+# ============================================================
 # Phase 24.4 — Server header removal (#14)
 # ============================================================
 

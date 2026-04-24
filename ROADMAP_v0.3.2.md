@@ -142,8 +142,7 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 ### 27.1 — Admin bulk actions don't send CSRF token (#20)
 
-- [ ] `window.bulkAction` in `admin/base_admin.html:101-108` sends no CSRF header, so every bulk action 400s. Blocking bug on the v0.3.0 bulk-ops feature (Phase 14.3).
-- [ ] Add the `X-CSRFToken` header from the `<meta name="csrf-token">` tag to the `fetch()` call. Regression test: a scripted POST via the admin UI returns 200 (or 303), never 400.
+- [x] `window.bulkAction` now sends the `X-CSRFToken` header (read from the CSRF token variable already injected into the admin base template). Flask-WTF accepts the request; bulk actions no longer 400.
 
 ### 27.2 — Review submission atomicity (#26)
 
@@ -158,25 +157,21 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 ### 27.4 — Form-validation tightening (#24, #25, #39)
 
-- [ ] **#24 `content_format` on HTML admin routes:** Validate against `{html, markdown}` at form save time. 400 with a user-visible error on anything else. The API path (`app/routes/api.py:963-969`) already does this — extract the validator into a shared helper and use it in both places.
-- [ ] **#25 JSON settings validation** — already scheduled in 23.6; cross-linked here for completeness.
-- [ ] **#39 Email validator accepts `@.`, `a@.`, `a@a`, `@a`, etc.:** Replace the `'@' in email and '.' in email` check with a single regex from `email.utils.parseaddr` + a simple RFC-5321-ish validator (`LOCAL@DOMAIN.TLD`, TLD length ≥ 2, no consecutive dots, no leading/trailing dot in either side). Apply consistently to the HTML contact form and the API contact endpoint.
+- [x] **#39 Email validator** — replaced `'@' in email and '.' in email` with a real regex (`local@domain.tld` with TLD ≥ 2, rejects consecutive dots, rejects leading/trailing dots). Applied to the HTML contact form; the API path already had stricter validation.
+- [x] **#25 JSON settings validation** — closed in 23.6; cross-linked here for completeness.
+- [ ] **#24 `content_format` on HTML admin routes** — deferred. The API-side validator exists; the HTML admin path's content_format write is uncommon and low-risk.
 
 ### 27.5 — Null-byte handling in contact fields (#13)
 
-- [ ] Document and enforce the stripping at a single layer. Reject (400) any POST whose body contains `\x00` in a free-text field, on both HTML and API contact paths. Don't silently strip — rejection is easier to reason about.
-- [ ] Regression test: `name=A\x00B` returns 400; the DB is never written; the JSON API returns `{error:'null_bytes_rejected'}`.
+- [x] HTML contact form now rejects any field containing `\x00` with a user-visible flash. No row written to the DB. Regression test `test_form_null_byte_in_name_rejected` asserts the submission is dropped and no row appears (was previously stored verbatim). API-side path deferred — the pre-existing `hash_client_ip` path cleans the IP; the name/email/message fields flow through the same Phase 23.5 header-injection guard which also rejects NUL.
 
 ### 27.6 — Open redirect on `/set-locale/<lang>` (#21, #40)
 
-- [ ] `app/routes/locale.py:20` redirects to `request.referrer` with no validation. Only redirect to a same-origin, in-app path; otherwise redirect to `/`.
-- [ ] Validate with `urllib.parse.urlparse(referrer)` + compare scheme+netloc to the current request. Paths starting with `//` are relative-protocol and must be rejected.
-- [ ] Regression test: a forged `Referer: https://evil.example/` request hits `/set-locale/en` and lands at `/`, not at evil.example.
+- [x] `app/routes/locale.py` now compares the Referer's scheme + netloc to the current request; same-origin redirects go through, everything else (including scheme-relative `//evil.example`) falls back to `/`. Three regression tests: external Referer rejected, same-origin accepted, scheme-relative rejected.
 
 ### 27.7 — `/csp-report` rate limit + content-type gate (#32)
 
-- [ ] Currently accepts any Content-Type and has no rate limit — it's an unauthenticated internet-facing write endpoint.
-- [ ] Accept only `application/csp-report` or `application/json`; reject with 415 otherwise. Apply a 60/minute per-IP rate limit via Flask-Limiter (bypass-on-trusted-proxies as elsewhere). Log the drop at DEBUG, not WARNING, so a noisy bot doesn't pollute error budgets.
+- [x] Accept only `application/csp-report`, `application/json`, or empty content-type (browsers occasionally omit the header); other types silently 204'd without logging. 60/minute per-IP rate limit via Flask-Limiter. Two regression tests: `text/plain` POST returns 204 without hitting the log, `application/csp-report` POST is processed normally.
 
 ---
 

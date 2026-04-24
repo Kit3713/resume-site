@@ -36,7 +36,7 @@ from flask import (
     send_from_directory,
 )
 
-from app import csrf
+from app import csrf, limiter
 from app.db import get_db
 from app.models import (
     get_all_visible_photos,
@@ -85,6 +85,7 @@ public_bp = Blueprint('public', __name__, template_folder='../templates')
 
 @public_bp.route('/csp-report', methods=['POST'])
 @csrf.exempt
+@limiter.limit('60 per minute')
 def csp_report():
     """Receive Content-Security-Policy violation reports from browsers.
 
@@ -92,6 +93,12 @@ def csp_report():
     directive is violated. We log it and increment a counter visible on
     the admin dashboard. Returns 204 regardless of payload validity so
     the browser doesn't retry.
+
+    Phase 27.7 (#32) — added a per-IP rate limit (60 / min) and a
+    content-type gate. Browsers send the standard
+    ``application/csp-report`` or ``application/json`` MIME type;
+    anything else is dropped early so an attacker can't flood the
+    app.security log via raw POSTs with arbitrary bodies.
 
     Phase 24.3 (#22) — every user-controlled field is routed through
     ``sanitize_log_field`` before the ``%s`` formatter sees it. The
@@ -102,6 +109,13 @@ def csp_report():
     import logging
 
     from app.services.logging import sanitize_log_field
+
+    # Content-type gate: browsers send application/csp-report or
+    # application/json. Anything else is a non-browser caller and we
+    # silently drop it.
+    content_type = (request.content_type or '').split(';')[0].strip().lower()
+    if content_type not in {'application/csp-report', 'application/json', ''}:
+        return '', 204
 
     logger = logging.getLogger('app.security')
     try:

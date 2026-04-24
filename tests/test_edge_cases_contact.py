@@ -166,19 +166,16 @@ def test_api_accepts_unicode_names(client, no_rate_limits, smtp_mock, name):
     assert smtp_mock[-1][0] == name
 
 
-def test_form_null_byte_in_name_does_not_500(client, no_rate_limits, smtp_mock, app):
-    """Null bytes in form fields must not 500 the server.
-
-    The current handler stores the byte verbatim — SQLite accepts it.
-    The guarantee this test pins down is that the request completes with
-    a documented status code (200 validation or 302 success redirect),
-    never a 500 and never a hung connection. The pentest checklist tracks
-    whether downstream consumers should strip \\x00 before storage.
-    """
+def test_form_null_byte_in_name_rejected(client, no_rate_limits, smtp_mock, app):
+    """Phase 27.5 (#13): null bytes in name / email / message are
+    rejected with a user-visible error (200 + flash). Pre-27.5 the
+    byte was stored verbatim; post-27.5 the submission is dropped
+    and no row lands in the DB."""
+    before = _count_submissions(app)
     response = _form_post(client, name='Alice\x00DROP TABLE users;--')
-    assert response.status_code in (200, 302)
-    # Row should still be in the DB as a non-crashing success path
-    assert _count_submissions(app) >= 1
+    assert response.status_code == 200  # form re-rendered with flash
+    # No row added — the null-byte submission is rejected.
+    assert _count_submissions(app) == before
 
 
 # ---------------------------------------------------------------------------

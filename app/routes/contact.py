@@ -61,7 +61,24 @@ def contact_page():
             flash(_('Please fill in all required fields.'), 'error')
             return render_template('public/contact.html')
 
-        if '@' not in email or '.' not in email:
+        # Phase 27.5 (#13) — reject null bytes outright. They're never
+        # legitimate in any free-text field; silently stripping
+        # invites subtle bugs when the same string flows through SQL,
+        # email headers, or filesystem operations elsewhere.
+        if any('\x00' in s for s in (name, email, message)):
+            flash(_('Invalid characters in input.'), 'error')
+            return render_template('public/contact.html')
+
+        # Phase 27.4 (#39) — a proper shape check.
+        # ``"@" in email and "." in email`` accepts ``@.``, ``a@.``, ``a@a``.
+        # This regex matches ``local@domain.tld`` with TLD ≥ 2 chars,
+        # no consecutive dots, no leading/trailing dot on either side.
+        import re as _re
+
+        _EMAIL_RE = _re.compile(
+            r'^[A-Za-z0-9._%+-]+(?<!\.)@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$'
+        )
+        if not _EMAIL_RE.match(email) or '..' in email:
             flash(_('Please enter a valid email address.'), 'error')
             return render_template('public/contact.html')
 

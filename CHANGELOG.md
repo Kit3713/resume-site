@@ -7,6 +7,14 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.2 (Shield)
 
+### Security — Phase 27: correctness bugs (bulk actions, null bytes, open redirect, CSP report)
+
+- **27.1 bulk actions (#20)** — `window.bulkAction` now sends the CSRF token as the `X-CSRFToken` header. Previously every bulk-action click from the admin UI returned 400, making the v0.3.0 Phase 14.3 feature unusable.
+- **27.4 email validation (#39)** — HTML contact form now runs a real regex for the email shape instead of `'@' in email and '.' in email`. Rejects `@.`, `a@.`, `a@a`, `user@host..com`, etc.
+- **27.5 null bytes in contact (#13)** — free-text fields containing `\x00` are rejected with a user-visible flash; no row lands in the DB. Previously the byte was stored verbatim.
+- **27.6 open redirect on `/set-locale/<lang>` (#21, #40)** — the redirect target is now validated for same-origin before being echoed in the 302. External Referer headers and scheme-relative `//evil.example` paths fall back to `/`.
+- **27.7 `/csp-report` rate limit + content-type gate (#32)** — non-JSON / non-CSP content types are silently 204'd, and the endpoint now carries a 60/minute per-IP rate limit to stop a bot from flooding `app.security`.
+
 ### Security — Phase 24.1: `/readyz` minimalism (#65)
 
 - `/readyz` now returns `{"ready": true/false, "failed": "<name>"}` to untrusted callers. No filesystem paths, no exception class names, no migration filenames, no byte counts. Full detail lives in the `app.readyz` WARNING log line (request-id attached), so operators retain diagnosis fidelity; anonymous scrapers get zero actionable surface.
