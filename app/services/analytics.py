@@ -63,8 +63,20 @@ def track_page_view() -> None:
 
         client_ip = get_client_ip(request)
 
+        # Phase 24.2 (#45) — hash the IP and discard the full UA before
+        # the INSERT. The raw client IP never reaches the page_views
+        # table; the UA is collapsed to a coarse browser+form class.
+        # The hash is salted with the app's secret_key so log files
+        # cannot be joined across deployments to re-identify visitors.
+        from flask import current_app as _app
+
+        from app.services.logging import classify_user_agent, hash_client_ip
+
+        ip_hash = hash_client_ip(client_ip or '', _app.secret_key or '')
+        ua_class = classify_user_agent(request.user_agent.string)
+
         db.execute(
             'INSERT INTO page_views (path, referrer, user_agent, ip_address) VALUES (?, ?, ?, ?)',
-            (path, request.referrer or '', request.user_agent.string, client_ip or ''),
+            (path, request.referrer or '', ua_class, ip_hash),
         )
         db.commit()

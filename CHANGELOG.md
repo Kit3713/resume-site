@@ -7,6 +7,26 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.2 (Shield)
 
+### Security — Phase 24.1: `/readyz` minimalism (#65)
+
+- `/readyz` now returns `{"ready": true/false, "failed": "<name>"}` to untrusted callers. No filesystem paths, no exception class names, no migration filenames, no byte counts. Full detail lives in the `app.readyz` WARNING log line (request-id attached), so operators retain diagnosis fidelity; anonymous scrapers get zero actionable surface.
+- Detailed body (with `checks: {...}`) gated on `metrics_allowed_networks` — same trust model as `/metrics`. Failure tests that used to assert on `body['detail']` opt into the detailed view via a one-line `_enable_readyz_detail` helper.
+
+### Security — Phase 24.2: analytics and contact privacy (#45, #60)
+
+- `page_views.ip_address` is now a 16-char salted SHA-256 of the effective client IP, not the raw address. `page_views.user_agent` is collapsed to one of ten tokens — `{firefox,chrome,safari,edge}-{desktop,mobile}`, `bot`, `other` — via new `classify_user_agent` in `app/services/logging.py`. A precise visitor UA can't be joined back from logs, which honours the "privacy-respecting" contract the docs already claimed.
+- `contact_submissions.ip_address` and `.user_agent` get the same treatment on both the HTML form path (`app/routes/contact.py`) and the JSON API path (`app/routes/api.py`). Rate limiting still works: the hash is stable per-IP so `count_recent_submissions` sees the same 5-per-window for the same visitor.
+- Deferred to a follow-up: migration to backfill historical rows and an admin "hashed-IP prefix" widget. Operators who want the legacy raw IPs gone can run `python manage.py purge-analytics --days 0`.
+
+### Security — Phase 24.3: log-injection hygiene (#22)
+
+- New `sanitize_log_field` helper in `app/services/logging.py`. Escapes `\r` / `\n` / `\t` to their visible backslash form, strips ANSI escape sequences (so a crafted payload can't rewrite a tailing operator's terminal), and truncates to 500 chars with an explicit `…` marker.
+- `/csp-report` handler routes `violated-directive`, `blocked-uri`, `document-uri` through the helper before the `%s` formatter. Previously these logged verbatim, so a crafted POST could splice fake log lines below the legitimate one.
+
+### Security — Phase 24.4: `Server` / `X-Powered-By` header stripped (#14)
+
+- `after_request` handler now deletes the `Server` header (and any `X-Powered-By` a middleware might set) before the response goes out. Werkzeug / Gunicorn advertise their exact version by default, which hands an attacker the CVE list to try. The response shape is otherwise unchanged.
+
 ### Security — Phase 23.2: one `get_client_ip()` helper (#34)
 
 - Extracted `app/services/request_ip.py:get_client_ip(request)` that walks `X-Forwarded-For` right-to-left against the `trusted_proxies` set and returns the first untrusted IP (the real client). Previously the XFF-trust logic was copy-pasted across five files with subtly different shapes — four of them (`contact.py`, `api.py`, `analytics.py`, `metrics.py`, `__init__.py`'s login-throttle hash) trusted XFF blindly, which let any direct-exposure caller spoof their source IP for rate limiting, analytics bucketing, and login lockout. The v0.3.1 Phase 22.6 interim fix on `admin.py` used a "leftmost when peer is trusted" algorithm that was still spoofable from behind an honest proxy; the right-to-left walk is the correct boundary.

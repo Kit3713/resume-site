@@ -129,6 +129,90 @@ def hash_client_ip(ip: str | None, salt: str | None) -> str:
     return hashlib.sha256(material).hexdigest()[:16]
 
 
+def sanitize_log_field(value, max_len: int = 500) -> str:
+    """Phase 24.3 (#22) — make ``value`` safe to splice into a log line.
+
+    Steps (in order):
+
+    1. Coerce to string. ``None`` becomes the literal ``'-'`` so the
+       log line stays aligned with the existing ``log.warning('... %s ...',
+       fallback_to_dash)`` idioms already sprinkled through the routes.
+    2. Escape ``\\r`` / ``\\n`` / ``\\t`` so the payload cannot forge a
+       second log record below the genuine one. The escaped form (with
+       visible ``\\r`` / ``\\n`` text) is still readable by operators
+       and alertable on by anyone grepping logs.
+    3. Strip ANSI escape sequences so a crafted payload can't rewrite
+       the terminal output of an operator tailing the logs.
+    4. Truncate to ``max_len`` with an explicit ``…`` marker so an
+       over-long payload doesn't bloat log storage.
+
+    Used on every CSP-report field (directive, blocked-uri, document-uri)
+    in ``public.csp_report`` plus anywhere else we interpolate user-
+    controlled text into a log line.
+    """
+    import re as _re
+
+    if value is None:
+        return '-'
+    text = str(value)
+    text = text.replace('\r', r'\r').replace('\n', r'\n').replace('\t', r'\t')
+    text = _re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', text)
+    if len(text) > max_len:
+        text = text[:max_len] + '…'
+    return text
+
+
+def classify_user_agent(ua: str | None) -> str:
+    """Phase 24.2 (#45) — reduce a raw User-Agent string to a coarse class.
+
+    Returns one of: ``firefox-desktop``, ``firefox-mobile``,
+    ``chrome-desktop``, ``chrome-mobile``, ``safari-desktop``,
+    ``safari-mobile``, ``edge-desktop``, ``edge-mobile``, ``bot``,
+    ``other``. The classifier is intentionally crude: the goal is
+    "enough signal for 'which browsers visit the site' without
+    recording a per-visitor fingerprint". A precise UA string can be
+    joined back to analytics rows hours later from log files, so this
+    is the minimum viable discard.
+
+    Callers store ONLY the class, not the raw UA.
+    """
+    if not ua:
+        return 'other'
+    lower = ua.lower()
+    # Bots first — a bot whose UA includes "Chrome" should not be
+    # classified as chrome.
+    bot_markers = (
+        'bot',
+        'crawl',
+        'spider',
+        'slurp',
+        'scan',
+        'fetcher',
+        'curl/',
+        'wget/',
+        'python-',
+        'httpclient',
+        'okhttp',
+        'go-http',
+        'libwww',
+    )
+    if any(marker in lower for marker in bot_markers):
+        return 'bot'
+    mobile = 'mobi' in lower or 'android' in lower or 'iphone' in lower or 'ipad' in lower
+    form = 'mobile' if mobile else 'desktop'
+    # Edge before chrome (Edge UA contains "Chrome") and before safari
+    # (Edge UA contains "Safari" on older builds).
+    if 'edg/' in lower or 'edge/' in lower:
+        return f'edge-{form}'
+    if 'firefox/' in lower:
+        return f'firefox-{form}'
+    if 'chrome/' in lower:
+        return f'chrome-{form}'
+    if 'safari/' in lower:
+        return f'safari-{form}'
+    return 'other'
+
+
 # ---------------------------------------------------------------------------
 # Filter
 # ---------------------------------------------------------------------------

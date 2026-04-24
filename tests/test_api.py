@@ -1152,14 +1152,23 @@ def test_contact_emits_event(client, no_rate_limits, app):
 
 
 def test_contact_per_ip_cap_returns_429(client, no_rate_limits, app):
-    """After 5 non-spam submissions from an IP in the past hour, return 429."""
+    """After 5 non-spam submissions from an IP in the past hour, return 429.
+
+    Phase 24.2 (#60) — ip_address is a salted SHA-256 of the client IP,
+    not the raw address. Seed rows with the same hash the route will
+    compute so the rate-limit count matches.
+    """
+    from app.services.logging import hash_client_ip
+
+    ip_hash = hash_client_ip('127.0.0.1', app.secret_key)
+
     # Seed 5 prior submissions from 127.0.0.1 (the test client IP).
     conn = sqlite3.connect(app.config['DATABASE_PATH'])
     for i in range(5):
         conn.execute(
             'INSERT INTO contact_submissions (name, email, message, ip_address, '
             'user_agent, is_spam) VALUES (?, ?, ?, ?, ?, ?)',
-            (f'User{i}', f'u{i}@x.co', 'msg', '127.0.0.1', 'pytest', 0),
+            (f'User{i}', f'u{i}@x.co', 'msg', ip_hash, 'other', 0),
         )
     conn.commit()
     conn.close()

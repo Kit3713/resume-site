@@ -69,11 +69,22 @@ def contact_page():
         # helper (Phase 23.2). Before the extraction, this inlined a
         # blind X-Forwarded-For read that was spoofable on any direct-
         # exposure deployment (audit #34).
+        from flask import current_app as _app
+
+        from app.services.logging import classify_user_agent, hash_client_ip
         from app.services.request_ip import get_client_ip
 
         client_ip = get_client_ip(request)
 
-        if count_recent_submissions(db, client_ip) >= 5:
+        # Phase 24.2 (#60) — hash the client IP + discard the full UA
+        # before either the rate-limit read or the DB write. The raw
+        # IP never reaches contact_submissions.ip_address; the UA is
+        # collapsed to a coarse browser+form class. The hash is stable
+        # per-IP so the 5-per-window rate limit still works.
+        ip_hash = hash_client_ip(client_ip or '', _app.secret_key or '')
+        ua_class = classify_user_agent(request.user_agent.string)
+
+        if count_recent_submissions(db, ip_hash) >= 5:
             flash(_('Too many submissions. Please try again later.'), 'error')
             return render_template('public/contact.html')
 
@@ -83,8 +94,8 @@ def contact_page():
             name,
             email,
             message,
-            ip_address=client_ip,
-            user_agent=request.user_agent.string,
+            ip_address=ip_hash,
+            user_agent=ua_class,
             is_spam=is_spam,
         )
 

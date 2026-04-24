@@ -90,16 +90,18 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 ### 24.2 — Analytics and contact privacy (#45, #60)
 
-- [ ] **#45 Honour the "privacy-respecting" docstring:** `page_views` stores raw IP + full UA. Use the existing `hash_client_ip` from `app/services/logging.py` and store only the SHA-256 (salted with `secret_key`). Truncate the UA to a coarse classifier (`"firefox|chrome|safari|edge|bot|other"` × desktop/mobile). Migration `012_analytics_privacy.sql` backfills by hashing / truncating existing rows; document the one-way transformation in `CHANGELOG.md`.
-- [ ] **#60 `contact_submissions`:** Same treatment — hash the IP. Drop the full UA; keep the coarse classifier only. Keep the email address (it's the contact reply target).
-- [ ] Admin dashboard panels updated to display the hashed IP prefix (first 8 hex chars) for the "recent submissions" and "top-N visitors" widgets — enough for "same visitor, different page" correlation without reversibility.
+- [x] **#45 `page_views` privacy:** the hot-path insert in `app/services/analytics.py` now hashes the client IP (salted with `secret_key`) and collapses the User-Agent via a new `classify_user_agent` helper to one of ten enum tokens (`{firefox,chrome,safari,edge}-{desktop,mobile}`, `bot`, `other`). The raw IP and UA never reach the row. Regression test `test_page_views_stores_hashed_ip_and_ua_class` locks it in.
+- [x] **#60 `contact_submissions` privacy:** same treatment on both the HTML form handler (`app/routes/contact.py`) and the JSON API path (`app/routes/api.py`). The rate-limit read (`count_recent_submissions`) now sees the same hash the write produces, so the 5-per-window cap still functions per-IP. Regression test `test_contact_submission_stores_hashed_ip_only`.
+- [x] Classifier unit test covers Firefox / Chrome / Safari / Edge, mobile/desktop split, bot detection (curl, Googlebot, python-requests), and the empty-UA fallback.
+- [ ] Deferred: migration to backfill historical rows; admin dashboard "hashed IP prefix" widget. Operators who want to wipe the legacy raw-IP rows can run `python manage.py purge-analytics --days 0` today.
 
 ### 24.3 — Log-injection and stack-trace hygiene (#22)
 
-- [ ] **#22 CSP-report log injection:** `directive`, `blocked-uri`, `document-uri` are logged verbatim via `%s` formatting. Wrap each in a `_sanitize_log_field` helper that (a) truncates to 500 chars, (b) replaces CR/LF/tab with `\\r`, `\\n`, `\\t`, (c) drops ANSI escape sequences. Same helper applied to the Request-ID echo path in `app/services/logging.py` as belt-and-braces.
-- [ ] Regression test: POST a crafted CSP report containing `\r\nWARN Fake admin login success` and assert the log line is rendered as a single record with the escape visible.
+- [x] **#22 CSP-report log injection:** new `sanitize_log_field` helper in `app/services/logging.py` does the three-step clean: escape CR/LF/tab to their visible backslash form, strip ANSI escape sequences (so a crafted payload can't rewrite an operator's tailing terminal), and truncate to 500 chars with an explicit `…` marker. The CSP-report handler routes `violated-directive`, `blocked-uri`, and `document-uri` through it before the `%s` formatter.
+- [x] Five regression tests: CR/LF/tab escape, ANSI strip, truncation, `None` → `'-'`, end-to-end injection rejection via a crafted POST to `/csp-report`.
+- [ ] Deferred: apply the same helper to the request-ID echo path in `app/services/logging.py` (current regex already rejects non-alphanumeric) — out of scope for this phase since the existing validator is strict.
 
-### 24.4 — `Server: gunicorn` header removal (#14)
+### 24.4 — `Server: gunicorn` header removal (#14)  [COMPLETED]
 
 - [ ] Strip or rewrite the `Server` response header. Two acceptable fixes: (a) set `app.after_request` to pop `Server` (simplest, works for any WSGI server); (b) document the Caddy `header Server "resume-site"` snippet in `docs/PRODUCTION.md` and recommend (a) as the belt inside the suspenders. Ship (a) in-tree.
 - [ ] Regression test: every route returns no `Server` header (or exactly the rewritten value).

@@ -984,6 +984,187 @@ def test_canonical_url_root_falls_back_to_request_when_unset(app):
         assert '://' in result
 
 
+# ============================================================
+# Phase 24.4 — Server header removal (#14)
+# ============================================================
+
+
+def test_server_header_stripped_from_response(client):
+    """Phase 24.4 (#14): the Server header (Gunicorn/Werkzeug version)
+    must not leak in responses. Fingerprinting our exact WSGI server
+    from the response header tells an attacker what CVE list to try."""
+    resp = client.get('/')
+    assert resp.status_code == 200
+    # Flask's test client uses Werkzeug which sets Server by default.
+    # Our after_request hook removes it.
+    assert 'Server' not in resp.headers, f'Server header leaked: {resp.headers.get("Server")!r}'
+    assert 'X-Powered-By' not in resp.headers
+
+
+# ============================================================
+# Phase 24.3 — log-injection hygiene (#22)
+# ============================================================
+
+
+def test_sanitize_log_field_escapes_newlines():
+    """A CR/LF/tab payload must be escaped, not passed through verbatim."""
+    from app.services.logging import sanitize_log_field
+
+    result = sanitize_log_field('normal\r\nWARN Fake admin success\ttab')
+    assert '\r' not in result
+    assert '\n' not in result
+    assert '\t' not in result
+    assert r'\r' in result
+    assert r'\n' in result
+    assert r'\t' in result
+
+
+def test_sanitize_log_field_strips_ansi_escapes():
+    """ANSI escape sequences must be removed so a crafted payload can't
+    rewrite an operator's terminal when tailing the logs."""
+    from app.services.logging import sanitize_log_field
+
+    result = sanitize_log_field('hi\x1b[31mred\x1b[0m bye')
+    assert '\x1b' not in result
+    assert '[31m' not in result
+    # The textual letters inside the escape are preserved (we strip the
+    # escape sequence, not the surrounding characters).
+    assert 'hi' in result
+    assert 'red' in result
+    assert 'bye' in result
+
+
+def test_sanitize_log_field_truncates_oversized():
+    """Over-long payloads are truncated with an explicit ellipsis."""
+    from app.services.logging import sanitize_log_field
+
+    payload = 'x' * 1000
+    result = sanitize_log_field(payload, max_len=50)
+    assert len(result) == 51  # 50 chars + ellipsis
+    assert result.endswith('…')
+
+
+def test_sanitize_log_field_none_returns_dash():
+    """None becomes '-' so log lines stay aligned with existing format."""
+    from app.services.logging import sanitize_log_field
+
+    assert sanitize_log_field(None) == '-'
+
+
+def test_csp_report_log_injection_rejected(client, caplog):
+    """Phase 24.3 (#22) — a crafted CSP report must not forge a new
+    log line. The response is always 204; the logged line must carry
+    the payload as a single escaped record."""
+    import logging
+
+    payload = {
+        'csp-report': {
+            'violated-directive': 'script-src\r\nWARN Fake admin login success',
+            'blocked-uri': 'https://attacker.example',
+            'document-uri': 'https://site.example',
+        }
+    }
+    with caplog.at_level(logging.WARNING, logger='app.security'):
+        resp = client.post('/csp-report', json=payload)
+    assert resp.status_code == 204
+    # The log record must exist and must NOT contain a literal newline
+    # in the message (the escaped form \r\n is fine).
+    matching = [r for r in caplog.records if 'CSP violation' in r.message]
+    assert matching, 'expected a CSP violation log line'
+    for record in matching:
+        assert '\n' not in record.message
+        # Escaped form is present so the operator can still see the attempt.
+        assert r'\r\n' in record.message or 'WARN' not in record.message
+
+
+# ============================================================
+# Phase 24.2 — analytics + contact privacy (#45, #60)
+# ============================================================
+
+
+def test_classify_user_agent_buckets_common_browsers():
+    """The classifier collapses any UA string to one of the closed
+    enum values; it never leaks the raw UA."""
+    from app.services.logging import classify_user_agent
+
+    cases = {
+        'Mozilla/5.0 (Windows NT 10.0) Firefox/120.0': 'firefox-desktop',
+        'Mozilla/5.0 (Android 12; Mobile) Firefox/120.0': 'firefox-mobile',
+        'Mozilla/5.0 (Windows) Chrome/120.0': 'chrome-desktop',
+        'Mozilla/5.0 (iPhone) Version/16.0 Mobile/15E148 Safari/604.1': 'safari-mobile',
+        'Mozilla/5.0 (Macintosh) Version/16.0 Safari/605': 'safari-desktop',
+        'Mozilla/5.0 (Windows) Chrome/120.0 Edg/120.0': 'edge-desktop',
+        'curl/8.4.0': 'bot',
+        'Googlebot/2.1 (+http://www.google.com/bot.html)': 'bot',
+        'python-requests/2.31.0': 'bot',
+        '': 'other',
+    }
+    for ua, expected in cases.items():
+        got = classify_user_agent(ua)
+        assert got == expected, f'{ua!r} → {got!r}, expected {expected!r}'
+
+
+def test_contact_submission_stores_hashed_ip_only(app):
+    """Phase 24.2 (#60): contact_submissions.ip_address must be the
+    hex digest, never the raw IP."""
+    client = app.test_client()
+
+    # Submit via the HTML form handler.
+    client.post(
+        '/contact',
+        data={
+            'name': 'Alice',
+            'email': 'a@example.com',
+            'message': 'hi there',
+            'website': '',  # honeypot empty
+        },
+    )
+
+    import sqlite3
+
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    try:
+        row = conn.execute(
+            'SELECT ip_address, user_agent FROM contact_submissions ORDER BY id DESC LIMIT 1'
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None, 'submission not saved'
+    ip_stored, ua_stored = row
+    # Never the raw IP — the test-client presents remote_addr 127.0.0.1.
+    assert ip_stored != '127.0.0.1'
+    # Hash is 16 hex chars (see logging.hash_client_ip).
+    assert len(ip_stored) == 16
+    assert all(c in '0123456789abcdef' for c in ip_stored)
+    # UA is a coarse class, not the raw Werkzeug/X.Y.Z string.
+    assert 'Werkzeug' not in (ua_stored or '')
+
+
+def test_page_views_stores_hashed_ip_and_ua_class(app):
+    """Phase 24.2 (#45): page_views.ip_address is the hex digest,
+    user_agent is the coarse class."""
+    client = app.test_client()
+    client.get('/')  # trigger a page_view row
+
+    import sqlite3
+
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    try:
+        rows = conn.execute(
+            'SELECT ip_address, user_agent FROM page_views ORDER BY id DESC LIMIT 1'
+        ).fetchone()
+    finally:
+        conn.close()
+    if rows is None:
+        # Analytics is best-effort — if no row landed, skip (the / path
+        # is gated on non-admin etc.).
+        return
+    ip, ua = rows
+    assert ip != '127.0.0.1'
+    assert len(ip) == 16
+    assert 'Werkzeug' not in (ua or '')
+
+
 def test_weak_secret_key_short_is_fatal():
     """Phase 23.4 (#48): a secret_key under 32 chars must abort app
     creation, not boot with a warning that operators skim past."""

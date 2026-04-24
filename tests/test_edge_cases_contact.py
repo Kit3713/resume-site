@@ -193,8 +193,11 @@ def test_api_accepts_very_long_message(client, no_rate_limits, smtp_mock):
     assert smtp_mock[-1][2] == huge
 
 
-def test_api_truncates_oversized_user_agent_to_200_chars(client, no_rate_limits, app):
-    """The handler caps User-Agent to 200 chars before storing."""
+def test_api_classifies_oversized_user_agent_as_coarse_class(client, no_rate_limits, app):
+    """Phase 24.2 (#60) — the raw User-Agent is no longer stored. The
+    stored value is always one of the coarse-class tokens regardless
+    of input length, so the 200-char truncation is obsolete (the enum
+    values are all <= 15 chars)."""
     oversized_ua = 'UA-' + ('x' * 500)
     response = client.post(
         '/api/v1/contact',
@@ -210,8 +213,9 @@ def test_api_truncates_oversized_user_agent_to_200_chars(client, no_rate_limits,
         ).fetchone()[0]
     finally:
         conn.close()
-    assert len(ua) == 200
-    assert ua.startswith('UA-')
+    # Coarse class, short. Junk UA → 'other'.
+    assert ua == 'other'
+    assert len(ua) < 20
 
 
 # ---------------------------------------------------------------------------

@@ -1449,13 +1449,22 @@ def contact_submit():
 
     is_spam = bool(honeypot)
     client_ip = _client_ip_from_request()
-    user_agent = (request.headers.get('User-Agent') or '')[:200]
+
+    # Phase 24.2 (#60) — hash IP + collapse UA before touching the DB
+    # or the rate-limit read, so the raw visitor IP never lands in
+    # contact_submissions.ip_address and the UA is coarse-classified.
+    from flask import current_app as _app
+
+    from app.services.logging import classify_user_agent, hash_client_ip
+
+    ip_hash = hash_client_ip(client_ip or '', _app.secret_key or '')
+    ua_class = classify_user_agent(request.headers.get('User-Agent') or '')
 
     # Real humans (honeypot empty) get the per-IP hourly cap. Bots
     # filling the honeypot skip the check so they can't work it out
     # by probing for 429s.
     if not is_spam:
-        recent = count_recent_submissions(db, client_ip)
+        recent = count_recent_submissions(db, ip_hash)
         if recent >= 5:
             return _error(
                 'Too many submissions from this IP in the past hour',
@@ -1469,8 +1478,8 @@ def contact_submit():
         name=name,
         email=email,
         message=message,
-        ip_address=client_ip,
-        user_agent=user_agent,
+        ip_address=ip_hash,
+        user_agent=ua_class,
         is_spam=is_spam,
     )
 

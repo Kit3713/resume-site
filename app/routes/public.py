@@ -92,8 +92,16 @@ def csp_report():
     directive is violated. We log it and increment a counter visible on
     the admin dashboard. Returns 204 regardless of payload validity so
     the browser doesn't retry.
+
+    Phase 24.3 (#22) — every user-controlled field is routed through
+    ``sanitize_log_field`` before the ``%s`` formatter sees it. The
+    previous implementation logged raw directive / blocked / document
+    values, which an attacker could use to splice fake log lines with
+    a crafted report body containing CR/LF + ANSI escapes.
     """
     import logging
+
+    from app.services.logging import sanitize_log_field
 
     logger = logging.getLogger('app.security')
     try:
@@ -101,9 +109,9 @@ def csp_report():
         report = data.get('csp-report', {})
         logger.warning(
             'CSP violation: directive=%s blocked=%s document=%s',
-            report.get('violated-directive', '-'),
-            report.get('blocked-uri', '-'),
-            report.get('document-uri', '-'),
+            sanitize_log_field(report.get('violated-directive')),
+            sanitize_log_field(report.get('blocked-uri')),
+            sanitize_log_field(report.get('document-uri')),
         )
     except Exception:  # noqa: BLE001 — never fail on a report
         logger.warning('CSP violation: unparseable report body')
