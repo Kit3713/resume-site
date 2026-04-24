@@ -30,7 +30,7 @@ from app.services.blog import (
     archive_post,
     create_post,
     delete_post,
-    get_all_posts,
+    get_all_posts_paginated,
     get_post_by_id,
     get_tags_for_post,
     publish_post,
@@ -73,13 +73,37 @@ blog_admin_bp.after_request(update_last_activity)
 @blog_admin_bp.route('/blog')
 @login_required
 def blog_list():
-    """List all blog posts with optional status filter."""
+    """List blog posts with optional status filter (Phase 26.3 #54 — paginated).
+
+    Default 25 posts/page. ``?page=N`` navigates. Invalid pages fall
+    back to page 1. The existing ``?status=<draft|published|archived>``
+    filter is preserved on paginator links so filter + page compose.
+    """
     db = get_db()
     status_filter = request.args.get('status')
     if status_filter and status_filter not in ('draft', 'published', 'archived'):
         status_filter = None
-    posts = get_all_posts(db, status_filter)
-    return render_template('admin/blog_list.html', posts=posts, status_filter=status_filter)
+    try:
+        page = max(int(request.args.get('page', 1)), 1)
+    except (TypeError, ValueError):
+        page = 1
+    per_page = 25
+    posts, total = get_all_posts_paginated(
+        db,
+        status_filter=status_filter,
+        page=page,
+        per_page=per_page,
+    )
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    return render_template(
+        'admin/blog_list.html',
+        posts=posts,
+        status_filter=status_filter,
+        page=page,
+        per_page=per_page,
+        total=total,
+        total_pages=total_pages,
+    )
 
 
 @blog_admin_bp.route('/blog/new', methods=['GET', 'POST'])

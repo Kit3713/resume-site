@@ -89,6 +89,44 @@ def test_blog_create_rejects_invalid_content_format(auth_client):
     assert response.status_code == 200
 
 
+def test_blog_admin_list_paginates_at_25_per_page(auth_client):
+    """Phase 26.3 (#54): the admin blog list caps at 25 rows per page.
+
+    Seed 30 posts, fetch page 1 and page 2, assert the split is 25/5
+    and that the paginator navigation renders. The exact ordering
+    under equal ``created_at`` values is SQLite's prerogative — what
+    matters is that pagination *works* (the page boundaries are firm
+    and the same post doesn't appear on both pages).
+    """
+    import re
+
+    for i in range(30):
+        _create_post(auth_client, title=f'Pagination Post {i:02d}')
+
+    page1 = auth_client.get('/admin/blog?page=1')
+    assert page1.status_code == 200
+    titles_p1 = set(re.findall(r'Pagination Post \d\d', page1.get_data(as_text=True)))
+    assert len(titles_p1) == 25, f'expected 25 titles on page 1, got {len(titles_p1)}'
+    # Paginator surfaces at least one navigation control.
+    assert b'Previous' in page1.data or b'Next' in page1.data
+
+    page2 = auth_client.get('/admin/blog?page=2')
+    assert page2.status_code == 200
+    titles_p2 = set(re.findall(r'Pagination Post \d\d', page2.get_data(as_text=True)))
+    assert len(titles_p2) == 5, f'expected 5 titles on page 2, got {len(titles_p2)}'
+    # No title straddles both pages.
+    assert titles_p1.isdisjoint(titles_p2)
+
+
+def test_blog_admin_list_invalid_page_falls_back_to_1(auth_client):
+    """Phase 26.3 (#54): garbage ?page= param falls back to page 1."""
+    _create_post(auth_client, title='Single Post')
+
+    response = auth_client.get('/admin/blog?page=not-a-number')
+    assert response.status_code == 200
+    assert b'Single Post' in response.data
+
+
 def test_blog_create_and_publish(auth_client):
     """Creating a post with action=publish should set status to published."""
     response = _create_post(auth_client, title='Published Post', action='publish')

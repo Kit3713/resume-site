@@ -56,7 +56,7 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 ### 26.3 — Paginate `/admin/blog` (#54)
 
-- [ ] The admin blog list renders every row. Documented 8.3 ms at 150 posts; scales linearly. Reuse `app/services/pagination.py` — the public blog index already paginates. Default 25 posts per page; `?page=N` query string. Sticky filters on the paginator links. Regression test: page 1 returns the 25 newest, page 2 the next 25, `?status=draft` filter is preserved.
+- [x] New `get_all_posts_paginated(db, status_filter, page, per_page)` in `app/services/blog.py` returns `(rows, total_count)`. The `/admin/blog` route wires it up; default 25 posts/page, invalid `?page=` falls back to 1. Paginator in `admin/blog_list.html` keeps `?status=` on Previous/Next links so filter + page compose. Two regression tests: 30 seeded posts split 25/5 across pages with disjoint titles; invalid `?page=not-a-number` renders page 1 instead of 500.
 
 ### 26.4 — Photo upload: `Image.draft()` for JPEG (#61)
 

@@ -116,6 +116,10 @@ def get_post_by_id(db: sqlite3.Connection, post_id: int) -> sqlite3.Row | None:
 def get_all_posts(db: sqlite3.Connection, status_filter: str | None = None) -> list[sqlite3.Row]:
     """Return all posts, optionally filtered by status (admin use).
 
+    Kept for callers that don't need pagination. For the admin list
+    route use :func:`get_all_posts_paginated` — at 150+ posts the
+    unpaginated path scales linearly (documented 8.3 ms baseline).
+
     Args:
         db: Database connection.
         status_filter: None for all, or 'draft', 'published', 'archived'.
@@ -126,6 +130,52 @@ def get_all_posts(db: sqlite3.Connection, status_filter: str | None = None) -> l
             (status_filter,),
         ).fetchall()
     return db.execute('SELECT * FROM blog_posts ORDER BY created_at DESC').fetchall()
+
+
+def get_all_posts_paginated(
+    db: sqlite3.Connection,
+    status_filter: str | None = None,
+    *,
+    page: int = 1,
+    per_page: int = 25,
+) -> tuple[list[sqlite3.Row], int]:
+    """Return a paginated admin post listing + the total row count.
+
+    Phase 26.3 (#54) — the admin listing used to render every row in
+    one shot. At 150 posts the documented baseline was 8.3 ms and
+    scaling linearly. Pagination caps the query at ``per_page`` rows
+    per request.
+
+    Args:
+        db: Database connection.
+        status_filter: None for all, or 'draft', 'published', 'archived'.
+        page: 1-indexed page number. Values < 1 are clamped to 1.
+        per_page: Rows per page. Clamped to the inclusive range [1, 100].
+
+    Returns:
+        Tuple of (rows, total_count). ``total_count`` reflects the
+        filtered population so the paginator can build the page list.
+    """
+    page = max(int(page or 1), 1)
+    per_page = max(1, min(int(per_page or 25), 100))
+    offset = (page - 1) * per_page
+
+    if status_filter:
+        total = db.execute(
+            'SELECT COUNT(*) AS cnt FROM blog_posts WHERE status = ?',
+            (status_filter,),
+        ).fetchone()['cnt']
+        rows = db.execute(
+            'SELECT * FROM blog_posts WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+            (status_filter, per_page, offset),
+        ).fetchall()
+    else:
+        total = db.execute('SELECT COUNT(*) AS cnt FROM blog_posts').fetchone()['cnt']
+        rows = db.execute(
+            'SELECT * FROM blog_posts ORDER BY created_at DESC LIMIT ? OFFSET ?',
+            (per_page, offset),
+        ).fetchall()
+    return rows, total
 
 
 def get_posts_by_tag(

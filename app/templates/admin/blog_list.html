@@ -56,5 +56,22 @@
     {% else %}
     <p class="admin-empty">No {{ status_filter + ' ' if status_filter else '' }}posts yet. <a href="{{ url_for('blog_admin.blog_new') }}">Create one</a>.</p>
     {% endif %}
+
+    {# Phase 26.3 (#54) — paginator. Preserves the ?status= filter on
+       prev/next links so filter + page compose. Only renders when
+       there's actually more than one page. #}
+    {% if total_pages and total_pages > 1 %}
+    <nav class="admin-pagination" style="display:flex;gap:var(--space-sm);align-items:center;margin-top:var(--space-md)">
+        {% if page > 1 %}
+        <a class="btn btn--secondary btn--sm" href="{{ url_for('blog_admin.blog_list', status=status_filter, page=page-1) }}">&larr; {{ _('Previous') }}</a>
+        {% endif %}
+        <span style="color:var(--color-text-tertiary);font-size:var(--fs-sm)">
+            {{ _('Page') }} {{ page }} {{ _('of') }} {{ total_pages }} ({{ total }} {{ _('total') }})
+        </span>
+        {% if page < total_pages %}
+        <a class="btn btn--secondary btn--sm" href="{{ url_for('blog_admin.blog_list', status=status_filter, page=page+1) }}">{{ _('Next') }} &rarr;</a>
+        {% endif %}
+    </nav>
+    {% endif %}
 </div>
 {% endblock %}

@@ -7,6 +7,11 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.3 (Proof)
 
+### Performance — Phase 26.3: paginate `/admin/blog` (#54)
+
+- The admin blog list previously rendered every row in one pass. Documented 8.3 ms at 150 posts, scaling linearly. The list route now wires up a new `get_all_posts_paginated` helper — default 25 posts/page, `?page=N` navigation, existing `?status=` filter preserved on paginator links so filter + page compose. Invalid `?page=` falls back to page 1.
+- Two regression tests in `tests/test_blog.py`: 30 seeded posts split 25/5 across two pages with disjoint title sets; garbage `?page=not-a-number` returns 200, not 500.
+
 ### Performance — Phase 26.2: Gunicorn `--preload` and worker recycling (#28, #53)
 
 - `docker-entrypoint.sh` now starts Gunicorn with `--preload --max-requests 2000 --max-requests-jitter 200`. `--preload` forks workers from a pre-loaded master (500-800 ms cold-start win, lower steady-state RSS via CoW). Worker recycling guards against Pillow / Jinja / SQLite statement-cache memory creep. The page_views drainer (25.2) and webhook thread pool (25.3) lazy-start on first use after fork, so `--preload` is safe.
