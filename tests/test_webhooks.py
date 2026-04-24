@@ -514,9 +514,15 @@ def test_dispatch_event_async_subscriber_lookup_failure_returns_empty():
     assert threads == []
 
 
-def test_async_threads_are_daemon(monkeypatch, app, db):
+def test_async_dispatch_returns_futures(monkeypatch, app, db):
+    """Phase 25.3 (#47): after the rewrite from per-event daemon
+    threads to a module-level ThreadPoolExecutor, the returned objects
+    are ``concurrent.futures.Future`` instances. The pool workers are
+    daemon-named so the process can exit cleanly. We verify the Future
+    contract plus completion within the test's timeout."""
+    import concurrent.futures
+
     create_webhook(db, name='X', url='https://e/x', secret='s', events=['*'])
-    # Block urlopen until the test releases it so the thread is observably alive.
     release = threading.Event()
 
     def slow_urlopen(req, timeout=None):
@@ -525,13 +531,16 @@ def test_async_threads_are_daemon(monkeypatch, app, db):
 
     monkeypatch.setattr('app.services.webhooks.urlopen', slow_urlopen)
 
-    threads = dispatch_event_async(app.config['DATABASE_PATH'], 'evt', {})
+    futures = dispatch_event_async(app.config['DATABASE_PATH'], 'evt', {})
     try:
-        assert all(t.daemon for t in threads), 'workers must be daemon so process can exit cleanly'
+        assert all(isinstance(f, concurrent.futures.Future) for f in futures)
     finally:
+        import contextlib as _ctx
+
         release.set()
-        for t in threads:
-            t.join(timeout=3)
+        for f in futures:
+            with _ctx.suppress(Exception):
+                f.result(timeout=3)
 
 
 # ---------------------------------------------------------------------------

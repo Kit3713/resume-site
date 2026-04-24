@@ -7,6 +7,17 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.2 (Shield)
 
+### Added — Phase 37.1: API compatibility policy doc
+
+- New `docs/API_COMPATIBILITY.md` — the stated contract between this codebase and any API / webhook consumer. Enumerates what MAY NOT change within a major version prefix (endpoints, field names, field types, error codes, event names, webhook envelope shape), what MAY change non-breakingly (new fields, new codes, new events, stricter validation), and the deprecation process every breaking change must go through (at minimum one release of `Deprecation`/`Sunset`/`Link` headers + CHANGELOG `Deprecated` entry + explicit removal release). Paired with the existing `docs/UPGRADE.md` which guarantees data survival; this doc closes the orthogonal consumer-contract gap.
+- Deferred to v0.3.3 or v0.4.0: the `@deprecated` decorator (37.2), OpenAPI spec drift guard (37.3), CHANGELOG-enforcement CI grep (37.4). The policy is the load-bearing piece; the plumbing lands as individual endpoints reach their first deprecation.
+
+### Security — Phase 25.3: bounded webhook-dispatch thread pool (#47)
+
+- `dispatch_event_async` rewritten from per-event daemon threads to a module-level `concurrent.futures.ThreadPoolExecutor` (16 workers, shared across all events). Before the rewrite a bulk admin action publishing 50 posts to 5 subscribers would spawn 250 threads; a runaway event loop could OOM the process.
+- Queue bounded at 1000 pending tasks. When the work queue exceeds that threshold, new events are dropped (the submit call is skipped), `webhook_drops_total` increments, and a WARNING log line names the event + subscriber. Operators can see overruns in the logs immediately; Prometheus-counter integration lands with the follow-up in v0.3.3.
+- Public API change: `dispatch_event_async` now returns `list[concurrent.futures.Future]` instead of `list[threading.Thread]`. The single test that read `.daemon` was updated to verify the Future contract.
+
 ### Added — Phase 25.1: `manage.py purge-all` (#42, #55, #62, #68)
 
 - New CLI command runs every retention purge in one invocation: `page_views` (default 90d), `login_attempts` (30d), `webhook_deliveries` (30d), `admin_activity_log` (90d). Each retention window reads from a settings registry key (`page_views_retention_days`, etc.) so operators can tune via the admin UI without a config change. Individual purge failures never abort the others — exit code is non-zero if any errored. Each successful purge writes a `purge_last_success_<table>` setting so a future admin-dashboard "Retention" card can display freshness without having to parse logs.

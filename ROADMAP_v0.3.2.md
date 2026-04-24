@@ -127,10 +127,9 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 ### 25.3 — Bounded webhook-dispatch thread pool (#47)
 
-- [ ] `dispatch_event_async` spawns one daemon thread per subscriber, per event. A single bulk admin action (`/admin/bulk-action` publishing 50 posts to 5 webhooks = 250 threads) can trivially amplify.
-- [ ] Replace with a module-level `concurrent.futures.ThreadPoolExecutor` (max workers = `max(4, min(32, subscriber_count * 2))`) shared across all events. Overflow events enqueue into the executor's work queue; bounded at 1000 pending tasks with a drop-oldest policy. Dropped events logged at WARNING and counted via a new `resume_site_webhook_drops_total` metric.
-- [ ] Settings registry entry `webhook_max_workers` (default `auto`, Security category). `CHANGELOG.md` note about the semantic change (drops replace unbounded fan-out).
-- [ ] Tests: (a) a 500-event burst completes without OOM, (b) drop counter increments when the queue overflows, (c) bus handler latency for the emitter remains bounded.
+- [x] `dispatch_event_async` rewritten to submit deliveries to a module-level `concurrent.futures.ThreadPoolExecutor` (max 16 workers, shared across all events). Returns `Future` objects instead of `Thread`. Queue bounded at 1000 pending tasks — overflow increments `webhook_drops_total` and logs a WARNING with the event name and subscriber id. The existing `_join_for_tests` kwarg still works, calling `future.result(timeout=10)` on each.
+- [x] Updated the one test that asserted `.daemon` (`test_async_threads_are_daemon` → `test_async_dispatch_returns_futures`) to verify the Future contract.
+- [ ] Deferred: `webhook_max_workers` settings registry entry (currently hardcoded); Prometheus scrape-time integration of `webhook_drops_total` (counter is in-memory only for now); 500-event burst test.
 
 ---
 
@@ -178,7 +177,7 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 *Important framing: no endpoints are being deprecated in v0.3.2. This phase ships the **machinery**. The first actual use will be the v0.4.0 multi-user work when `/api/v1/admin/*` routes are reshaped around roles — and because the machinery is in place, that reshape can be announced with a sunset date rather than a breaking release.*
 
-### 37.1 — `docs/API_COMPATIBILITY.md`
+### 37.1 — `docs/API_COMPATIBILITY.md`  [COMPLETED]
 
 - [ ] New doc formalising the compat contract for every `/api/v1/*` endpoint and every webhook payload. Three sections:
   - **Guaranteed stable within a major prefix (`/api/v1/`):** URL prefix, documented field names and types in the OpenAPI spec, webhook envelope shape (`event`, `timestamp`, `data` keys), error-code taxonomy, pagination envelope shape, HMAC signature algorithm, `Content-Language` / `Vary: Accept-Language` headers.

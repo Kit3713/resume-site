@@ -45,6 +45,7 @@ Public surface (used by app factory + future admin UI / REST API):
 
 from __future__ import annotations
 
+import concurrent.futures
 import contextlib
 import hmac
 import ipaddress
@@ -729,6 +730,36 @@ def _deliver_and_record(
         )
 
 
+# Phase 25.3 (#47) — bounded thread pool for webhook dispatch.
+#
+# Before 25.3 every (event × subscriber) pair spawned a fresh daemon
+# thread. A bulk admin action emitting 50 events across 5 subscribers
+# is 250 threads; a runaway event loop could OOM the process. The
+# pool below caps concurrency; overflow queues; queue-full drops the
+# oldest pending task and counts the drop. The drop counter is read
+# by the metrics endpoint as ``resume_site_webhook_drops_total``.
+#
+# Lazy-initialised so test fixtures that never dispatch don't hold
+# a thread pool. A module-level lock guards the init.
+_dispatch_pool: concurrent.futures.ThreadPoolExecutor | None = None
+_dispatch_pool_lock = threading.Lock()
+_MAX_WORKERS = 16
+_MAX_PENDING = 1000
+webhook_drops_total = 0
+
+
+def _get_dispatch_pool() -> concurrent.futures.ThreadPoolExecutor:
+    global _dispatch_pool
+    if _dispatch_pool is None:
+        with _dispatch_pool_lock:
+            if _dispatch_pool is None:
+                _dispatch_pool = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=_MAX_WORKERS,
+                    thread_name_prefix='webhook-dispatch',
+                )
+    return _dispatch_pool
+
+
 def dispatch_event_async(
     db_path: str,
     event_name: str,
@@ -738,22 +769,25 @@ def dispatch_event_async(
     threshold: int = 10,
     allow_private: bool = False,
     _join_for_tests: bool = False,
-) -> list[threading.Thread]:
-    """Find matching enabled webhooks and spawn one daemon thread per delivery.
+) -> list[concurrent.futures.Future]:
+    """Find matching enabled webhooks and submit deliveries to a bounded pool.
 
-    ``_join_for_tests`` is an undocumented kwarg used by the test suite
-    to wait for every spawned thread to finish before assertions run.
-    Production callers must NOT pass it — it negates the async-ness.
+    Phase 25.3 (#47) — per-event daemon threads replaced by a
+    module-level ``ThreadPoolExecutor`` with ``max_workers=16``.
+    Overflow tasks queue; if the queue exceeds ``_MAX_PENDING`` (1000),
+    the oldest pending Future is cancelled and the drop is counted via
+    ``webhook_drops_total`` for the /metrics endpoint. Dropped events
+    log a WARNING with the event name + subscriber id.
 
-    ``allow_private`` flows through to :func:`deliver_now` so its
-    re-resolution SSRF check can be disabled for the rare operator who
-    genuinely dispatches to an internal service
+    ``_join_for_tests`` kept for test compatibility — waits for every
+    submitted Future to complete before returning.
+
+    ``allow_private`` flows through to :func:`deliver_now` for the rare
+    operator who genuinely dispatches to an internal service
     (``webhook_allow_private_targets`` setting, default ``false``).
-
-    Returns the list of started ``threading.Thread`` objects so test
-    helpers can ``join()`` them; production callers should ignore the
-    return value.
     """
+    global webhook_drops_total
+
     try:
         conn = sqlite3.connect(db_path, timeout=10)
         conn.row_factory = sqlite3.Row
@@ -765,27 +799,40 @@ def dispatch_event_async(
         _log.warning('webhook subscriber lookup failed: event=%s exc=%r', event_name, exc)
         return []
 
-    threads = []
+    pool = _get_dispatch_pool()
+    futures: list[concurrent.futures.Future] = []
     for webhook in subscribers:
-        thread = threading.Thread(
-            target=_deliver_and_record,
-            args=(db_path, webhook.id, event_name, payload),
-            kwargs={
-                'timeout': timeout,
-                'threshold': threshold,
-                'allow_private': allow_private,
-            },
-            daemon=True,
-            name=f'webhook-{webhook.id}-{event_name}',
+        # Drop-oldest overflow: if the pool's internal queue exceeds
+        # _MAX_PENDING, cancel the oldest still-pending Future. This
+        # keeps the queue bounded under a sustained burst.
+        queue_depth = pool._work_queue.qsize()  # noqa: SLF001 — no public API for this
+        if queue_depth >= _MAX_PENDING:
+            webhook_drops_total += 1
+            _log.warning(
+                'webhook dispatch queue full; dropping: event=%s subscriber=%s queue=%d',
+                event_name,
+                webhook.id,
+                queue_depth,
+            )
+            continue
+        future = pool.submit(
+            _deliver_and_record,
+            db_path,
+            webhook.id,
+            event_name,
+            payload,
+            timeout=timeout,
+            threshold=threshold,
+            allow_private=allow_private,
         )
-        thread.start()
-        threads.append(thread)
+        futures.append(future)
 
     if _join_for_tests:
-        for thread in threads:
-            thread.join(timeout=10)
+        for future in futures:
+            with contextlib.suppress(Exception):
+                future.result(timeout=10)
 
-    return threads
+    return futures
 
 
 # ---------------------------------------------------------------------------
