@@ -81,6 +81,16 @@ def test_blog_create_draft(auth_client):
     assert '/edit' in response.headers['Location']
 
 
+def test_blog_create_rejects_invalid_content_format(auth_client):
+    """Phase 27.4 (#24): content_format must be one of {html, markdown}.
+    The HTML admin path now validates alongside the API path."""
+    response = _create_post(
+        auth_client, title='Bogus Format', content_format='bogus-format'
+    )
+    # Form re-renders with the flash; not a 302 redirect-to-edit.
+    assert response.status_code == 200
+
+
 def test_blog_create_and_publish(auth_client):
     """Creating a post with action=publish should set status to published."""
     response = _create_post(auth_client, title='Published Post', action='publish')

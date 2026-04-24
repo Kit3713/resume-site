@@ -153,7 +153,7 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 - [x] **#39 Email validator** — replaced `'@' in email and '.' in email` with a real regex (`local@domain.tld` with TLD ≥ 2, rejects consecutive dots, rejects leading/trailing dots). Applied to the HTML contact form; the API path already had stricter validation.
 - [x] **#25 JSON settings validation** — closed in 23.6; cross-linked here for completeness.
-- [ ] **#24 `content_format` on HTML admin routes** — deferred. The API-side validator exists; the HTML admin path's content_format write is uncommon and low-risk.
+- [x] **#24 `content_format` on HTML admin routes** — HTML blog admin create and edit paths now validate `content_format` against `{html, markdown}` before calling the service layer; invalid values re-render the form with a flash. Brings the HTML path to parity with the API path's existing check. Regression test `test_blog_create_rejects_invalid_content_format`.
 
 ### 27.5 — Null-byte handling in contact fields (#13)
 

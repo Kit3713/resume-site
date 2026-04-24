@@ -93,12 +93,22 @@ def blog_new():
             flash(_('Title is required.'), 'error')
             return render_template('admin/blog_edit.html', post=None, tags_str='')
 
+        # Phase 27.4 (#24) — validate content_format on the HTML admin
+        # path, matching the API path's existing check. Before this
+        # fix, an attacker-crafted form could stuff any string into
+        # the column; the rendering path falls back to html but the
+        # value was never constrained at write time.
+        content_format = request.form.get('content_format', 'html') or 'html'
+        if content_format not in ('html', 'markdown'):
+            flash(_('Invalid content_format — must be "html" or "markdown".'), 'error')
+            return render_template('admin/blog_edit.html', post=None, tags_str='')
+
         post_id = create_post(
             db,
             title=title,
             summary=request.form.get('summary', ''),
             content=request.form.get('content', ''),
-            content_format=request.form.get('content_format', 'html'),
+            content_format=content_format,
             cover_image=request.form.get('cover_image', ''),
             author=request.form.get('author', ''),
             tags=request.form.get('tags', ''),
@@ -154,13 +164,19 @@ def blog_edit(post_id):
             tags_str = ', '.join(t['name'] for t in tags)
             return render_template('admin/blog_edit.html', post=post, tags_str=tags_str)
 
+        # Phase 27.4 (#24) — same content_format validation on edit.
+        content_format = request.form.get('content_format', 'html') or 'html'
+        if content_format not in ('html', 'markdown'):
+            flash(_('Invalid content_format — must be "html" or "markdown".'), 'error')
+            return render_template('admin/blog_edit.html', post=post, tags_str=tags_str)
+
         update_post(
             db,
             post_id=post_id,
             title=title,
             summary=request.form.get('summary', ''),
             content=request.form.get('content', ''),
-            content_format=request.form.get('content_format', 'html'),
+            content_format=content_format,
             cover_image=request.form.get('cover_image', ''),
             author=request.form.get('author', ''),
             tags=request.form.get('tags', ''),

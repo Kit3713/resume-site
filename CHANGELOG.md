@@ -7,6 +7,11 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.2 (Shield)
 
+### Security — Phase 27.4: `content_format` validation on HTML blog admin (#24)
+
+- HTML blog-post create and edit paths now validate `content_format` against `{html, markdown}` before calling the service layer. Invalid values re-render the form with a flash. Brings the HTML path to parity with the API path's existing check; closes the last tier-2 form-validation gap.
+- Regression test `test_blog_create_rejects_invalid_content_format` in `tests/test_blog.py` locks the new behaviour.
+
 ### Performance — Phase 25.2: `page_views` off the hot path (#49)
 
 - `track_page_view` replaced its synchronous INSERT+COMMIT with an enqueue onto a bounded `queue.Queue` (10 000 cap). A single daemon drainer thread flushes in batches (500 events or 2 s, whichever first). Under burst load the SQLite write lock no longer contends with every other writer on the hot path. Queue-full drops silently + increments an exposed drop counter (`get_dropped_total()` for the future /metrics integration). Final flush on `atexit` so the last drain window isn't lost on process shutdown.
