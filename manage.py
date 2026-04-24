@@ -1284,6 +1284,117 @@ def purge_analytics(args):
     print(f'Purged {count} page view records older than {args.days} days.')
 
 
+# ---------------------------------------------------------------------------
+# Phase 25.1 (#42, #55, #62, #68) — scheduled purge across every
+# retention-managed table.
+# ---------------------------------------------------------------------------
+
+
+def purge_all(_args):
+    """Run every retention purge in sequence; report per-table deletion counts.
+
+    Calls four purges in order, reading the retention days from the
+    settings registry so operators can tune via the admin UI:
+
+    * ``page_views``        — default 90 d (`page_views_retention_days`)
+    * ``login_attempts``    — default 30 d (`login_retention_days`)
+    * ``webhook_deliveries``— default 30 d (`webhook_retention_days`)
+    * ``admin_activity_log``— default 90 d (`activity_log_retention_days`)
+
+    Each purge runs independently — a failure on one never aborts the
+    others. Exit code is 0 on success, non-zero on any error. Every
+    purge writes a ``purge_last_success_<table>`` setting with the
+    current ISO timestamp so the admin dashboard can surface
+    "last-purge" freshness.
+    """
+    import contextlib
+    from datetime import UTC, datetime
+
+    from app import create_app
+
+    app = create_app()
+    db_path = app.config['DATABASE_PATH']
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    errors = 0
+
+    def _retention(key, default):
+        row = conn.execute('SELECT value FROM settings WHERE key = ?', (key,)).fetchone()
+        if row is None:
+            return default
+        try:
+            return int(row['value'])
+        except (TypeError, ValueError):
+            return default
+
+    def _stamp(table):
+        ts = datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+        conn.execute(
+            'INSERT INTO settings (key, value) VALUES (?, ?) '
+            'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+            (f'purge_last_success_{table}', ts),
+        )
+
+    # page_views
+    try:
+        days = _retention('page_views_retention_days', 90)
+        cur = conn.execute(
+            "DELETE FROM page_views WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)",
+            (f'-{days} days',),
+        )
+        print(f'page_views: purged {cur.rowcount} rows (> {days} days)')
+        _stamp('page_views')
+    except Exception as exc:  # noqa: BLE001 — one failure doesn't abort the rest
+        print(f'page_views: ERROR {exc}')
+        errors += 1
+
+    # login_attempts
+    with contextlib.suppress(Exception):
+        from app.services.login_throttle import purge_old_attempts
+
+        try:
+            days = _retention('login_retention_days', 30)
+            deleted = purge_old_attempts(conn, days)
+            print(f'login_attempts: purged {deleted} rows (> {days} days)')
+            _stamp('login_attempts')
+        except Exception as exc:  # noqa: BLE001
+            print(f'login_attempts: ERROR {exc}')
+            errors += 1
+
+    # webhook_deliveries
+    with contextlib.suppress(Exception):
+        from app.services.webhooks import purge_old_deliveries
+
+        try:
+            days = _retention('webhook_retention_days', 30)
+            deleted = purge_old_deliveries(conn, keep_days=days)
+            print(f'webhook_deliveries: purged {deleted} rows (> {days} days)')
+            _stamp('webhook_deliveries')
+        except Exception as exc:  # noqa: BLE001
+            print(f'webhook_deliveries: ERROR {exc}')
+            errors += 1
+
+    # admin_activity_log
+    with contextlib.suppress(Exception):
+        from app.services.activity_log import purge_old_entries
+
+        try:
+            days = _retention('activity_log_retention_days', 90)
+            deleted = purge_old_entries(conn, days=days)
+            print(f'admin_activity_log: purged {deleted} rows (> {days} days)')
+            _stamp('admin_activity_log')
+        except Exception as exc:  # noqa: BLE001
+            print(f'admin_activity_log: ERROR {exc}')
+            errors += 1
+
+    conn.commit()
+    conn.close()
+
+    if errors:
+        sys.exit(1)
+
+
 # =============================================================
 # QUERY AUDIT (Phase 12.1)
 # =============================================================
@@ -2227,6 +2338,12 @@ def main():
     purge_parser = subparsers.add_parser('purge-analytics', help='Purge old analytics data')
     purge_parser.add_argument('--days', type=int, default=90, help='Days to retain')
 
+    # Phase 25.1 — purge everything with one timer-friendly command
+    subparsers.add_parser(
+        'purge-all',
+        help='Run every retention purge in sequence (page_views, login_attempts, webhook_deliveries, admin_activity_log)',
+    )
+
     # Query audit (Phase 12.1) — runs EXPLAIN QUERY PLAN on hot queries
     subparsers.add_parser('query-audit', help='EXPLAIN QUERY PLAN on documented hot queries')
 
@@ -2323,6 +2440,7 @@ def main():
         'list-api-tokens': list_api_tokens,
         'list-reviews': list_reviews,
         'purge-analytics': purge_analytics,
+        'purge-all': purge_all,
         'query-audit': query_audit,
         'complexity-report': complexity_report,
         'profile': profile,

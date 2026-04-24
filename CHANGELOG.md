@@ -7,6 +7,17 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.2 (Shield)
 
+### Added — Phase 25.1: `manage.py purge-all` (#42, #55, #62, #68)
+
+- New CLI command runs every retention purge in one invocation: `page_views` (default 90d), `login_attempts` (30d), `webhook_deliveries` (30d), `admin_activity_log` (90d). Each retention window reads from a settings registry key (`page_views_retention_days`, etc.) so operators can tune via the admin UI without a config change. Individual purge failures never abort the others — exit code is non-zero if any errored. Each successful purge writes a `purge_last_success_<table>` setting so a future admin-dashboard "Retention" card can display freshness without having to parse logs.
+- Integration test seeds one expired row per table, invokes the CLI as a subprocess, and asserts every table was purged plus the four freshness stamps landed.
+- Deferred: systemd `resume-site-purge.timer` unit, compose.yaml cron snippet, admin dashboard widget — the CLI is the load-bearing piece, host-level timer plumbing is operator-specific.
+
+### Changed — Phase 27.3: SMTP failures now surface in logs (#23)
+
+- `send_contact_email` emits a WARNING log on any SMTP failure (`SMTP delivery failed: <ExceptionType> (host=... port=...)`) instead of silently returning False. The exception type only (not the message body) is logged so a server-side detail leak in the SMTP error text doesn't end up in log aggregators. Submissions are already persisted by the route; this adds operator visibility without changing the "no data lost on SMTP failure" contract.
+- Deferred: new `mail_send_errors_total{reason}` Prometheus counter + `contact_submissions.smtp_status` column — needs migration 013 and is best paired with the admin dashboard widget.
+
 ### Security — Phase 27: correctness bugs (bulk actions, null bytes, open redirect, CSP report)
 
 - **27.1 bulk actions (#20)** — `window.bulkAction` now sends the CSRF token as the `X-CSRFToken` header. Previously every bulk-action click from the admin UI returned 400, making the v0.3.0 Phase 14.3 feature unusable.

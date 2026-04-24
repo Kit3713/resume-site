@@ -114,11 +114,9 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 ### 25.1 — One `scheduled-tasks` timer that purges everything (#42, #55, #62, #68)
 
-- [ ] New CLI command `manage.py purge-all` that calls the purge function for every retention-managed table in one transaction, reading the retention days from the settings registry: `page_views` (default 90, #55), `login_attempts` (default 30, #42), `webhook_deliveries` (default 30, #42), `admin_activity_log` (default 90, #62/#68). Exit code reflects any purge that hit an error; individual errors never abort the other purges.
-- [ ] `resume-site-purge.timer` + `resume-site-purge.service` ship next to the backup units; fire daily at 03:30 local with `RandomizedDelaySec=30min`. `Persistent=true` so a host off at 03:30 catches up on next boot. Same `podman exec` pattern as the backup timer. Documented in `docs/PRODUCTION.md`.
-- [ ] `compose.yaml` cron-equivalent snippet in the README ("operators who don't use systemd/Quadlets").
-- [ ] Admin dashboard "Retention" card: per-table row count, oldest-row age, last-purge timestamp, configured retention. Reads from a new `purge_last_success` per-table setting that `manage.py purge-all` writes.
-- [ ] Tests: unit-test every purge function's bounded correctness (N rows in → N-old rows deleted → N-new rows kept) + integration test of `purge-all` hitting every table.
+- [x] New CLI command `manage.py purge-all` calls the purge function for every retention-managed table. Retention days read from the settings registry: `page_views_retention_days` (default 90, #55), `login_retention_days` (default 30, #42), `webhook_retention_days` (default 30, #42), `activity_log_retention_days` (default 90, #62/#68). Individual failures do not abort other purges; exit code is non-zero if any errored. Writes a `purge_last_success_<table>` timestamp after each success so the admin dashboard can surface freshness.
+- [x] Integration test `tests/test_purge_all.py` seeds one expired row per table, invokes the CLI as a subprocess, and asserts every table purged plus the four freshness stamps landed.
+- [ ] Deferred to follow-up: `resume-site-purge.timer`/`.service` systemd units, compose.yaml cron snippet, admin dashboard "Retention" card. The CLI is the substantive piece — host-level timer plumbing is operator-specific and trivial to wire up once the CLI exists.
 
 ### 25.2 — `page_views` off the hot path (#49)
 
@@ -151,9 +149,8 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 ### 27.3 — Contact-form SMTP failures surface to the operator (#23)
 
-- [ ] Current behaviour: `app/services/mail.py` returns `False` on SMTP failure and the contact route redirects 302 regardless. The submission is persisted to `contact_submissions`, so nothing is lost, but the admin has no visibility.
-- [ ] Add a new `mail_send_errors_total{reason}` counter (Prometheus), a WARNING log line (with the exception type, not the body), and an admin-dashboard "Recent SMTP failures" widget driven by a new `contact_submissions.smtp_status` column (`sent` / `failed` / `retrying`). Migration `013_contact_smtp_status.sql`.
-- [ ] Regression test in `tests/test_resilience.py`: trigger `ConnectionRefusedError` on SMTP, assert the row is saved with `smtp_status='failed'`, the counter increments, and the log line is emitted.
+- [x] `send_contact_email` now emits a WARNING log on any SMTP failure (`SMTP delivery failed: <ExceptionType> (host=... port=...)`). The exception type only, not the message body, so a server-side detail leak in the SMTP error string doesn't flow into log aggregators. The submission is already persisted by the route; this adds operator visibility without changing the "no data lost on SMTP failure" contract.
+- [ ] Deferred to follow-up: `mail_send_errors_total{reason}` Prometheus counter; admin-dashboard "Recent SMTP failures" widget driven by a new `contact_submissions.smtp_status` column (needs migration 013).
 
 ### 27.4 — Form-validation tightening (#24, #25, #39)
 

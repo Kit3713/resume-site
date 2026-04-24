@@ -115,5 +115,21 @@ def send_contact_email(name: str, email: str, message: str) -> bool:
         server.send_message(msg)
         server.quit()
         return True
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — any SMTP failure is a relay problem
+        # Phase 27.3 (#23) — surface the failure at WARNING so operators
+        # tailing the logs see that contact emails aren't going out.
+        # Previously this returned False silently; the only way to
+        # notice was to realise no emails had arrived and go hunting.
+        # We log the exception TYPE only (not the message body) so a
+        # server-side detail leak in the SMTP error string doesn't
+        # flow into logs aggregators. The submission is already saved
+        # to ``contact_submissions`` by the route, so no data is lost.
+        import logging
+
+        logging.getLogger('app.mail').warning(
+            'SMTP delivery failed: %s (host=%s port=%s)',
+            type(exc).__name__,
+            host,
+            port,
+        )
         return False
