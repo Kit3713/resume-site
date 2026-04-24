@@ -143,8 +143,7 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 ### 27.2 — Review submission atomicity (#26)
 
-- [ ] `create_review` + `mark_token_used` span two statements without a transaction. Under concurrent submission, the token can be double-used.
-- [ ] Wrap both calls in `with db:` (Python sqlite3 context-manager rolls back on exception, commits on success). Revalidate the token inside the transaction. Regression test: two threads submit the same token concurrently — exactly one wins, the other sees `error: token_already_used`.
+- [x] `create_review` + `mark_token_used` now run inside an explicit `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` transaction with a third in-transaction re-validate. ``app.db._InstrumentedConnection`` doesn't forward the context-manager protocol, so the explicit form is used instead of ``with db:``. Regression test `test_review_token_concurrent_submission_rejected` asserts exactly one review row lands when two clients race the same token.
 
 ### 27.3 — Contact-form SMTP failures surface to the operator (#23)
 

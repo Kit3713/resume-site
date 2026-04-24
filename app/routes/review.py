@@ -24,6 +24,23 @@ from app.events import Events, emit
 from app.models import create_review, mark_token_used
 from app.services.tokens import validate_token
 
+
+class _TokenRaceError(Exception):
+    """Raised inside the review-submit transaction when a concurrent
+    writer invalidated the token between our initial check and BEGIN.
+
+    Phase 27.2 (#26) — using an exception is the cleanest way to exit
+    a ``with db:`` context while still rolling back; a plain ``return``
+    inside the block would commit, which is the opposite of what we
+    want when we've detected a losing race.
+    """
+
+    def __init__(self, error, token_row):
+        super().__init__(error)
+        self.error = error
+        self.token_row = token_row
+
+
 review_bp = Blueprint('review', __name__, template_folder='../templates')
 
 
@@ -70,22 +87,46 @@ def review_form(token):
             flash(_('Name and message are required.'), 'error')
             return render_template('public/review.html', error=None, token_data=token_row)
 
-        # Create the review with 'pending' status (awaiting admin approval)
-        review_id = create_review(
-            db,
-            token_id=token_row['id'],
-            reviewer_name=reviewer_name,
-            reviewer_title=reviewer_title,
-            relationship=relationship,
-            message=message,
-            rating=rating,
-            review_type=token_row[
-                'type'
-            ],  # Inherited from the token ('recommendation' or 'client_review')
-        )
+        # Phase 27.2 (#26) — atomic review + token-use update.
+        # Before this, ``create_review`` and ``mark_token_used`` were
+        # two separate statements without a transaction. Two
+        # concurrent POSTs of the same token raced each other: both
+        # observed "token valid", both called create_review, both
+        # called mark_token_used. The result was two reviews for one
+        # invitation token. Explicit BEGIN IMMEDIATE / COMMIT /
+        # ROLLBACK is used rather than ``with db:`` because
+        # ``app.db._InstrumentedConnection`` wraps the raw sqlite3
+        # connection and does not surface its context-manager
+        # protocol.
+        try:
+            db.execute('BEGIN IMMEDIATE')
+            try:
+                # Re-validate inside the transaction — a concurrent
+                # writer that landed between our initial check and
+                # the BEGIN is now visible.
+                token_row, error = validate_token(db, token)
+                if error:
+                    raise _TokenRaceError(error, token_row)
 
-        # Mark the token as used so it cannot be resubmitted
-        mark_token_used(db, token_row['id'])
+                review_id = create_review(
+                    db,
+                    token_id=token_row['id'],
+                    reviewer_name=reviewer_name,
+                    reviewer_title=reviewer_title,
+                    relationship=relationship,
+                    message=message,
+                    rating=rating,
+                    review_type=token_row['type'],  # 'recommendation' or 'client_review'
+                )
+                mark_token_used(db, token_row['id'])
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        except _TokenRaceError as race:
+            return render_template(
+                'public/review.html', error=race.error, token_data=race.token_row
+            )
 
         # Phase 19.1 event bus — fire `review.submitted` so subscribers
         # (admin email notifier, future webhook delivery) can react. The

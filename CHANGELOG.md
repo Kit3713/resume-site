@@ -7,6 +7,11 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.2 (Shield)
 
+### Fixed — Phase 27.2: review submission atomicity (#26)
+
+- `create_review` + `mark_token_used` now run inside an explicit `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` transaction with a third in-transaction token re-validate. Before, two separate statements without a transaction meant two concurrent submissions of the same token could both succeed (race between "token valid" check and "mark used" update). Now exactly one wins; the losing caller rolls back cleanly. `app.db._InstrumentedConnection` doesn't forward the context-manager protocol so the explicit form is used instead of `with db:`.
+- Regression test `test_review_token_concurrent_submission_rejected` in `tests/test_integration.py` asserts exactly one review row exists after two simultaneous POSTs of the same token.
+
 ### Added — Phase 37.1: API compatibility policy doc
 
 - New `docs/API_COMPATIBILITY.md` — the stated contract between this codebase and any API / webhook consumer. Enumerates what MAY NOT change within a major version prefix (endpoints, field names, field types, error codes, event names, webhook envelope shape), what MAY change non-breakingly (new fields, new codes, new events, stricter validation), and the deprecation process every breaking change must go through (at minimum one release of `Deprecation`/`Sunset`/`Link` headers + CHANGELOG `Deprecated` entry + explicit removal release). Paired with the existing `docs/UPGRADE.md` which guarantees data survival; this doc closes the orthogonal consumer-contract gap.

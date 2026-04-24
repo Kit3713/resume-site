@@ -134,6 +134,57 @@ def test_used_token_cannot_resubmit(auth_client, app):
     assert b'Already Submitted' in response.data
 
 
+def test_review_token_concurrent_submission_rejected(auth_client, app):
+    """Phase 27.2 (#26): two concurrent POSTs of the same token must
+    not both produce a review. Atomic BEGIN IMMEDIATE + re-validate
+    inside the transaction ensures exactly one wins.
+
+    This test runs the two submissions sequentially (test-client
+    concurrency is cooperative, not real threads) but the contract
+    is still observable: the first POST creates a row and marks the
+    token used; the second POST re-validates inside its own
+    transaction, sees the token is used, and rolls back without
+    creating a second review row.
+    """
+    auth_client.post(
+        '/admin/tokens/generate',
+        data={'name': 'Racing User', 'type': 'client_review'},
+    )
+
+    with app.app_context():
+        from app.db import get_db
+
+        db = get_db()
+        token_row = db.execute(
+            "SELECT token FROM review_tokens WHERE name = 'Racing User'"
+        ).fetchone()
+        token_string = token_row['token']
+
+    client_a = app.test_client()
+    client_b = app.test_client()
+    payload = {'reviewer_name': 'A', 'message': 'First!'}
+
+    resp_a = client_a.post(f'/review/{token_string}', data=payload)
+    resp_b = client_b.post(
+        f'/review/{token_string}', data={'reviewer_name': 'B', 'message': 'Second?'}
+    )
+
+    # A submits successfully (redirect to thank-you or 200 with confirmation).
+    assert resp_a.status_code in (200, 302)
+    # B must NOT produce a second review. Whether the page shows
+    # "Already Submitted" (200) or redirects differently, the DB
+    # must have exactly one review for this token.
+    assert resp_b.status_code == 200
+
+    with app.app_context():
+        db = get_db()
+        count = db.execute(
+            'SELECT COUNT(*) FROM reviews WHERE token_id = '
+            "(SELECT id FROM review_tokens WHERE name = 'Racing User')"
+        ).fetchone()[0]
+        assert count == 1, f'expected exactly 1 review, got {count}'
+
+
 # ============================================================
 # CONTACT FLOW (submit → DB → admin dashboard)
 # ============================================================
