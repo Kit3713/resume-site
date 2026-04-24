@@ -174,3 +174,94 @@ def test_get_tags_for_posts_matches_get_tags_for_post(counting_db):
         single = get_tags_for_post(conn, pid)
         # Compare by the unique tag id since name/slug are equal in the seed
         assert sorted(t['id'] for t in batched[pid]) == sorted(t['id'] for t in single)
+
+
+# ----------------------------------------------------------------------
+# Phase 26.1 (#52) — translations N+1
+# ----------------------------------------------------------------------
+
+
+def _seed_blog_posts_with_translations(conn, *, num_posts: int, locale: str = 'es'):
+    """Insert ``num_posts`` blog posts + a translation row per post.
+
+    Returns the list of inserted post rows (as ``sqlite3.Row`` objects)
+    so the caller can feed them straight into
+    ``overlay_posts_translations``. Each call gets unique slugs so the
+    same test can seed multiple batches without UNIQUE collisions.
+    """
+    import uuid as _uuid
+
+    run_id = _uuid.uuid4().hex[:8]
+    inserted: list = []
+    for i in range(num_posts):
+        cursor = conn.execute(
+            'INSERT INTO blog_posts (slug, title, summary, content, status) '
+            "VALUES (?, ?, ?, ?, 'published')",
+            (f'post-{run_id}-{i}', f'Post {i}', f'Summary {i}', f'<p>Body {i}</p>'),
+        )
+        post_id = cursor.lastrowid
+        conn.execute(
+            'INSERT INTO blog_post_translations '
+            '(post_id, locale, title, summary, content) VALUES (?, ?, ?, ?, ?)',
+            (post_id, locale, f'Título {i}', f'Resumen {i}', f'<p>Cuerpo {i}</p>'),
+        )
+        inserted.append(post_id)
+    conn.commit()
+    placeholders = ','.join('?' * len(inserted))
+    sql = f'SELECT * FROM blog_posts WHERE id IN ({placeholders}) ORDER BY id'  # noqa: S608
+    return conn.execute(sql, inserted).fetchall()
+
+
+def test_overlay_posts_translations_single_query_regardless_of_count(counting_db):
+    """Phase 26.1 (#52): the overlay does ONE SELECT for every post's
+    translations, not 2N queries. The query count must be 1 whether we
+    pass 3 posts or 20 posts."""
+    from app.services.translations import overlay_posts_translations
+
+    conn, queries = counting_db
+
+    # Small listing (landing featured strip shape).
+    posts = _seed_blog_posts_with_translations(conn, num_posts=3)
+    queries.clear()
+    overlay_posts_translations(conn, posts, 'es', 'en')
+    small_count = len(queries)
+
+    # Larger listing (feed shape).
+    posts = _seed_blog_posts_with_translations(conn, num_posts=20)
+    queries.clear()
+    overlay_posts_translations(conn, posts, 'es', 'en')
+    large_count = len(queries)
+
+    assert small_count == large_count == 1, (
+        f'expected 1 query each; got small={small_count}, large={large_count}'
+    )
+
+
+def test_overlay_posts_translations_preserves_source_when_no_translation(counting_db):
+    """When no translation row matches the active or fallback locale,
+    the original row is returned unchanged. The batched query still
+    runs but at most one."""
+    from app.services.translations import overlay_posts_translations
+
+    conn, queries = counting_db
+    posts = _seed_blog_posts_with_translations(conn, num_posts=2, locale='es')
+
+    queries.clear()
+    overlaid = overlay_posts_translations(conn, posts, 'ja', 'fr')
+    assert len(queries) <= 1
+    # Originals preserved.
+    assert [p['title'] for p in overlaid] == [posts[0]['title'], posts[1]['title']]
+
+
+def test_overlay_posts_translations_fast_path_no_queries(counting_db):
+    """When the active locale equals the fallback, the overlay
+    short-circuits with zero queries — English-only deployments pay
+    no cost."""
+    from app.services.translations import overlay_posts_translations
+
+    conn, queries = counting_db
+    posts = _seed_blog_posts_with_translations(conn, num_posts=5)
+
+    queries.clear()
+    overlay_posts_translations(conn, posts, 'en', 'en')
+    assert len(queries) == 0

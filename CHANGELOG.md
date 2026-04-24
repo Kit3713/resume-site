@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — v0.3.3 (Proof)
+
+### Performance — Phase 26.1: translations N+1 eliminated (#52)
+
+- `overlay_posts_translations` rewritten from a per-post `get_translated` loop to a single batched `SELECT * FROM blog_post_translations WHERE post_id IN (...) AND locale IN (?, ?)` query, merged in Python. Before the rewrite every post in a listing paid two queries (parent re-fetch + per-post translation lookup); at a 20-post `/blog/feed.xml` that was 40 extra hot-path SELECTs. Fallback-locale chain preserved; fast-path when active locale equals fallback is unchanged (zero queries).
+- Three regression tests in `tests/test_n_plus_1.py` assert: 1 query regardless of post count (3 vs 20); source row preserved when no translation matches; fast-path zero queries when active == fallback.
+
 ## [Unreleased] — v0.3.2 (Shield)
 
 ### Security — Phase 27.4: `content_format` validation on HTML blog admin (#24)

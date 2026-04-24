@@ -450,13 +450,78 @@ def overlay_posts_translations(
 ) -> list:
     """Apply translations to a paginated post listing (Phase 15.4).
 
+    Phase 26.1 (#52) — batched. Before this rewrite every post in the
+    list paid two SELECT queries (parent re-fetch + translation lookup)
+    via :func:`overlay_post_translation` → :func:`get_translated`.
+    At a 10-post /blog page in a non-default locale that was 20 extra
+    queries on the hot path; the landing featured strip (3 posts) and
+    /blog/feed.xml (20 posts) paid the same proportional cost.
+
+    The new implementation issues ONE query for all candidate
+    translations in both the active and fallback locales, keyed on
+    ``post_id IN (...)``, and merges in Python. The parent re-fetch
+    is skipped entirely — the pre-loaded ``posts`` rows already carry
+    the source fields.
+
     Returns a list — either the original rows unchanged (fast path) or
-    dicts with the translated fields overlaid. The shape matches what
+    dicts with the translated fields overlaid. Shape matches what
     ``_attach_tags`` in ``routes/blog.py`` expects.
     """
     if not posts or not _should_translate(locale, fallback_locale):
         return list(posts)
-    return [overlay_post_translation(db, p, locale, fallback_locale) for p in posts]
+
+    config = _TRANSLATION_TABLES['blog_posts']
+    trans_table = config['table']
+    fk = config['fk']
+    fields = config['fields']
+
+    post_ids = [p['id'] for p in posts]
+    if not post_ids:
+        return list(posts)
+
+    # One query pulls both active- and fallback-locale translations for
+    # every post in the listing. The ``IN (?,?,...)`` expansion is
+    # bounded by the caller's pagination size so it never grows past
+    # SQLite's ~999 bind-param limit in practice.
+    placeholders = ','.join('?' * len(post_ids))
+    locales_in_order = [locale]
+    if fallback_locale and fallback_locale != locale:
+        locales_in_order.append(fallback_locale)
+    locale_placeholders = ','.join('?' * len(locales_in_order))
+    rows = db.execute(
+        f'SELECT * FROM {trans_table} '  # noqa: S608 — trans_table is a dict-literal key
+        f'WHERE {fk} IN ({placeholders}) '
+        f'AND locale IN ({locale_placeholders})',
+        (*post_ids, *locales_in_order),
+    ).fetchall()
+
+    # Build post_id → {locale: row_dict}. Later merges walk the
+    # preferred-locale order so the active locale wins over the
+    # fallback when both are present.
+    by_post: dict[int, dict[str, dict]] = {}
+    for r in rows:
+        by_post.setdefault(r[fk], {})[r['locale']] = r
+
+    merged = []
+    for post in posts:
+        post_translations = by_post.get(post['id'], {})
+        if not post_translations:
+            # No translation at any level — keep the raw row.
+            merged.append(post)
+            continue
+        out = dict(post)
+        for loc in locales_in_order:
+            trans = post_translations.get(loc)
+            if trans is None:
+                continue
+            for field in fields:
+                val = trans[field]
+                if val:
+                    out[field] = val
+            out['_locale'] = loc
+            break
+        merged.append(out)
+    return merged
 
 
 def get_available_post_locales(

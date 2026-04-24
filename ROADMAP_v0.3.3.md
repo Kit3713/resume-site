@@ -45,10 +45,9 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 ### 26.1 — Eliminate the translations N+1 (#52)
 
-- [ ] `overlay_posts_translations` is named like a batch loader but runs two queries per post. At the configured non-default locale, `/blog` (10 posts), the landing featured-posts strip (3 posts), and `/blog/feed.xml` (20 posts) each pay an extra 2N queries on the hot path.
-- [ ] Rewrite `get_translated` and `get_all_translated` in `app/services/translations.py` so the list overlay does **one** `SELECT … WHERE parent_id IN (?,?,…,?) AND locale = ?` per table, joined to the pre-loaded caller rows in Python. Preserve the fallback chain.
-- [ ] `tests/test_n_plus_1.py` gains three new cases (blog index, landing featured, feed) that assert `== 2` queries regardless of post count.
-- [ ] `PERFORMANCE.md` row updated with the before/after numbers.
+- [x] `overlay_posts_translations` rewritten to issue ONE `SELECT * FROM blog_post_translations WHERE post_id IN (?,?,…,?) AND locale IN (?, ?)` query and merge in Python. Before the rewrite every post in the listing paid two queries (parent re-fetch + per-post translation lookup); at 20 posts on the feed path that was 40 extra hot-path SELECTs.
+- [x] Three regression tests in `tests/test_n_plus_1.py`: query count is 1 regardless of post count (3 vs 20), source row preserved when no translation matches the active or fallback locale, fast-path zero queries when active == fallback locale.
+- [ ] Deferred: `PERFORMANCE.md` before/after capture — perf-diff work that's meaningful against production data, not local benchmarks.
 
 ### 26.2 — Gunicorn `--preload` and worker recycling (#28, #53)
 
