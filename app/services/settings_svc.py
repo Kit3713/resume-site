@@ -682,6 +682,26 @@ def get(db: sqlite3.Connection, key: str, default: str = '') -> str:
     return row['value'] if row else default
 
 
+def get_uncached(db: sqlite3.Connection, key: str, default: str = '') -> str:
+    """Return a single setting value by key, bypassing the TTL cache.
+
+    Phase 23.1 (#33) — the 30s `DEFAULT_SETTINGS_TTL` on `get_all_cached`
+    means that a value written by one Gunicorn worker is not visible to
+    its peers until the TTL expires. For most settings that's
+    acceptable (admin toggles are low-frequency), but `_admin_session_epoch`
+    is security-critical: a logout that bumps the epoch must
+    invalidate every captured cookie on every worker on the *next*
+    request, not 30 seconds later. Callers that must see the freshest
+    value (the session-epoch guard, the login stamp, the logout bump)
+    use this helper to issue a dedicated SELECT per request.
+
+    The returned value is *not* inserted into the cache — this is a
+    side-channel read that stays orthogonal to `get_all_cached`.
+    """
+    row = db.execute('SELECT value FROM settings WHERE key = ?', (key,)).fetchone()
+    return row['value'] if row else default
+
+
 def save_many(db: sqlite3.Connection, form_data: Mapping[str, Any]) -> None:
     """Save multiple settings from a form submission dict.
 

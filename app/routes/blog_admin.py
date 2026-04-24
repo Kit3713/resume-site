@@ -20,6 +20,7 @@ from flask_login import login_required
 from app.db import get_db
 from app.events import Events, emit
 from app.routes.admin import (
+    check_session_epoch,
     check_session_timeout,
     restrict_to_allowed_networks,
     update_last_activity,
@@ -56,9 +57,16 @@ def _blog_event_payload(post_row, *, source):
 
 blog_admin_bp = Blueprint('blog_admin', __name__, template_folder='../templates')
 
-# Share the same security middleware as the main admin blueprint
+# Share the same security middleware as the main admin blueprint.
+# Phase 23.1 (#51) — check_session_epoch MUST be registered here too;
+# the parent admin_bp's before_request hooks do not fire for requests
+# routed to a sibling blueprint, so omitting it leaves a captured
+# cookie valid after logout for every route under this blueprint.
+# The `test_admin_blueprint_middleware_parity` regression test in
+# tests/test_admin.py asserts this set stays aligned with admin_bp.
 blog_admin_bp.before_request(restrict_to_allowed_networks)
 blog_admin_bp.before_request(check_session_timeout)
+blog_admin_bp.before_request(check_session_epoch)
 blog_admin_bp.after_request(update_last_activity)
 
 

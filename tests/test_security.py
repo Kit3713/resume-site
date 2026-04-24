@@ -648,3 +648,125 @@ def test_admin_xff_ignored_when_direct_peer_not_in_trusted_proxies(tmp_path):
     # to remote_addr = 127.0.0.1 which IS in allowed_networks → 200.
     resp = client.get('/admin/login', headers={'X-Forwarded-For': '127.0.0.1'})
     assert resp.status_code == 200
+
+
+# ============================================================
+# SESSION REVOCATION — Phase 23.1 (#33 + #51)
+# ============================================================
+
+
+def test_admin_blueprint_middleware_parity(app):
+    """Phase 23.1 (#51): every admin-prefixed blueprint MUST register the
+    same set of before_request / after_request hooks.
+
+    Regression for the bug where ``check_session_epoch`` was only attached
+    to ``admin_bp``; a cookie captured before logout kept authenticating
+    on every route under ``blog_admin_bp`` until the cookie's own expiry.
+    """
+    from app.routes.admin import admin_bp
+    from app.routes.blog_admin import blog_admin_bp
+
+    def _hook_names(bp, attr):
+        return (
+            {fn.__name__ for fn in bp.before_request_funcs.get(None, [])}
+            if attr == 'before'
+            else {fn.__name__ for fn in bp.after_request_funcs.get(None, [])}
+        )
+
+    admin_before = _hook_names(admin_bp, 'before')
+    blog_before = _hook_names(blog_admin_bp, 'before')
+    admin_after = _hook_names(admin_bp, 'after')
+    blog_after = _hook_names(blog_admin_bp, 'after')
+
+    # The security-critical set (everything that enforces IP/session
+    # boundaries) must be identical. Non-security hooks registered only
+    # on admin_bp are permitted — this assertion is intentionally scoped
+    # to the enforcement set, not a superset equality.
+    required = {'restrict_to_allowed_networks', 'check_session_timeout', 'check_session_epoch'}
+    assert required <= admin_before, f'admin_bp missing: {required - admin_before}'
+    assert required <= blog_before, f'blog_admin_bp missing: {required - blog_before}'
+    assert 'update_last_activity' in admin_after
+    assert 'update_last_activity' in blog_after
+
+
+def test_logout_revokes_cookie_on_another_client(app):
+    """Phase 23.1 (#33): after one client logs out, a second client
+    holding a copy of the same pre-logout cookie must be rejected on its
+    NEXT admin request — not after the 30 s settings-cache TTL.
+
+    Simulates two Gunicorn workers by issuing two Flask test clients
+    against the same app; the uncached epoch read in check_session_epoch
+    is what makes the revocation visible immediately.
+    """
+    import time
+
+    # Seed the session on client A via the login form so both clients
+    # share the same underlying cookie stamp.
+    client_a = app.test_client()
+    client_a.post(
+        '/admin/login',
+        data={'username': 'admin', 'password': 'testpassword123'},
+        follow_redirects=False,
+    )
+    # Clone A's session cookie into client B. Reading session via the
+    # test-client session transaction is enough to keep B authenticated.
+    with client_a.session_transaction() as sess_a:
+        user_id = sess_a.get('_user_id')
+        admin_epoch = sess_a.get('_admin_epoch')
+    assert user_id == 'admin'
+    assert admin_epoch is not None
+
+    client_b = app.test_client()
+    with client_b.session_transaction() as sess_b:
+        sess_b['_user_id'] = user_id
+        sess_b['_admin_epoch'] = admin_epoch
+        sess_b['_fresh'] = True
+
+    # Confirm B can reach dashboard before the logout lands.
+    assert client_b.get('/admin/').status_code == 200
+
+    # A logs out — epoch bumps in the settings table.
+    t0 = time.monotonic()
+    client_a.get('/admin/logout')
+
+    # B's next admin request must be rejected immediately (within 250 ms
+    # per the roadmap SLA) — the uncached read path makes this the cost
+    # of a single SELECT, not the cache TTL.
+    resp = client_b.get('/admin/', follow_redirects=False)
+    elapsed_ms = (time.monotonic() - t0) * 1000
+
+    assert resp.status_code in (302, 401), f'stale cookie still authenticated: {resp.status_code}'
+    # 302 → redirect to /admin/login (check_session_epoch's behaviour)
+    if resp.status_code == 302:
+        assert '/admin/login' in resp.headers.get('Location', '')
+    assert elapsed_ms < 250, f'revocation took {elapsed_ms:.0f}ms — SLA is <250ms'
+
+
+def test_logout_revokes_cookie_on_blog_admin_routes(app):
+    """Phase 23.1 (#51): the blog_admin blueprint must honour the epoch
+    check too. A post-logout cookie must not grant access to /admin/blog.
+    """
+    client_a = app.test_client()
+    client_a.post(
+        '/admin/login',
+        data={'username': 'admin', 'password': 'testpassword123'},
+        follow_redirects=False,
+    )
+    with client_a.session_transaction() as sess_a:
+        user_id = sess_a['_user_id']
+        admin_epoch = sess_a['_admin_epoch']
+
+    client_b = app.test_client()
+    with client_b.session_transaction() as sess_b:
+        sess_b['_user_id'] = user_id
+        sess_b['_admin_epoch'] = admin_epoch
+        sess_b['_fresh'] = True
+
+    assert client_b.get('/admin/blog').status_code == 200
+
+    client_a.get('/admin/logout')
+
+    resp = client_b.get('/admin/blog', follow_redirects=False)
+    assert resp.status_code in (302, 401), (
+        f'blog_admin accepted stale cookie post-logout: {resp.status_code}'
+    )

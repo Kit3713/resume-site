@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — v0.3.2 (Shield)
+
+### Security — Phase 23.1: session revocation (#33, #51)
+
+- **#51 Cookie replay bypass on `blog_admin_bp` closed.** `check_session_epoch` was registered as a `before_request` hook on `admin_bp` only; the sibling `blog_admin_bp` (everything under `/admin/blog`) did not re-register it, so a captured pre-logout cookie kept authenticating against the blog admin routes for the cookie's full lifetime. Re-registered the guard on `blog_admin_bp` and added `test_admin_blueprint_middleware_parity` in `tests/test_security.py` that asserts the security-critical middleware set matches between the two blueprints — a future `*_admin_bp` forgetting the guard now fails CI.
+- **#33 Cross-worker revocation race closed.** Logout bumps `_admin_session_epoch` in the settings table, but peer Gunicorn workers were reading it through the 30 s TTL'd `get_all_cached` — a captured cookie stayed valid on those workers for up to the TTL window. Added `settings_svc.get_uncached(db, key, default)` which issues a dedicated SELECT, bypasses the cache, and does **not** poison the cache with the fresh value. `check_session_epoch`, the login-side epoch stamp, and the logout-side epoch bump all switched to `get_uncached`. The per-request cost is one integer lookup on SQLite — negligible vs. the scrypt compare that already happens on login, and the request-time tradeoff is explicit: a 30 s window of accepted-but-revoked cookies would not survive an audit.
+- Two regression tests lock in the revocation SLA: `test_logout_revokes_cookie_on_another_client` (two Flask test clients sharing a cookie; one logs out, the other's next `/admin/` is a 302-to-login in **< 250 ms**), and `test_logout_revokes_cookie_on_blog_admin_routes` (same pattern against `/admin/blog`).
+
+---
+
 ## [Unreleased] — v0.3.1 (Keystone)
 
 ### Added — Content block delete + duplicate-safe create

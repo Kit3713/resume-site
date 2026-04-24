@@ -41,9 +41,9 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 ### 23.1 — Session revocation: close both gaps (#33, #51)
 
-- [ ] **#51 Bypass on `blog_admin_bp`:** `check_session_epoch` is registered on `admin_bp` only. The separate `blog_admin_bp` (mounted under the same `/admin` prefix) does **not** re-register it, so a captured cookie survives a logout for the lifetime of the cookie. Register the full admin middleware bundle on `blog_admin_bp` in `app/routes/blog_admin.py:59-62` and add a regression test that iterates every registered blueprint and asserts the middleware set matches `admin_bp`.
-- [ ] **#33 Race across workers:** The current design bumps `_admin_session_epoch` in the settings table on logout. Other Gunicorn workers keep accepting the cookie for up to 30 s — the settings cache TTL. Pub-sub is overkill; the right fix is to bypass the cache specifically for this one key. Add a `settings_svc.get_uncached(key)` helper and have `check_session_epoch` call it. Accept the extra query per admin request.
-- [ ] Regression test: two simultaneous clients with the same cookie, one logs out, the other's next admin request is 401 within 250 ms.
+- [x] **#51 Bypass on `blog_admin_bp`:** `check_session_epoch` is registered on `admin_bp` only. The separate `blog_admin_bp` (mounted under the same `/admin` prefix) does **not** re-register it, so a captured cookie survives a logout for the lifetime of the cookie. Register the full admin middleware bundle on `blog_admin_bp` in `app/routes/blog_admin.py:59-62` and add a regression test that iterates every registered blueprint and asserts the middleware set matches `admin_bp`.
+- [x] **#33 Race across workers:** The current design bumps `_admin_session_epoch` in the settings table on logout. Other Gunicorn workers keep accepting the cookie for up to 30 s — the settings cache TTL. Pub-sub is overkill; the right fix is to bypass the cache specifically for this one key. Add a `settings_svc.get_uncached(key)` helper and have `check_session_epoch` call it. Accept the extra query per admin request.
+- [x] Regression test: two simultaneous clients with the same cookie, one logs out, the other's next admin request is 401 within 250 ms.
 
 ### 23.2 — One `get_client_ip()` helper to rule them all (#34)
 

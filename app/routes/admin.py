@@ -210,7 +210,6 @@ def check_session_timeout():
             pass  # Malformed timestamp — let the request proceed
 
 
-@admin_bp.before_request
 def check_session_epoch():
     """Reject sessions older than the current admin session epoch.
 
@@ -222,18 +221,31 @@ def check_session_epoch():
     ``settings`` table; logout bumps the stored epoch so every
     previously-issued cookie becomes invalid.
 
+    Phase 23.1 (#33) — read via ``get_uncached`` rather than the shared
+    settings cache. Another worker that just bumped the epoch on logout
+    would otherwise stay invisible here for up to ``DEFAULT_SETTINGS_TTL``
+    (30 s), during which a captured cookie still authenticates. The
+    per-request SELECT is acceptable on the admin hot path (one integer
+    lookup; orders of magnitude below login's scrypt cost).
+
+    Phase 23.1 (#51) — this function is shared between ``admin_bp`` and
+    ``blog_admin_bp`` (registered as ``before_request`` on both). Do not
+    decorate it here; the blueprints register the callable directly so a
+    new admin-prefixed blueprint can opt into the same guard without
+    having to import a decorator that's already attached to another
+    blueprint.
+
     Runs after ``check_session_timeout`` so the activity-timeout path still
     applies. No-ops for unauthenticated requests.
     """
     if not current_user.is_authenticated:
         return
 
-    from app.services.settings_svc import get_all_cached
+    from app.services.settings_svc import get_uncached
 
     db = get_db()
-    settings = get_all_cached(db, current_app.config['DATABASE_PATH'])
     try:
-        current_epoch = int(settings.get('_admin_session_epoch', '0'))
+        current_epoch = int(get_uncached(db, '_admin_session_epoch', '0'))
     except (TypeError, ValueError):
         current_epoch = 0
 
@@ -242,6 +254,9 @@ def check_session_epoch():
         logout_user()
         session.clear()
         return redirect(url_for('admin.login'))
+
+
+admin_bp.before_request(check_session_epoch)
 
 
 # ============================================================
@@ -339,8 +354,15 @@ def login():
             # is an integer counter in the settings table; it's bumped on
             # logout (see ``logout``) so every pre-logout cookie becomes
             # invalid. Fresh logins always adopt the current value.
+            #
+            # Phase 23.1 (#33) — read via ``get_uncached`` to match the
+            # check-path read strategy. A logout that landed on another
+            # worker must be reflected in this session's stamp within
+            # one request, not after the cache TTL expires.
+            from app.services.settings_svc import get_uncached
+
             try:
-                current_epoch = int(settings.get('_admin_session_epoch', '0'))
+                current_epoch = int(get_uncached(db, '_admin_session_epoch', '0'))
             except (TypeError, ValueError):
                 current_epoch = 0
             session['_admin_epoch'] = current_epoch
@@ -380,12 +402,13 @@ def logout():
     because Flask's default cookie sessions can't be invalidated
     just by clearing the jar.
     """
-    from app.services.settings_svc import get_all_cached, invalidate_cache
+    from app.services.settings_svc import get_uncached, invalidate_cache
 
     db = get_db()
-    settings = get_all_cached(db, current_app.config['DATABASE_PATH'])
+    # Phase 23.1 (#33) — uncached read so a near-simultaneous logout on
+    # another worker is not double-counted or lost in an increment race.
     try:
-        current_epoch = int(settings.get('_admin_session_epoch', '0'))
+        current_epoch = int(get_uncached(db, '_admin_session_epoch', '0'))
     except (TypeError, ValueError):
         current_epoch = 0
     # ``set_one`` refuses keys outside SETTINGS_REGISTRY; write directly.
