@@ -125,7 +125,7 @@ If v0.3.1 ships through its own gate cleanly, v0.3.2 and v0.3.3 each become "fix
 
 ### 36.6 — Observability cross-reference (v0.3.0 Phase 18.11)
 
-- [ ] Add a one-line pointer from `docs/PRODUCTION.md` (monitoring section) to `docs/OBSERVABILITY_RUNBOOK.md`. Five-minute doc edit; flagged because v0.3.0 closed without it.
+- [x] Add a one-line pointer from `docs/PRODUCTION.md` (monitoring section) to `docs/OBSERVABILITY_RUNBOOK.md`. Five-minute doc edit; flagged because v0.3.0 closed without it.
 
 ### 36.7 — Subsystems as event-bus handlers (v0.3.0 Phase 19.1)
 
