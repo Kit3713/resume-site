@@ -74,6 +74,32 @@ jobs:
             exit 1
           fi
 
+      - name: Guard CHANGELOG entry on @deprecated additions (Phase 37.4)
+        if: github.event_name == 'pull_request'
+        run: |
+          # Every PR that adds a `@deprecated(` decorator to anything under
+          # app/ must also add a line under a `### Deprecated` heading in
+          # CHANGELOG.md. The contract is documented in
+          # docs/API_COMPATIBILITY.md — endpoint deprecation is a
+          # consumer-visible event and CHANGELOG is the canonical record.
+          # Push events to main carry no diff base, so the guard is a
+          # no-op there; PR diffs are inspected against the base ref.
+          # actions/checkout@v4 ships a shallow clone by default; fetch the
+          # base ref deep enough that `git diff base...HEAD` succeeds even
+          # for multi-commit PRs.
+          base_sha="${{ github.event.pull_request.base.sha }}"
+          git fetch --no-tags origin "$base_sha"
+          diff_range="${base_sha}...HEAD"
+          deprecated_added=$(git diff "$diff_range" -- 'app/**' | grep -E '^\+[^+].*@deprecated\(' || true)
+          changelog_added=$(git diff "$diff_range" -- CHANGELOG.md | grep -E '^\+### Deprecated' || true)
+          if [ -n "$deprecated_added" ] && [ -z "$changelog_added" ]; then
+            echo "ERROR: This PR adds a @deprecated decorator under app/ but does not add a CHANGELOG entry under a '### Deprecated' heading." >&2
+            echo "Every endpoint deprecation must land with a CHANGELOG note — see docs/API_COMPATIBILITY.md for the policy." >&2
+            echo "Offending additions:" >&2
+            echo "$deprecated_added" >&2
+            exit 1
+          fi
+
       - name: Guard against debug=True in app entry points (Phase 22.1)
         run: |
           # The Werkzeug /console interactive debugger is RCE-by-design. Any
