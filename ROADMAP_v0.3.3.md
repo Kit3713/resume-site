@@ -88,8 +88,8 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 ### 28.2 — Un-advisory `vulture` (#30)
 
-- [ ] CI vulture step is `continue-on-error: true`. Flip to blocking. Any currently-surviving findings either get the allowlist entry or the code deletion they deserve.
-- [ ] Pre-commit hook added (matches CI). `CONTRIBUTING.md` updated.
+- [x] CI vulture step is `continue-on-error: true`. Flip to blocking. Any currently-surviving findings either get the allowlist entry or the code deletion they deserve.
+- [x] Pre-commit hook added (matches CI). `CONTRIBUTING.md` updated.
 
 ### 28.3 — Fix or retire `upgrade-simulation` (#31)
 

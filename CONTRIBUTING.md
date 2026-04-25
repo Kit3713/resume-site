@@ -27,6 +27,10 @@ Thanks for your interest in contributing to resume-site.
 - Follow existing code style (PEP 8, 120 char line length).
 - Don't commit `config.yaml`, database files, or personal photos — these are gitignored for a reason.
 
+## Dead-code detection (v0.3.3+)
+
+Dead-code detection (`vulture`) is now blocking in CI. Run `vulture app/ manage.py vulture_allowlist.py --min-confidence 80` locally before committing — the pre-commit hook does this automatically. If vulture flags a runtime-dispatched callable (Flask route handler hit only via the URL map, a method invoked by reflection, etc.), add a single-line entry to `vulture_allowlist.py` with an inline comment explaining why the finding is a false positive. Truly dead code should be deleted, not allowlisted.
+
 ## Container Image Changes (v0.3.0+)
 
 If your PR touches `Containerfile`, `requirements.txt`, or anything that ends up baked into the runtime image:

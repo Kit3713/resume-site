@@ -37,6 +37,21 @@ repos:
         pass_filenames: false
 
   # ----------------------------------------------------------------
+  # vulture — dead code detection (Phase 28.2)
+  # Mirrors the CI invocation; runs on the same paths and confidence.
+  # Findings either get a vulture_allowlist.py entry or the deletion
+  # they deserve. False-negatives (real dead code that vulture missed)
+  # are preferred to false-positives (live code flagged dead) at this
+  # confidence threshold.
+  # ----------------------------------------------------------------
+  - repo: https://github.com/jendrikseipp/vulture
+    rev: v2.16
+    hooks:
+      - id: vulture
+        args: ['app/', 'manage.py', 'vulture_allowlist.py', '--min-confidence', '80']
+        pass_filenames: false
+
+  # ----------------------------------------------------------------
   # detect-secrets — catch credentials before they hit git history
   # ----------------------------------------------------------------
   - repo: https://github.com/Yelp/detect-secrets
