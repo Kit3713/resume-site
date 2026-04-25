@@ -249,7 +249,6 @@ def test_unicode_values_round_trip(client, no_rate_limits, api_admin_token, app,
 @pytest.mark.parametrize(
     'payload',
     [
-        "'; DROP TABLE settings;--",
         '<script>alert(1)</script>',
         '{{ 7*7 }}',
         '../../../etc/passwd',
@@ -259,6 +258,13 @@ def test_unicode_values_round_trip(client, no_rate_limits, api_admin_token, app,
 def test_injection_payloads_stored_as_strings(
     client, no_rate_limits, api_admin_token, app, payload
 ):
+    """Non-SQLi injection payloads pass through to the
+    parameterized-query layer and must be stored verbatim.
+
+    SQLi-fingerprint payloads (``;DROP TABLE``) are now blocked
+    earlier by the v0.3.3 WAF body-scan (#84) — see
+    ``test_sql_injection_payload_blocked_by_waf`` below.
+    """
     response = client.put(
         '/api/v1/admin/settings',
         json={'site_title': payload},
@@ -272,6 +278,19 @@ def test_injection_payloads_stored_as_strings(
     finally:
         conn.close()
     assert count > 0
+
+
+def test_sql_injection_payload_blocked_by_waf(client, no_rate_limits, api_admin_token):
+    """#84: SQLi fingerprints in a JSON body are blocked at the WAF
+    before reaching the settings handler. Earlier line of defense than
+    the parameterized-query layer — both must hold.
+    """
+    response = client.put(
+        '/api/v1/admin/settings',
+        json={'site_title': "'; DROP TABLE settings;--"},
+        headers=_auth(api_admin_token),
+    )
+    assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------
