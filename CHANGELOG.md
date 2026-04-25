@@ -22,6 +22,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - **#138 Pillow pin consistency** — `requirements.in` now pins Pillow with `==` like every other dependency. The previous `>=11.1.0` lower bound let `pip-compile -U` silently cross major-version boundaries; now an upgrade requires an explicit edit and a CHANGELOG entry, matching the rest of the dependency surface.
+### Security — redact `page_views.referrer` (#97)
+
+- `app/services/analytics.py` now strips the query string and fragment from `request.referrer` before persisting it into `page_views`. Operators with read access to the analytics table no longer see whatever upstream link wrote into the URL — OAuth `code=`/`state=`, password-reset tokens, and session IDs from misconfigured upstream links don't leak via the referrer column. Same-origin referrers also drop scheme + netloc (we already know our own origin; stored as a bare path saves a row's worth of storage). Cross-origin referrers keep scheme + netloc + path so the operator can still see which external sites send traffic.
+- New `_redact_referrer(referrer, app_origin)` helper applies the policy; `app_origin` resolves to the `canonical_host` setting when set (Phase 23.5) or `request.url_root` otherwise. Three regression tests in `tests/test_security.py` lock the contract: query+fragment stripped from a cross-origin referrer with sensitive params, same-origin referrer collapsed to a bare path, and a direct unit test against `_redact_referrer` that pins all four corners (None/empty pass-through, cross-origin retention, same-origin path-only, root-origin `'/'` collapse). Completes the privacy posture for the `page_views` row started by Phase 24.2 (#45 hashed IP + coarsened UA).
 
 ### Changed — Phase 26.6: benchmark harness sets its own log level (#64)
 

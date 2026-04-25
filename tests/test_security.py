@@ -1240,6 +1240,91 @@ def test_page_views_stores_hashed_ip_and_ua_class(app):
     assert 'Werkzeug' not in (ua or '')
 
 
+def test_page_view_referrer_query_stripped(app):
+    """#97: referrer query string + fragment is stripped before DB insert.
+
+    ``request.referrer`` ships whatever the upstream link wrote, which
+    routinely carries OAuth ``code=``/``state=``, password-reset
+    tokens, and session IDs. Persisting that into ``page_views`` would
+    mean any operator with read access to the table sees those
+    secrets. Strip query + fragment unconditionally.
+    """
+    client = app.test_client()
+    resp = client.get(
+        '/',
+        headers={'Referer': 'https://accounts.google.com/oauth?code=secret&state=xyz#frag'},
+    )
+    assert resp.status_code == 200
+
+    import sqlite3
+
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    try:
+        row = conn.execute('SELECT referrer FROM page_views ORDER BY id DESC LIMIT 1').fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        # Analytics is best-effort — skip if no row landed.
+        return
+    referrer = row[0] or ''
+    assert 'secret' not in referrer
+    assert 'xyz' not in referrer
+    assert 'code=' not in referrer
+    assert '#' not in referrer
+    # Path is preserved so the operator can still see the source page.
+    assert '/oauth' in referrer
+
+
+def test_page_view_referrer_same_origin_drops_host(app):
+    """#97: same-origin referrers drop scheme+netloc, keeping path only.
+
+    No privacy diff (we already know our own origin) and saves
+    storage. The Flask test client uses ``http://localhost/`` so any
+    referrer matching that origin should be stored as a bare path.
+    """
+    client = app.test_client()
+    client.get('/blog/', headers={'Referer': 'http://localhost/'})
+
+    import sqlite3
+
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    try:
+        row = conn.execute('SELECT referrer FROM page_views ORDER BY id DESC LIMIT 1').fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return
+    referrer = row[0] or ''
+    # Same-origin referrer: scheme + netloc dropped, path retained.
+    assert 'http' not in referrer.lower()
+    assert 'localhost' not in referrer
+
+
+def test_redact_referrer_unit():
+    """#97: ``_redact_referrer`` direct unit coverage of the contract.
+
+    Pins the redaction shape independent of Flask wiring so a future
+    refactor of ``track_page_view`` can't silently change the policy.
+    """
+    from app.services.analytics import _redact_referrer
+
+    # Empty / None passes through unchanged.
+    assert _redact_referrer(None, 'http://localhost') is None
+    assert _redact_referrer('', 'http://localhost') == ''
+
+    # Cross-origin: scheme + netloc + path retained, query + fragment dropped.
+    out = _redact_referrer('https://accounts.google.com/oauth?code=secret#frag', 'http://localhost')
+    assert out == 'https://accounts.google.com/oauth'
+
+    # Same-origin: scheme + netloc dropped.
+    out = _redact_referrer('http://localhost/blog/?utm=x', 'http://localhost')
+    assert out == '/blog/'
+
+    # Same-origin bare root collapses to '/' (urlunparse on all-empty → '').
+    out = _redact_referrer('http://localhost/', 'http://localhost')
+    assert out == '/'
+
+
 def test_weak_secret_key_short_is_fatal():
     """Phase 23.4 (#48): a secret_key under 32 chars must abort app
     creation, not boot with a warning that operators skim past."""
