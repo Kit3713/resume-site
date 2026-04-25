@@ -3,10 +3,11 @@
 How to move a running resume-site deployment from one published image
 tag to a newer one without losing data or downtime beyond a restart.
 This is the operator-facing counterpart to the Phase 21.5 upgrade
-survivability guarantees: the CI `upgrade-simulation` job verifies that
-the swap path below works on every push, and the
+survivability guarantees: the CI `migrate-dryrun` job (Phase 28.3)
+runs `manage.py migrate --dry-run` against the freshly built image
+before any tag is pushed, and the
 `manage.py migrate --verify-reversible` check rejects any migration
-that would put it at risk.
+that would put data at risk.
 
 ---
 
@@ -271,11 +272,18 @@ safety net, not a rollback trigger.
 
 ## 5. Known-safe upgrade paths
 
-The CI `upgrade-simulation` job verifies these paths on every push:
+CI verifies migration soundness on every push via the `migrate-dryrun`
+job (Phase 28.3): it builds the candidate image and runs
+`manage.py migrate --dry-run` inside it against an empty DB, so a
+syntactically broken migration or a missing migrations/ file in the
+image fails the publish gate before any tag is pushed. The in-process
+`tests/test_upgrade.py` suite covers the data-survival side — it
+boots a `v0.3.0-beta` schema, seeds realistic content, and replays
+every shipped migration on top.
 
 | From | To | Path |
 |---|---|---|
-| `:latest` (prior release) | `:vX.Y.Z` (newly built) | covered every build |
+| empty DB | `:vX.Y.Z` (newly built) | dry-run probe, every build |
 | `v0.3.0-beta` | current `main` | covered by `tests/test_upgrade.py` |
 
 Anything older than `v0.3.0-beta` is not covered by automation. If
