@@ -141,6 +141,9 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Documentation — Phase 36.6: observability runbook cross-reference (#18.11)
 
 - `docs/PRODUCTION.md` §7.3 now links to `docs/OBSERVABILITY_RUNBOOK.md` as a single coherent paragraph. The runbook covers the "when to reach for which tool" decision tree, the Prometheus + Grafana + Alertmanager wiring, and the synthetic-monitoring tiers. Closes the v0.3.0 Phase 18.11 carry-over: the anchor stub left for Agent C is now a live cross-reference. The `{#observability-runbook}` anchor is preserved so any external bookmarks still resolve.
+### Documentation — Phase 36.8: K8s / Nomad commented-example manifests (#21.4)
+
+- New §13.1 in `docs/PRODUCTION.md` ships a complete Kubernetes Deployment + Service + Ingress YAML block: tag form (`ghcr.io/kit3713/resume-site:v0.3.1`) plus a digest-pin alternative (`@sha256:...`) commented inline; volume mounts mirror `compose.yaml` (`/app/data`, `/app/photos`, `/app/backups`); `livenessProbe` on `/healthz` and `readinessProbe` on `/readyz` with the Phase 21.2 contract values (`initialDelaySeconds: 5, failureThreshold: 3`); Service exposes 8080; Ingress shows TLS termination via cert-manager annotations (commented so operators terminating elsewhere can swap them out). New §13.2 mirrors the same probe contract into a Nomad job spec for operators on that stack. The §13 anchor stub left by Phase 35 is now closed.
 
 ### Added — Content block delete + duplicate-safe create
 - New `POST /admin/content/delete/<slug>` route + Delete button on each row of `/admin/content`. The button lives in a tiny POST form with a `confirm()` prompt so an accidental click still needs a second confirmation. Previously the only way to remove a block was raw SQL against the SQLite file — an obvious gap given the admin UI lets you create and edit them.
