@@ -54,10 +54,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
-from datetime import UTC, date, datetime
-from functools import wraps
 
 from flask import (
     Blueprint,
@@ -65,7 +62,6 @@ from flask import (
     current_app,
     g,
     jsonify,
-    make_response,
     render_template,
     request,
 )
@@ -105,8 +101,8 @@ from app.services.blog import (
     unpublish_post,
     update_post,
 )
-from app.services.deprecation import (  # Phase 37.2 — plumbing imported; no route flagged yet
-    deprecated,  # noqa: F401
+from app.services.deprecation import (
+    deprecated,  # Phase 37.2 — plumbing imported; no route flagged yet  # noqa: F401
 )
 from app.services.form import get_stripped
 from app.services.pagination import clamp_page, offset_for, paginate
@@ -213,112 +209,6 @@ def _enforce_json_content_type():
             details={'received': ctype or 'missing'},
         )
     return None
-
-
-# ---------------------------------------------------------------------------
-# @deprecated decorator (Phase 37.2 stub — full impl per ROADMAP_v0.3.2.md)
-# ---------------------------------------------------------------------------
-#
-# Stub implementation pending the full Phase 37.2 landing. Accepts the
-# documented kwargs (``sunset_date``, ``replacement``, ``reason``) and does
-# the load-bearing pieces the test suite exercises in Phase 37.3:
-#
-#   * Sets ``Deprecation: true`` (RFC 9745 draft) on the response.
-#   * Sets ``Sunset: <HTTP-date>`` (RFC 8594) from ``sunset_date``.
-#   * Sets ``Link: <replacement>; rel="successor-version"`` when given.
-#   * Emits an INFO log on the ``app.api.deprecation`` logger with the
-#     request id, endpoint, user-agent, and optional ``X-Client-ID``.
-#   * Sets a ``__deprecated_sunset__`` attribute on the wrapped function so
-#     the OpenAPI drift-guard test can match the spec's ``x-sunset`` key.
-#
-# Idempotent across decorator stacking: if the response already carries the
-# headers (a stacked decorator ran first), we don't overwrite them.
-
-_DEPRECATION_LOGGER = logging.getLogger('app.api.deprecation')
-
-
-def _coerce_sunset_to_http_date(sunset_date):
-    """Render ``sunset_date`` as an RFC 7231 / RFC 8594 HTTP-date string."""
-    if isinstance(sunset_date, str):
-        # Accept ISO 8601 inputs (``2026-12-31`` or ``2026-12-31T00:00:00Z``)
-        # and re-emit in HTTP-date form so the Sunset header is RFC-compliant.
-        try:
-            parsed = datetime.fromisoformat(sunset_date.replace('Z', '+00:00'))
-        except ValueError:
-            return sunset_date  # caller's problem — surface as-is
-    elif isinstance(sunset_date, datetime):
-        parsed = sunset_date
-    elif isinstance(sunset_date, date):
-        parsed = datetime(sunset_date.year, sunset_date.month, sunset_date.day)
-    else:
-        return str(sunset_date)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.strftime('%a, %d %b %Y %H:%M:%S GMT')
-
-
-def _normalise_sunset_iso(sunset_date):
-    """Render ``sunset_date`` as a plain ``YYYY-MM-DD`` string for marker comparison."""
-    if isinstance(sunset_date, datetime):
-        return sunset_date.date().isoformat()
-    if isinstance(sunset_date, date):
-        return sunset_date.isoformat()
-    if isinstance(sunset_date, str):
-        try:
-            parsed = datetime.fromisoformat(sunset_date.replace('Z', '+00:00'))
-            return parsed.date().isoformat()
-        except ValueError:
-            return sunset_date
-    return str(sunset_date)
-
-
-def deprecated(sunset_date, replacement=None, reason=None):
-    """Mark an API route as deprecated.
-
-    Adds ``Deprecation`` / ``Sunset`` / ``Link`` response headers and logs
-    the call at INFO on the ``app.api.deprecation`` logger. Idempotent
-    across decorator stacking — already-set headers are preserved.
-
-    Args:
-        sunset_date: ``datetime.date`` / ``datetime.datetime`` / ISO 8601 str.
-            The removal date, surfaced in the ``Sunset`` HTTP header.
-        replacement: Optional URL of the successor endpoint, surfaced as
-            ``Link: <url>; rel="successor-version"``.
-        reason: Optional human-readable note logged alongside the call.
-    """
-    sunset_http = _coerce_sunset_to_http_date(sunset_date)
-    sunset_iso = _normalise_sunset_iso(sunset_date)
-
-    def _decorator(view):
-        @wraps(view)
-        def _wrapped(*args, **kwargs):
-            response = make_response(view(*args, **kwargs))
-            if 'Deprecation' not in response.headers:
-                response.headers['Deprecation'] = 'true'
-            if 'Sunset' not in response.headers:
-                response.headers['Sunset'] = sunset_http
-            if replacement and 'Link' not in response.headers:
-                response.headers['Link'] = f'<{replacement}>; rel="successor-version"'
-            # request_id is auto-injected by app.services.logging filter; the
-            # remaining context lives in extras so the JSON formatter picks
-            # it up alongside request_id / client_ip_hash for free.
-            _DEPRECATION_LOGGER.info(
-                'deprecated API call: endpoint=%s',
-                request.endpoint or view.__name__,
-                extra={
-                    'user_agent': request.headers.get('User-Agent', '-'),
-                    'client_id': request.headers.get('X-Client-ID', '-'),
-                    'reason': reason or '-',
-                },
-            )
-            return response
-
-        _wrapped.__deprecated_sunset__ = sunset_iso
-        _wrapped.__deprecated_replacement__ = replacement
-        _wrapped.__deprecated_reason__ = reason
-        return _wrapped
-
-    return _decorator
 
 
 # ---------------------------------------------------------------------------

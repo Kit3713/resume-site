@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import functools
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from email.utils import format_datetime
 
 from flask import g, has_request_context, make_response, request
@@ -33,20 +33,34 @@ from app.services.metrics import deprecated_api_calls_total
 _log = logging.getLogger('app.api.deprecation')
 
 
-def _to_http_date(sunset_date: str) -> str:
-    """Convert an ISO ``YYYY-MM-DD`` date to an RFC 7231 HTTP-date.
+def _to_http_date(sunset_date: str | date | datetime) -> str:
+    """Convert a sunset date to an RFC 7231 HTTP-date.
 
     Uses ``email.utils.format_datetime`` rather than ``strftime('%a, %d
     %b %Y ...')`` so the day / month names are emitted in the C locale
     regardless of the host's ``LC_TIME`` setting — the HTTP spec
     requires English abbreviations.
     """
-    parsed = datetime.strptime(sunset_date, '%Y-%m-%d').replace(tzinfo=UTC)
+    if isinstance(sunset_date, datetime):
+        parsed = sunset_date if sunset_date.tzinfo else sunset_date.replace(tzinfo=UTC)
+    elif isinstance(sunset_date, date):
+        parsed = datetime(sunset_date.year, sunset_date.month, sunset_date.day, tzinfo=UTC)
+    else:
+        parsed = datetime.strptime(sunset_date, '%Y-%m-%d').replace(tzinfo=UTC)
     return format_datetime(parsed, usegmt=True)
 
 
+def _to_iso_date(sunset_date: str | date | datetime) -> str:
+    """Render the sunset as a plain ``YYYY-MM-DD`` string for marker comparison."""
+    if isinstance(sunset_date, datetime):
+        return sunset_date.date().isoformat()
+    if isinstance(sunset_date, date):
+        return sunset_date.isoformat()
+    return sunset_date
+
+
 def deprecated(
-    sunset_date: str,
+    sunset_date: str | date | datetime,
     *,
     replacement: str | None = None,
     reason: str | None = None,
@@ -84,6 +98,7 @@ def deprecated(
     composition accidentally produces a stack.
     """
     sunset_http_date = _to_http_date(sunset_date)
+    sunset_iso = _to_iso_date(sunset_date)
 
     def _decorator(view):
         endpoint_name = getattr(view, '__name__', '<view>')
@@ -125,6 +140,12 @@ def deprecated(
             deprecated_api_calls_total.inc(label_values=(endpoint_name,))
             return response
 
+        # Markers consumed by the OpenAPI drift-guard test (Phase 37.3) so the
+        # spec's ``deprecated: true`` + ``x-sunset`` keys can be cross-checked
+        # against the actual decorator on the route.
+        _wrapped.__deprecated_sunset__ = sunset_iso
+        _wrapped.__deprecated_replacement__ = replacement
+        _wrapped.__deprecated_reason__ = reason
         return _wrapped
 
     return _decorator

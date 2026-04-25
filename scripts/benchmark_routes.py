@@ -67,7 +67,7 @@ def _write_test_config(tmp_path: Path) -> Path:
     )
     config_path = tmp_path / 'config.yaml'
     config_path.write_text(
-        'secret_key: "benchmark-key"\n'
+        'secret_key: "benchmark-key-32-chars-or-more-aaaaaaaa"\n'
         f'database_path: "{db_path}"\n'
         f'photo_storage: "{photos_path}"\n'
         'session_cookie_secure: false\n'
