@@ -202,7 +202,7 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 ### 37.4 — CHANGELOG enforcement
 
-- [ ] `CHANGELOG.md` gains a permanent "Deprecated" section under the `[Unreleased]` header. Every `@deprecated` decorator addition requires a matching CHANGELOG entry in the same PR; CI `quality` job greps the diff to enforce this. Zero-cost guardrail — similar to the SQL-interpolation grep from Phase 12.5.
+- [x] `CHANGELOG.md` gains a permanent "Deprecated" section under the `[Unreleased]` header. Every `@deprecated` decorator addition requires a matching CHANGELOG entry in the same PR; CI `quality` job greps the diff to enforce this. Zero-cost guardrail — similar to the SQL-interpolation grep from Phase 12.5.
 
 ---
 

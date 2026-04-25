@@ -30,6 +30,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - New `app/services/crud.py:update_fields` extracts the partial-update + caller-supplied validation + activity-log-emission triad that was duplicated across the HTML admin services and the API services. Wraps the UPDATE and the optional `admin_activity_log` INSERT in a single explicit `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` transaction (matches Phase 27.2's atomicity pattern; `app.db._InstrumentedConnection` doesn't forward the context-manager protocol so the explicit form is required). Column names are spliced into the SQL string after a caller-supplied `column_allowlist` check; values bind through `?` placeholders.
 - Migrated three services to the helper: `update_webhook` (was already partial-update; allowlist now lives next to its column constant), `update_service`, and `update_stat` (both converted from always-update to partial-update). The other `update_*` functions in `app/services/` (`update_post`, `update_review_tier`) carry one-off quirks — slug regeneration, derived `reading_time`, format-conditional sanitisation — so they're tracked for follow-up rather than force-fit.
 - 12 helper tests in `tests/test_crud.py` cover single- and multi-column updates, allowlist rejection, validation rollback, activity-log emission/skip, concurrent-writer lock contention with a clean rollback on the loser, and the row-not-found return-zero path. The `test_services_edit` and `test_stats_edit` admin tests were strengthened to assert DB persistence (the `feedback_admin_route_coverage.md` pattern — render-only redirect checks let an ImportError ship in v0.3.1).
+### Deprecated
 
 ### Performance — Phase 26.3: paginate `/admin/blog` (#54)
 
@@ -46,6 +47,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Three regression tests in `tests/test_n_plus_1.py` assert: 1 query regardless of post count (3 vs 20); source row preserved when no translation matches; fast-path zero queries when active == fallback.
 
 ## [Unreleased] — v0.3.2 (Shield)
+
+### Deprecated
 
 ### Security — Phase 27.4: `content_format` validation on HTML blog admin (#24)
 
@@ -68,6 +71,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - New `docs/API_COMPATIBILITY.md` — the stated contract between this codebase and any API / webhook consumer. Enumerates what MAY NOT change within a major version prefix (endpoints, field names, field types, error codes, event names, webhook envelope shape), what MAY change non-breakingly (new fields, new codes, new events, stricter validation), and the deprecation process every breaking change must go through (at minimum one release of `Deprecation`/`Sunset`/`Link` headers + CHANGELOG `Deprecated` entry + explicit removal release). Paired with the existing `docs/UPGRADE.md` which guarantees data survival; this doc closes the orthogonal consumer-contract gap.
 - Cross-references to `docs/API_COMPATIBILITY.md` added from `README.md` (Backup / REST API section), `docs/PRODUCTION.md` §9 (Upgrades), and a new `docs/API.md` stub that contextualises the OpenAPI spec — so a reader landing in any of the three entry points can find the compat contract without grepping.
 - Deferred to v0.3.3 or v0.4.0: the `@deprecated` decorator (37.2), OpenAPI spec drift guard (37.3), CHANGELOG-enforcement CI grep (37.4). The policy is the load-bearing piece; the plumbing lands as individual endpoints reach their first deprecation.
+- Deferred to v0.3.3 or v0.4.0: the `@deprecated` decorator (37.2), OpenAPI spec drift guard (37.3). The policy is the load-bearing piece; the plumbing lands as individual endpoints reach their first deprecation.
+
+### Added — Phase 37.4: CHANGELOG `Deprecated` section + CI grep-guard
+
+- Permanent `### Deprecated` subsection template under every `[Unreleased]` heading in `CHANGELOG.md`. When an operator deprecates an endpoint, the one-line note lands here — the empty section is the slot, and the CI guard below ensures it gets filled.
+- New `quality`-job step in `.github/workflows/ci.yml` (after the SQL-interpolation grep, before the `debug=True` guard) that fails the build when a PR adds `@deprecated(` to anything under `app/` without a matching addition under a `### Deprecated` heading in `CHANGELOG.md`. Push events to main are a no-op (no diff base). The error message points to `docs/API_COMPATIBILITY.md` for the deprecation contract.
 
 ### Security — Phase 25.3: bounded webhook-dispatch thread pool (#47)
 
@@ -167,6 +176,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Verified — Phase 36.1: JavaScript audit (v0.3.0 Phase 12.3 carry-over)
 - Profiled `app/static/js/main.js` (the only public-page bundle; no `admin.js` exists — admin pages load only the inline scripts inside their templates) for unused functions, redundant event listeners, and GSAP animations firing on elements absent from the current page. **No dead code found:** every declared function (`setTheme`, `openLightbox`, `closeLightbox`, `highlightStars`) has at least one in-file caller; no element has duplicate bindings to the same event; every GSAP `gsap.from` / `ScrollTrigger.create` call is already preceded by an `if (element)` or `length` check, so the bundle is no-op on `/admin/login`, `/contact`, and other pages that lack `.hero`, `.stats-bar__value`, or card grids. `swagger-init.js` is similarly minimal (one `load` listener, both presets used).
 - No removals; the bundle is already audit-clean. Documented here so the v0.3.0 Phase 12.3 carry-over has a written outcome rather than a silent close. Manual browser verification recipe (boot via `RESUME_SITE_DEV=1 python app.py --debug`, console clean on `/` and `/admin/login`, scroll reveals still fire on `/`) lives in the PR description.
+### Deprecated
 
 ### Added — Content block delete + duplicate-safe create
 - New `POST /admin/content/delete/<slug>` route + Delete button on each row of `/admin/content`. The button lives in a tiny POST form with a `confirm()` prompt so an accidental click still needs a second confirmation. Previously the only way to remove a block was raw SQL against the SQLite file — an obvious gap given the admin UI lets you create and edit them.
@@ -203,6 +213,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ---
 
 ## [Unreleased] — v0.3.0
+
+### Deprecated
 
 ### Changed — Phase 18.5 / 18.14: PERFORMANCE.md baselines
 - New "Phase 18.14 Baseline (v0.3.0-beta)" section with p50 / p95 / query-count / response-size for the five hot-path public routes, captured 2026-04-18 via `RESUME_SITE_LOG_LEVEL=WARNING python scripts/benchmark_routes.py 200`. Numbers regressed from 18ms to ~2ms p50 vs. the Phase 12.1 baseline — Python 3.14 + CPython JIT defaults on the hot request path. Query counts are now the strict-monotonic regression floor: landing / blog_index / blog_post each picked up +1 query (Phase 15.4 translation overlay + Phase 17.2 backup-timestamp settings read), which is the new floor.
@@ -343,6 +355,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tests/test_api.py` — 8 endpoint tests covering 404-when-disabled for all three routes, YAML/JSON serving, ETag round-trip, Swagger UI render contract, and a CSP forward-compat check that verifies the docs page has no inline script bodies.
 
 ## [Unreleased] — v0.2.0
+
+### Deprecated
 
 ### Added — Phase 5: Architecture Hardening
 - `app/db.py` — single source of truth for database connection management (consolidated from `__init__.py` and `models.py`)
