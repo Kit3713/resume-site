@@ -7,6 +7,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.3 (Proof)
 
+### Fixed
+
+- **#138 Pillow pin consistency** — `requirements.in` now pins Pillow with `==` like every other dependency. The previous `>=11.1.0` lower bound let `pip-compile -U` silently cross major-version boundaries; now an upgrade requires an explicit edit and a CHANGELOG entry, matching the rest of the dependency surface.
+
 ### Changed — Phase 26.6: benchmark harness sets its own log level (#64)
 
 - `scripts/benchmark_routes.py` now `os.environ.setdefault('RESUME_SITE_LOG_LEVEL', 'WARNING')` before importing app code, so contributors following the docstring no longer silently measure stderr-sink overhead. The startup banner prints the effective `RESUME_SITE_LOG_LEVEL` so an operator override (`RESUME_SITE_LOG_LEVEL=DEBUG python scripts/benchmark_routes.py`) is visible at a glance. Docstring rewritten — the script handles the default, operators only set the variable to override.
