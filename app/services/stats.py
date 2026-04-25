@@ -10,6 +10,11 @@ from __future__ import annotations
 import sqlite3
 
 from app.exceptions import ValidationError
+from app.services.crud import update_fields
+
+#: Phase 29.2 (#56) — column allowlist consumed by
+#: :func:`app.services.crud.update_fields`.
+_STAT_COLUMNS = {'label', 'value', 'suffix', 'sort_order', 'visible'}
 
 
 def get_all_stats(db: sqlite3.Connection) -> list[sqlite3.Row]:
@@ -61,12 +66,22 @@ def update_stat(
         suffix: Optional suffix.
         sort_order: Display order.
         visible: Whether to show on the public site.
+
+    Phase 29.2 (#56) — delegates to :func:`app.services.crud.update_fields`.
     """
-    db.execute(
-        'UPDATE stats SET label = ?, value = ?, suffix = ?, sort_order = ?, visible = ? WHERE id = ?',
-        (label.strip(), int(value), suffix, int(sort_order), 1 if visible else 0, stat_id),
+    update_fields(
+        db,
+        'stats',
+        stat_id,
+        {
+            'label': label.strip(),
+            'value': int(value),
+            'suffix': suffix,
+            'sort_order': int(sort_order),
+            'visible': 1 if visible else 0,
+        },
+        column_allowlist=_STAT_COLUMNS,
     )
-    db.commit()
 
 
 def delete_stat(db: sqlite3.Connection, stat_id: int) -> None:

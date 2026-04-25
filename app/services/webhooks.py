@@ -62,6 +62,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from app.services.crud import update_fields
+
 _log = logging.getLogger('app.webhooks')
 
 
@@ -410,28 +412,47 @@ def list_enabled_subscribers(db: sqlite3.Connection, event_name: str) -> list[We
     return [w for w in (_row_to_webhook(r) for r in rows) if _matches(w, event_name)]
 
 
+_WEBHOOK_COLUMNS = {
+    'name',
+    'url',
+    'secret',
+    'events',
+    'enabled',
+    'failure_count',
+    'last_triggered_at',
+}
+
+
 def update_webhook(db: sqlite3.Connection, webhook_id: int, **fields: object) -> None:
     """Update an arbitrary subset of columns. Unknown keys are ignored.
 
     The ``events`` field, if passed, is normalised before storage.
+
+    Phase 29.2 (#56) — the partial-update + column-allowlist + UPDATE
+    triad is handled by :func:`app.services.crud.update_fields`.
+    Caller-friendly contract preserved: unknown keys are dropped
+    (filtered out before the helper sees them), an empty result no-ops
+    silently rather than raising, and ``events`` / ``enabled`` are
+    coerced to their stored representations before binding.
     """
-    allowed = {'name', 'url', 'secret', 'events', 'enabled', 'failure_count', 'last_triggered_at'}
-    sets = []
-    params: list = []
+    cleaned: dict = {}
     for key, value in fields.items():
-        if key not in allowed:
+        if key not in _WEBHOOK_COLUMNS:
             continue
         if key == 'events':
             value = json.dumps(_normalise_events(value))
         elif key == 'enabled':
             value = 1 if value else 0
-        sets.append(f'{key} = ?')
-        params.append(value)
-    if not sets:
+        cleaned[key] = value
+    if not cleaned:
         return
-    params.append(webhook_id)
-    db.execute(f'UPDATE webhooks SET {", ".join(sets)} WHERE id = ?', params)  # noqa: S608  # nosec B608
-    db.commit()
+    update_fields(
+        db,
+        'webhooks',
+        webhook_id,
+        cleaned,
+        column_allowlist=_WEBHOOK_COLUMNS,
+    )
 
 
 def delete_webhook(db: sqlite3.Connection, webhook_id: int) -> None:

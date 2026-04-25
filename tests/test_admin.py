@@ -336,7 +336,14 @@ def test_services_add_no_title_skips(auth_client):
 
 
 def test_services_edit(auth_client, populated_db):
-    """POST /admin/services/1/edit should update service and redirect."""
+    """POST /admin/services/1/edit should update service and redirect.
+
+    Phase 29.2 (#56) — strengthened to assert the DB row reflects the
+    submitted values. A render-only redirect check let an ImportError
+    in the service-layer save path ship in v0.3.1 (see
+    `feedback_admin_route_coverage.md`); the persistence assertion
+    closes that gap for the migrated CRUD helper.
+    """
     response = auth_client.post(
         '/admin/services/1/edit',
         data={
@@ -350,6 +357,12 @@ def test_services_edit(auth_client, populated_db):
     )
     assert response.status_code == 302
     assert '/admin/services' in response.headers['Location']
+    row = populated_db.execute('SELECT * FROM services WHERE id = 1').fetchone()
+    assert row is not None
+    assert row['title'] == 'Web Dev Updated'
+    assert row['icon'] == '💻'
+    assert row['sort_order'] == 2
+    assert row['visible'] == 1
 
 
 def test_services_delete(auth_client, populated_db):
@@ -406,7 +419,11 @@ def test_stats_add_no_label_skips(auth_client):
 
 
 def test_stats_edit(auth_client, populated_db):
-    """POST /admin/stats/1/edit should update stat and redirect."""
+    """POST /admin/stats/1/edit should update stat and redirect.
+
+    Phase 29.2 (#56) — strengthened to assert the DB row reflects the
+    submitted values. See ``test_services_edit`` for the rationale.
+    """
     response = auth_client.post(
         '/admin/stats/1/edit',
         data={
@@ -419,6 +436,13 @@ def test_stats_edit(auth_client, populated_db):
         follow_redirects=False,
     )
     assert response.status_code == 302
+    row = populated_db.execute('SELECT * FROM stats WHERE id = 1').fetchone()
+    assert row is not None
+    assert row['label'] == 'Projects Completed'
+    assert row['value'] == 100
+    assert row['suffix'] == '+'
+    assert row['sort_order'] == 1
+    assert row['visible'] == 1
 
 
 def test_stats_delete(auth_client, populated_db):

@@ -112,7 +112,7 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 ### 29.2 — CRUD service-layer pass
 
-- [ ] Revisit the Phase 12.2 "deferred: CRUD base mixin" note. Now that the REST API write handlers have landed, the duplication between the HTML admin services and the API services is concrete. Extract a shared `update_fields(db, table, id, fields)` helper that handles the partial-update + validation + activity-log-emission triad; rewrite the services that duplicate it.
+- [x] Revisit the Phase 12.2 "deferred: CRUD base mixin" note. Now that the REST API write handlers have landed, the duplication between the HTML admin services and the API services is concrete. Extract a shared `update_fields(db, table, id, fields)` helper that handles the partial-update + validation + activity-log-emission triad; rewrite the services that duplicate it.
 
 ### 29.3 — Test fixture consolidation
 
