@@ -83,8 +83,8 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 ### 28.1 — Fix the SQL-interpolation grep guard (#29)
 
-- [ ] `.github/workflows/ci.yml` greps for `nosec B608` but not `noqa: S608`. Every intentional interpolation in the codebase carries **both** annotations; the CI grep is therefore false-negative for any new interpolation that only carries `noqa`.
-- [ ] Update the grep to treat either annotation as an accepted suppression. Better still, replace the fragile grep with a ruff custom rule or a dedicated bandit invocation scoped to `app/` that already understands both annotation styles.
+- [x] `.github/workflows/ci.yml` greps for `nosec B608` but not `noqa: S608`. Every intentional interpolation in the codebase carries **both** annotations; the CI grep is therefore false-negative for any new interpolation that only carries `noqa`.
+- [x] Update the grep to treat either annotation as an accepted suppression. (The fancier rewrite — ruff custom rule or dedicated bandit invocation — is logged as a follow-up; the simpler grep fix lands here.) Regression-locked by `tests/test_ci_guards.py`.
 
 ### 28.2 — Un-advisory `vulture` (#30)
 

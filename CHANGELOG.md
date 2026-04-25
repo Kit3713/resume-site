@@ -31,6 +31,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Migrated three services to the helper: `update_webhook` (was already partial-update; allowlist now lives next to its column constant), `update_service`, and `update_stat` (both converted from always-update to partial-update). The other `update_*` functions in `app/services/` (`update_post`, `update_review_tier`) carry one-off quirks — slug regeneration, derived `reading_time`, format-conditional sanitisation — so they're tracked for follow-up rather than force-fit.
 - 12 helper tests in `tests/test_crud.py` cover single- and multi-column updates, allowlist rejection, validation rollback, activity-log emission/skip, concurrent-writer lock contention with a clean rollback on the loser, and the row-not-found return-zero path. The `test_services_edit` and `test_stats_edit` admin tests were strengthened to assert DB persistence (the `feedback_admin_route_coverage.md` pattern — render-only redirect checks let an ImportError ship in v0.3.1).
 ### Deprecated
+### CI — Phase 28.1: SQL grep guard accepts `# noqa: S608` too (#29)
+
+- The "Check for unsafe SQL patterns" step in `.github/workflows/ci.yml` previously suppressed lines tagged `# nosec B608` (bandit) but not `# noqa: S608` (ruff/flake8-bandit). Every intentional interpolation in this codebase carries both annotations, so the bug had no false-positives in tree — but a future contributor who used only the ruff annotation would have been silently un-checked. The `grep -v` filter now matches either annotation via `grep -vE 'nosec B608|noqa: S608'`. The error message points to both styles.
+- New `tests/test_ci_guards.py` with seven regression tests that shell out to `grep` against `tmp_path` fixtures and lock the suppression contract: bare interpolations fire, `nosec`-only suppresses, `noqa`-only suppresses (Phase 28.1 acceptance test), both together suppress, and the `.format()` half of the guard honours both annotations identically.
 
 ### Performance — Phase 26.3: paginate `/admin/blog` (#54)
 
