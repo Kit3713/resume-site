@@ -103,7 +103,7 @@ If v0.3.1 ships through its own gate cleanly, v0.3.2 and v0.3.3 each become "fix
 ### 36.1 — Frontend minification (v0.3.0 Phase 12.3)
 
 - [x] **CSS minification:** Served minified in production, original in dev. Philosophy: stdlib-only — implement as a request-time middleware (not a build step), cached per-fingerprint against the `static_hashed()` hash from Phase 12.3. `rcssmin` is stdlib-compatible and considered acceptable; alternatively hand-roll a single-pass regex minifier (the file is 58 KB — cost is negligible).
-- [ ] **JavaScript audit:** Profile `main.js` for unused functions, redundant event listeners, GSAP animations firing on hidden elements. Same for `admin.js`. Delete what's unused; document the deletions in CHANGELOG under "Removed."
+- [x] **JavaScript audit:** Profile `main.js` for unused functions, redundant event listeners, GSAP animations firing on hidden elements. Same for `admin.js`. Delete what's unused; document the deletions in CHANGELOG under "Removed."
 - [x] **JavaScript minification:** Same middleware pattern as CSS.
 
 ### 36.2 — Admin image-upload polish (v0.3.0 Phase 14.4)
