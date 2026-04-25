@@ -39,6 +39,9 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The `quality` job's vulture step is now blocking instead of advisory. `continue-on-error: true` removed; any new dead-code finding at `--min-confidence 80` fails the build. Current tree is already clean at that threshold, so the flip lands without code deletions or new allowlist entries.
 - Matching pre-commit hook added (`https://github.com/jendrikseipp/vulture` v2.16) with the same paths and confidence as CI, so contributors catch findings before push. `CONTRIBUTING.md` documents the workflow: real dead code gets deleted, runtime-dispatched callables (Flask url_map handlers, reflection-invoked methods) get a single-line `vulture_allowlist.py` entry with an inline rationale.
+### CI — Phase 28.3: retire `upgrade-simulation`; replace with `migrate --dry-run` probe (#31)
+
+- Retired the long-advisory `upgrade-simulation` CI job. It tried to do a full `:latest` pull + volume replay against the freshly built image, but the bind-mount permissions kept tripping over SELinux on the GitHub runner and the job was stranded as `continue-on-error: true` for months — operators read it as green when it was effectively unmonitored. Replaced with a smaller `migrate-dryrun` job that retains the static `manage.py migrate --verify-reversible` walk, builds the image, then runs `manage.py migrate --dry-run` inside it against an empty DB. `publish` and `publish-main` gate on its clean exit. Same "migrations look right" guarantee the simulation tried to provide, without the SELinux/bind-mount maintenance burden. The in-process data-survival side of the Phase 21.5 contract still ships via `tests/test_upgrade.py`.
 
 ### Performance — Phase 26.3: paginate `/admin/blog` (#54)
 

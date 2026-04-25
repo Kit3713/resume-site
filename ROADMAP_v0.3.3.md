@@ -93,7 +93,7 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 ### 28.3 — Fix or retire `upgrade-simulation` (#31)
 
-- [ ] The CI job is `continue-on-error: true` with a "Tracked: TODO" note stranded for months. Either root-cause the SELinux-on-bind-mount failure and flip blocking, or retire the job entirely and replace it with a simpler `podman run --rm ghcr.io/.../resume-site:main migrate --dry-run` probe that runs in `publish`. v0.3.3 picks one.
+- [x] The CI job is `continue-on-error: true` with a "Tracked: TODO" note stranded for months. Either root-cause the SELinux-on-bind-mount failure and flip blocking, or retire the job entirely and replace it with a simpler `podman run --rm ghcr.io/.../resume-site:main migrate --dry-run` probe that runs in `publish`. v0.3.3 picks one. **Decision: retired.** New `migrate-dryrun` CI job (`needs: container-build`) builds the image fresh and runs `manage.py migrate --dry-run` inside it; `publish` and `publish-main` now gate on `migrate-dryrun` instead of `upgrade-simulation`. `docs/UPGRADE.md` updated to reference the new probe.
 
 ### 28.4 — Quadlet / systemd hardening (#27)
 
