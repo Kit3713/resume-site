@@ -164,10 +164,15 @@
 
     // Listen for postMessage in the preview iframe
     frame.addEventListener('load', function() {
-        // Inject the message listener into the iframe
+        // Inject the message listener into the iframe.
+        // #130: both origin AND source checks are required — origin alone is
+        // bypassable by a malicious same-origin frame, source alone won't
+        // catch a hostile frame that has handed back a window reference.
         try {
             var script = frame.contentDocument.createElement('script');
             script.textContent = 'window.addEventListener("message", function(e) {' +
+                'if (e.origin !== window.location.origin) { return; }' +
+                'if (e.source !== window.parent) { return; }' +
                 'if (e.data && e.data.type === "theme-update") {' +
                 '  document.documentElement.style.setProperty(e.data.property, e.data.value);' +
                 '}' +
