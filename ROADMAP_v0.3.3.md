@@ -120,7 +120,7 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 ### 29.4 — Roll the rest forward
 
-- [ ] Close `#56` at v0.3.3 with a summary comment listing which bullets landed and which remain open as standalone issues. Don't keep a tracking issue indefinitely — it stops tracking once the half-life exceeds the release cycle.
+- [x] Close `#56` at v0.3.3 with a summary comment listing which bullets landed and which remain open as standalone issues. Don't keep a tracking issue indefinitely — it stops tracking once the half-life exceeds the release cycle.
 
 ---
 

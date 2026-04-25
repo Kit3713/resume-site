@@ -10,6 +10,9 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — Phase 26.6: benchmark harness sets its own log level (#64)
 
 - `scripts/benchmark_routes.py` now `os.environ.setdefault('RESUME_SITE_LOG_LEVEL', 'WARNING')` before importing app code, so contributors following the docstring no longer silently measure stderr-sink overhead. The startup banner prints the effective `RESUME_SITE_LOG_LEVEL` so an operator override (`RESUME_SITE_LOG_LEVEL=DEBUG python scripts/benchmark_routes.py`) is visible at a glance. Docstring rewritten — the script handles the default, operators only set the variable to override.
+### Closed — Phase 29.4: code-redundancy tracking issue closeout (#56)
+
+- Issue #56 (the v0.3.3 audit's omnibus tracking issue for ~40 redundancy items across routes, services, models, templates, tests, and `manage.py`) carried a closeout comment listing which bullets landed in v0.3.3 (29.1 form-field helper, 29.2 CRUD `update_fields` triad, 29.3 test fixture consolidation) and which roll forward as standalone issues. The remaining bullets (A2-A13, B1-B15, C1-C4, D1-D2, E1-E5) are tracked individually so each one can be triaged on its own merits rather than as a half-life-decaying batch. Don't keep a tracking issue indefinitely — it stops tracking once the half-life exceeds the release cycle.
 
 ### Performance — Phase 26.3: paginate `/admin/blog` (#54)
 
