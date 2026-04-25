@@ -73,7 +73,7 @@ If v0.3.1 ships through its own gate cleanly, v0.3.2 and v0.3.3 each become "fix
 
 - [x] `compose.yaml` ports `"8080:8080"` binds `0.0.0.0` by default. Change to `"127.0.0.1:8080:8080"` so the container is only reachable through the reverse proxy on localhost.
 - [x] Same fix on the Quadlet `resume-site.container` `PublishPort=` line.
-- [ ] `docs/PRODUCTION.md` gains a loud callout in the "Reverse proxy" section: if you're exposing 8080 directly to the public internet, the X-Forwarded-For trust model the app ships with is unsafe (see #16 / #34). *(Handed off to Agent B — Phase 22 owner drafted the callout; see their PRODUCTION.md rewrite.)*
+- [x] `docs/PRODUCTION.md` gains a loud callout in the "Reverse proxy" section: if you're exposing 8080 directly to the public internet, the X-Forwarded-For trust model the app ships with is unsafe (see #16 / #34).
 
 ### 22.6 — Admin IP allowlist — don't trust X-Forwarded-For unconditionally (#16)
 

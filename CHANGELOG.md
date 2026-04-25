@@ -130,6 +130,9 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.1 (Keystone)
 
+### Docs — Phase 22.5: PRODUCTION.md reverse-proxy callout closed (#66)
+- The §3.5.1 "Reverse-proxy binding and the X-Forwarded-For trust model" callout was already drafted as part of the Phase 22 PRODUCTION.md rewrite; the roadmap checkbox is now ticked. The callout warns that exposing port 8080 directly to the public internet is unsafe until `get_client_ip()` extraction lands in v0.3.2 Phase 23.2 (issues #16 / #34 — admin allowlist hardened, four other XFF callsites still trust the header unconditionally).
+
 ### Added — Content block delete + duplicate-safe create
 - New `POST /admin/content/delete/<slug>` route + Delete button on each row of `/admin/content`. The button lives in a tiny POST form with a `confirm()` prompt so an accidental click still needs a second confirmation. Previously the only way to remove a block was raw SQL against the SQLite file — an obvious gap given the admin UI lets you create and edit them.
 - `POST /admin/content/new` now detects a duplicate slug (after normalising to lowercase + underscores). When a collision exists it flashes `A content block with slug "<slug>" already exists. Edit it instead.` and redirects to the edit form for that existing block, instead of silently no-op'ing via `INSERT OR IGNORE` and falsely flashing "Content block created."
