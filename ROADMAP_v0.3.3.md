@@ -60,9 +60,9 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 ### 26.4 — Photo upload: `Image.draft()` for JPEG (#61)
 
-- [ ] Before the `Image.open()` in `app/services/photos.py:189`, call `img.draft('RGB', (max_dim, max_dim))` when the detected format is JPEG. libjpeg-turbo will do a DCT-level downscale; documented 4-8× faster on 24 MP DSLR inputs.
-- [ ] Preserve correctness: EXIF stripping still works, responsive variants still match the 640/1024/2000 ladder. Regression test: upload a 24 MP fixture, assert the final 2000 px variant is byte-for-byte within 1% of the pre-change output at the same quality setting.
-- [ ] `PERFORMANCE.md` photo-upload row updated with the before/after numbers.
+- [x] Before the `Image.open()` in `app/services/photos.py:189`, call `img.draft('RGB', (max_dim, max_dim))` when the detected format is JPEG. libjpeg-turbo will do a DCT-level downscale; documented 4-8× faster on 24 MP DSLR inputs.
+- [x] Preserve correctness: EXIF stripping still works, responsive variants still match the 640/1024/2000 ladder. Regression test: upload a 24 MP fixture, assert the final 2000 px variant is byte-for-byte within 1% of the pre-change output at the same quality setting.
+- [x] `PERFORMANCE.md` photo-upload row updated with the before/after numbers.
 
 ### 26.5 — `/metrics` disk-usage scrape cost (#36)
 

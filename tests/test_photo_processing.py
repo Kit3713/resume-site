@@ -5,9 +5,15 @@ Focuses on behaviors that are easy to regress silently:
     * JPEG outputs are progressive.
     * Small images are still re-encoded (previous pipeline only re-saved
       when downscaling, leaving GPS data in any image < 2000px).
+    * Phase 26.4: Image.draft() on JPEGs preserves the variant ladder
+      and produces output within 1% byte tolerance of the pre-change
+      pipeline. The DCT-level downscale is documented 4-8× faster on
+      24 MP DSLR inputs without changing pixel-level semantics enough
+      to matter.
 """
 
 import io
+import os
 
 import pytest
 from PIL import Image
@@ -109,6 +115,132 @@ class TestRejectsInvalidUploads:
             result = process_upload(storage)
         assert isinstance(result, str)
         assert 'content does not match' in result.lower()
+
+
+def _build_24mp_jpeg(width=6000, height=4000, exif=None):
+    """Return a ~24 MP JPEG byte stream with a smooth gradient.
+
+    Real DSLR JPEGs are 6000×4000 (Nikon D750, Canon 6D Mark II) = 24 MP.
+    The gradient gives every 8×8 DCT block non-trivial frequency content
+    so libjpeg-turbo's draft() codepath actually has work to skip; a
+    flat image would short-circuit block coding and miss the regression.
+    Built via Pillow's C-level ``linear_gradient`` + ``resize`` + ``merge``
+    (~200 ms) instead of a 24 M-iteration Python pixel loop.
+    """
+    r = Image.linear_gradient('L').resize((width, height))
+    g = Image.linear_gradient('L').rotate(90).resize((width, height))
+    b = Image.eval(r, lambda v: (v + 64) % 256)
+    img = Image.merge('RGB', (r, g, b))
+
+    buf = io.BytesIO()
+    save_kwargs = {'exif': exif} if exif else {}
+    img.save(buf, format='JPEG', quality=90, **save_kwargs)
+    buf.seek(0)
+    return buf
+
+
+class TestImageDraftJpeg:
+    """Phase 26.4 regression suite — Image.draft() on JPEG uploads."""
+
+    def test_24mp_jpeg_produces_full_variant_ladder(self, app):
+        """A 24 MP JPEG must still produce all three variants on disk:
+        the 640w and 1024w responsive variants plus the optimised
+        original (capped at 2000 px). Image.draft() shrinks the
+        decoded buffer; if anything in the rest of the pipeline reads
+        a stale image dimension it'd skip a variant."""
+        buf = _build_24mp_jpeg()
+        storage = FileStorage(buf, filename='dslr.jpg', content_type='image/jpeg')
+
+        with app.app_context():
+            result = process_upload(storage)
+
+        assert isinstance(result, dict), f'process_upload returned: {result!r}'
+
+        photo_dir = app.config['PHOTO_STORAGE']
+        base, ext = os.path.splitext(result['storage_name'])
+
+        for name, label in (
+            (result['storage_name'], 'main 2000 px variant'),
+            (f'{base}_640w{ext}', '640w variant'),
+            (f'{base}_1024w{ext}', '1024w variant'),
+        ):
+            assert os.path.isfile(os.path.join(photo_dir, name)), f'{label} missing'
+
+        with _read_back(app, result['storage_name']) as img:
+            assert max(img.size) <= 2000, f'long edge exceeded 2000 px: {img.size}'
+
+    def test_24mp_jpeg_main_variant_within_1pct_of_pre_change(self, app, monkeypatch):
+        """The 2000 px variant produced with Image.draft() must be
+        byte-for-byte within 1% of the pre-change pipeline at the same
+        JPEG quality setting. ``draft()`` operates at libjpeg's DCT
+        scale, so the resampled output isn't bit-identical to a
+        full-resolution decode followed by LANCZOS, but the high-quality
+        save (quality=85) absorbs the tiny coefficient-level difference."""
+        source_bytes = _build_24mp_jpeg().getvalue()
+
+        def _run_pipeline():
+            storage = FileStorage(
+                io.BytesIO(source_bytes),
+                filename='dslr.jpg',
+                content_type='image/jpeg',
+            )
+            with app.app_context():
+                result = process_upload(storage)
+            assert isinstance(result, dict)
+            photo_path = os.path.join(app.config['PHOTO_STORAGE'], result['storage_name'])
+            with open(photo_path, 'rb') as f:
+                return f.read()
+
+        with_draft = _run_pipeline()
+
+        # Pre-change pipeline: draft() patched to a no-op. monkeypatch
+        # auto-restores when the test ends.
+        monkeypatch.setattr(Image.Image, 'draft', lambda self, mode, size: None)
+        without_draft = _run_pipeline()
+
+        # Outputs may differ slightly in length (JPEG entropy coding),
+        # so count differing bytes on the overlap and add length skew.
+        # Threshold is differences as a fraction of the LARGER buffer
+        # so a shorter "with_draft" doesn't artificially inflate the
+        # ratio.
+        compare_len = min(len(with_draft), len(without_draft))
+        differing = sum(
+            1
+            for a, b in zip(
+                with_draft[:compare_len],
+                without_draft[:compare_len],
+                strict=True,
+            )
+            if a != b
+        )
+        length_skew = abs(len(with_draft) - len(without_draft))
+        total_diff_ratio = (differing + length_skew) / max(len(with_draft), len(without_draft))
+        assert total_diff_ratio < 0.01, (
+            f'output diverged from pre-change pipeline beyond 1%: '
+            f'{total_diff_ratio:.4%} '
+            f'(differing bytes={differing}, length skew={length_skew})'
+        )
+
+    def test_24mp_jpeg_strips_exif(self, app):
+        """EXIF stripping must still work after the Image.draft() call
+        is added. Pillow's draft() fast-path can preserve metadata that
+        a slow-path decode would have dropped, so we re-assert the
+        privacy contract on a 24 MP path."""
+        exif = Image.Exif()
+        exif[0x010F] = 'TestCamera Inc.'
+        exif[0x0110] = 'Secret DSLR Model'
+        buf = _build_24mp_jpeg(exif=exif.tobytes())
+
+        storage = FileStorage(buf, filename='dslr.jpg', content_type='image/jpeg')
+
+        with app.app_context():
+            result = process_upload(storage)
+
+        assert isinstance(result, dict), f'process_upload returned: {result!r}'
+
+        with _read_back(app, result['storage_name']) as out:
+            out_exif = out.getexif()
+            assert len(out_exif) == 0, f'EXIF survived: {dict(out_exif)!r}'
 
 
 if __name__ == '__main__':
