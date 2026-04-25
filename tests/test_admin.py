@@ -724,3 +724,93 @@ def test_photos_delete(auth_client, app):
     photo = conn.execute('SELECT * FROM photos WHERE id=?', (photo_id,)).fetchone()
     conn.close()
     assert photo is None
+
+
+# ============================================================
+# ADMIN ACTIVITY LOG — APPEND-ONLY ENFORCEMENT (#105)
+# ============================================================
+#
+# Migration 013 installs BEFORE DELETE / BEFORE UPDATE triggers on
+# ``admin_activity_log`` that ``RAISE(ABORT)``. The audit trail was
+# documented as append-only but enforced nothing — any code path
+# with a ``db`` handle could ``DELETE FROM admin_activity_log``.
+# These tests pin both halves of the contract: direct mutation
+# fails, but the documented retention path
+# (``purge_old_entries``) still succeeds.
+
+
+@pytest.mark.parametrize(
+    'mutation_sql',
+    [
+        'DELETE FROM admin_activity_log WHERE 1=1',
+        "UPDATE admin_activity_log SET action = 'tampered'",
+    ],
+    ids=['delete', 'update'],
+)
+def test_admin_activity_log_blocks_direct_mutation(app, mutation_sql):
+    """#105: direct DELETE/UPDATE on admin_activity_log raises (trigger enforces append-only)."""
+    import sqlite3
+
+    with app.app_context():
+        from app.db import get_db
+        from app.services.activity_log import log_action
+
+        db = get_db()
+        # Seed a row via the legitimate API so DELETE has something to target.
+        log_action(db, 'test', 'unit#105', 'detail')
+
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute(mutation_sql)
+
+
+def test_admin_activity_log_purge_works(app):
+    """#105: purge_old_entries (the documented safe-purge path) succeeds despite trigger."""
+    with app.app_context():
+        from app.db import get_db
+        from app.services.activity_log import log_action, purge_old_entries
+
+        db = get_db()
+        # Seed a row with old created_at (well outside the 30-day window).
+        db.execute(
+            "INSERT INTO admin_activity_log (action, created_at) VALUES ('old', '2020-01-01T00:00:00Z')"
+        )
+        # And a current row that must survive the purge.
+        log_action(db, 'recent', 'unit#105', 'should-survive')
+        db.commit()
+
+        before = db.execute(
+            "SELECT count(*) FROM admin_activity_log WHERE action = 'old'"
+        ).fetchone()[0]
+        assert before == 1, 'fixture sanity: old row was seeded'
+
+        deleted = purge_old_entries(db, days=30)
+        assert deleted >= 1
+
+        # The old row is gone; the recent row survived.
+        old_after = db.execute(
+            "SELECT count(*) FROM admin_activity_log WHERE action = 'old'"
+        ).fetchone()[0]
+        recent_after = db.execute(
+            "SELECT count(*) FROM admin_activity_log WHERE action = 'recent'"
+        ).fetchone()[0]
+        assert old_after == 0
+        assert recent_after == 1
+
+
+def test_admin_activity_log_trigger_restored_after_purge(app):
+    """#105: purge_old_entries leaves the BEFORE DELETE trigger in place."""
+    import sqlite3
+
+    import pytest
+
+    with app.app_context():
+        from app.db import get_db
+        from app.services.activity_log import log_action, purge_old_entries
+
+        db = get_db()
+        purge_old_entries(db, days=30)
+
+        # After the purge the trigger must still guard the table.
+        log_action(db, 'after-purge', 'unit#105', 'guard-restored')
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute('DELETE FROM admin_activity_log WHERE 1=1')
