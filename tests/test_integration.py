@@ -300,6 +300,69 @@ def test_sitemap_excludes_admin(client):
     assert '/admin' not in data
 
 
+def test_sitemap_escapes_special_characters(client, app):
+    """Slugs containing XML-meaningful characters must be escaped (#128).
+
+    A legitimate blog slug like ``q&a-with-jane`` (``&`` is a valid
+    URL slug character) previously broke the sitemap because the
+    f-string concatenation emitted the raw ``&`` rather than ``&amp;``,
+    making the XML malformed. Search engines reject malformed sitemaps,
+    killing SEO. Cover both ``&`` and ``<`` since both are commonly
+    abused in slug-injection scenarios.
+    """
+    import sqlite3
+
+    # defusedxml.ElementTree is the project's standard for parsing XML
+    # in tests — already a dev dep, sidesteps ruff S314 / billion-laughs.
+    from defusedxml import ElementTree as ET
+
+    db_path = app.config['DATABASE_PATH']
+    conn = sqlite3.connect(db_path)
+    try:
+        # Enable the blog so the route emits blog-post URLs.
+        conn.execute(
+            'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+            ('blog_enabled', 'true'),
+        )
+        # Two posts with XML-meaningful chars in their slugs.
+        conn.execute(
+            'INSERT INTO blog_posts (slug, title, summary, content, status, published_at) '
+            "VALUES (?, ?, '', '<p>Body</p>', 'published', '2026-01-01T00:00:00Z')",
+            ('q&a-with-jane', 'Q&A With Jane'),
+        )
+        conn.execute(
+            'INSERT INTO blog_posts (slug, title, summary, content, status, published_at) '
+            "VALUES (?, ?, '', '<p>Body</p>', 'published', '2026-01-01T00:00:00Z')",
+            ('a<b-comparison', 'A<B Comparison'),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Cache must drop so blog_enabled flips on this request.
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
+    response = client.get('/sitemap.xml')
+    assert response.status_code == 200
+    body = response.data.decode()
+
+    # The raw body must carry the escaped forms — not the literal
+    # characters anywhere a URL path is interpolated.
+    assert 'q&amp;a-with-jane' in body
+    assert 'a&lt;b-comparison' in body
+    assert 'q&a-with-jane' not in body
+    assert 'a<b-comparison' not in body
+
+    # The body must parse as well-formed XML; ParseError if not.
+    root = ET.fromstring(body)
+    ns = {'sm': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
+    locs = [el.text for el in root.findall('sm:url/sm:loc', ns)]
+    assert any('q&a-with-jane' in (loc or '') for loc in locs)
+    assert any('a<b-comparison' in (loc or '') for loc in locs)
+
+
 # ============================================================
 # FILE UPLOAD VALIDATION
 # ============================================================

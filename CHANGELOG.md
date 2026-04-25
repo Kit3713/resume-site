@@ -7,6 +7,11 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.3 (Proof)
 
+### Fixed — Phase 30: escape slug/locale in `/sitemap.xml` (#128)
+
+- `app/routes/public.py:sitemap` previously emitted XML by f-string concatenation with no escaping of dynamic values. A legitimate blog slug like `q&a-with-jane` (`&` is a valid URL slug character) broke XML well-formedness because raw `&` is reserved — search engines reject malformed sitemaps, killing SEO. Every interpolated value (slug-derived `path`, `priority`, `locale`, `base_url`) now flows through `html.escape`, matching the convention `app/routes/blog.py` already uses for the RSS feed. `html.escape` covers `&`, `<`, `>`, `"`, `'` (the `quote=True` default) so attribute values are safe too. Stdlib only — no new dependency. A future cleanup could move to `xml.etree.ElementTree` if this function grows.
+- Regression test `test_sitemap_escapes_special_characters` in `tests/test_integration.py` seeds two posts whose slugs carry `&` and `<`, asserts the raw response body contains `&amp;` / `&lt;` (not the literal characters in URL paths), parses the body with `defusedxml.ElementTree.fromstring` (must not raise), and asserts the `<loc>` text round-trips back to the unescaped slug.
+
 ### Changed — Phase 26.6: benchmark harness sets its own log level (#64)
 
 - `scripts/benchmark_routes.py` now `os.environ.setdefault('RESUME_SITE_LOG_LEVEL', 'WARNING')` before importing app code, so contributors following the docstring no longer silently measure stderr-sink overhead. The startup banner prints the effective `RESUME_SITE_LOG_LEVEL` so an operator override (`RESUME_SITE_LOG_LEVEL=DEBUG python scripts/benchmark_routes.py`) is visible at a glance. Docstring rewritten — the script handles the default, operators only set the variable to override.
