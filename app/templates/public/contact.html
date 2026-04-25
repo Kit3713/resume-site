@@ -20,20 +20,21 @@
     <div class="section__container">
         <div class="contact__layout">
             {% if site_settings.get('contact_form_enabled', 'true') == 'true' %}
+            {% set fv = form_values or {} %}
             <div class="contact__form-col">
                 <form method="POST" action="{{ url_for('contact.contact_page') }}" class="contact__form" id="contactForm">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="form-group">
                         <label for="name" class="form-label">{{ _('Name') }}</label>
-                        <input type="text" id="name" name="name" class="form-input" required>
+                        <input type="text" id="name" name="name" class="form-input" value="{{ fv.get('name', '') }}" required>
                     </div>
                     <div class="form-group">
                         <label for="email" class="form-label">{{ _('Email') }}</label>
-                        <input type="email" id="email" name="email" class="form-input" required>
+                        <input type="email" id="email" name="email" class="form-input" value="{{ fv.get('email', '') }}" required>
                     </div>
                     <div class="form-group">
                         <label for="message" class="form-label">{{ _('Message') }}</label>
-                        <textarea id="message" name="message" class="form-input form-textarea" rows="6" required></textarea>
+                        <textarea id="message" name="message" class="form-input form-textarea" rows="6" required>{{ fv.get('message', '') }}</textarea>
                     </div>
                     <!-- Honeypot -->
                     <div class="form-input--hp" aria-hidden="true">
