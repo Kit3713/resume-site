@@ -576,6 +576,17 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
         if request_id:
             response.headers['X-Request-ID'] = request_id
 
+        # Phase v0.3.3 (#90) — Vary: Accept-Language so a CDN keys by
+        # locale. Without this, the first visitor's translated body would
+        # be cached and replayed to everyone. Merge instead of overwrite —
+        # gzip middleware (or anything else upstream) may already have
+        # added Accept-Encoding to Vary.
+        existing = response.headers.get('Vary', '')
+        parts = [p.strip() for p in existing.split(',') if p.strip()]
+        if 'Accept-Language' not in parts:
+            parts.append('Accept-Language')
+        response.headers['Vary'] = ', '.join(parts)
+
         return response
 
     # --- 9b. Asset fingerprinting (Phase 12.3) ---
