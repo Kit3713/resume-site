@@ -7,6 +7,11 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.3 (Proof)
 
+### Fixed — `save_translation` SELECT-then-INSERT race (#122)
+
+- `app/services/translations.py:save_translation` previously ran SELECT-existing + INSERT/UPDATE without a transaction. Two concurrent saves to the same `(parent_id, locale)` could both observe "no existing row" and both attempt the INSERT; the loser tripped the `UNIQUE(parent_id, locale)` constraint and raised `IntegrityError` 500. The function now wraps the read+write in an explicit `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` transaction (matches Phase 27.2's atomicity pattern; `app.db._InstrumentedConnection` doesn't forward sqlite3's context-manager protocol so `with db:` isn't an option). On the rare race where the INSERT still loses, we retry once as an UPDATE — the racing caller's intent is real, we overlay our values onto their row rather than try to win the race. A non-UNIQUE `IntegrityError` (e.g. FK violation on `parent_id`) still propagates.
+- Regression test `test_save_translation_concurrent_does_not_500_on_race` in `tests/test_translations_public.py` spawns two `threading.Thread` workers behind a `threading.Barrier(2)` to maximise the race window; after both return it asserts neither raised, exactly one row exists for `(service_id, 'es')`, and the surviving title is one of the two submitted values.
+
 ### Changed — Phase 26.6: benchmark harness sets its own log level (#64)
 
 - `scripts/benchmark_routes.py` now `os.environ.setdefault('RESUME_SITE_LOG_LEVEL', 'WARNING')` before importing app code, so contributors following the docstring no longer silently measure stderr-sink overhead. The startup banner prints the effective `RESUME_SITE_LOG_LEVEL` so an operator override (`RESUME_SITE_LOG_LEVEL=DEBUG python scripts/benchmark_routes.py`) is visible at a glance. Docstring rewritten — the script handles the default, operators only set the variable to override.

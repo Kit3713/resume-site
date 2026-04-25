@@ -22,6 +22,7 @@ file focuses on the route-level integration.
 from __future__ import annotations
 
 import sqlite3
+import threading
 
 import pytest
 
@@ -525,3 +526,78 @@ def test_blog_post_page_emits_post_locale_alternates(app, multilocale_db):
     # should see only the locales with translation rows (not the
     # site-wide ``available_locales`` list).
     assert '<meta property="og:locale:alternate" content="es_ES">' in html
+
+
+# ---------------------------------------------------------------------------
+# Concurrent save_translation — race regression (#122)
+# ---------------------------------------------------------------------------
+
+
+def test_save_translation_concurrent_does_not_500_on_race(app, multilocale_db):
+    """Two threads saving the same (parent_id, locale) must not raise.
+
+    Before #122, ``save_translation`` ran SELECT-then-INSERT/UPDATE
+    without a transaction. If two requests for the same translation
+    landed at the same time, both observed "no existing row", both
+    attempted the INSERT, and the loser tripped the
+    ``UNIQUE(parent_id, locale)`` constraint with an
+    ``IntegrityError`` 500.
+
+    The fix wraps the read+write in a ``BEGIN IMMEDIATE`` block and
+    retries once as an UPDATE if the INSERT still loses the race.
+    After both threads return:
+      * Neither raised.
+      * Exactly one row exists for ``(service_id, 'es')``.
+      * The surviving title is one of the two values submitted (we
+        don't assert which — either ordering is correct).
+    """
+    service_id = _seed_service(multilocale_db, 'Consulting', 'English desc')
+
+    db_path = app.config['DATABASE_PATH']
+    barrier = threading.Barrier(2)
+    errors: list[Exception] = []
+
+    def _worker(title_value: str) -> None:
+        from app.services.translations import save_translation
+
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.row_factory = sqlite3.Row
+        conn.execute('PRAGMA foreign_keys = ON')
+        conn.execute('PRAGMA busy_timeout = 5000')
+        try:
+            # Both threads finish setup before either calls the
+            # service — maximises the window the race is built for.
+            barrier.wait(timeout=10)
+            save_translation(
+                conn,
+                'services',
+                service_id,
+                'es',
+                title=title_value,
+                description=f'desc-{title_value}',
+            )
+        except Exception as exc:  # noqa: BLE001 — surface failures via list
+            errors.append(exc)
+        finally:
+            conn.close()
+
+    threads = [
+        threading.Thread(target=_worker, args=('Consultoría-A',)),
+        threading.Thread(target=_worker, args=('Consultoría-B',)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+
+    assert errors == [], f'concurrent save_translation raised: {errors}'
+
+    rows = multilocale_db.execute(
+        'SELECT title FROM service_translations WHERE service_id = ? AND locale = ?',
+        (service_id, 'es'),
+    ).fetchall()
+    # The UNIQUE(parent_id, locale) constraint guarantees at most one
+    # row; the fix guarantees at least one. Exactly one is the
+    # contract.
+    assert len(rows) == 1
+    assert rows[0]['title'] in {'Consultoría-A', 'Consultoría-B'}
