@@ -19,6 +19,9 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `app/assets.py:hashed_static_url` previously cached the literal string `"missing"` for every static path it couldn't find on disk. A fresh container that hit `/static/css/style.css` before the volume mount finished propagating would pin the miss for the lifetime of the worker — every subsequent response served `?v=missing` URLs, defeating the whole point of content-hash cache busting (and producing the wrong `Cache-Control: immutable` semantics, since `?v=missing` is the same byte-string across deploys). The cache write on miss is removed; misses now fall through to a one-time `os.path.isfile` re-stat per request, so the next lookup after the volume settles computes the real SHA-256. Successful hashes are still cached forever (existing semantics — static files don't change in-place).
 - New regression test `tests/test_app.py::test_hashed_static_url_recovers_when_missing_file_appears`: looks up a path that doesn't exist (asserts `?v=missing` URL and `_cache` untouched), then writes the file to the static dir and asserts the second lookup serves a real hash and caches the success.
+### Fixed
+
+- **#138 Pillow pin consistency** — `requirements.in` now pins Pillow with `==` like every other dependency. The previous `>=11.1.0` lower bound let `pip-compile -U` silently cross major-version boundaries; now an upgrade requires an explicit edit and a CHANGELOG entry, matching the rest of the dependency surface.
 
 ### Changed — Phase 26.6: benchmark harness sets its own log level (#64)
 
