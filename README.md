@@ -1,6 +1,6 @@
 # resume-site
 
-> **Current pre-release: v0.3.1-beta-1** — _Keystone_ beta cycle. Every beta iteration passes the full release-publication gate (cosign-signed, Trivy-clean, rolling-upgrade replay verified); the stable `v0.3.1` tag cuts once the beta cycle closes. See [ROADMAP_v0.3.1.md](ROADMAP_v0.3.1.md), the [v0.2.0 history](ROADMAP_v0.2.0.md), and [CHANGELOG.md](CHANGELOG.md) for the full story.
+> **Current pre-release: v0.3.1-beta-2** — _Keystone_ beta cycle. Every beta iteration passes the full release-publication gate (cosign-signed, Trivy-clean, rolling-upgrade replay verified); the stable `v0.3.1` tag cuts once the beta cycle closes. See [ROADMAP_v0.3.1.md](ROADMAP_v0.3.1.md), the [v0.2.0 history](ROADMAP_v0.2.0.md), and [CHANGELOG.md](CHANGELOG.md) for the full story.
 
 A self-hosted, containerized resume and portfolio website engine built with Flask. Apple-inspired design, and admin panel for content management. **Distributed as a signed, multi-arch container image on GHCR** — a source checkout is only needed for development.
 
@@ -46,7 +46,7 @@ The container image on GHCR is the canonical artifact. **Pull it; do not build f
 ### 1. Pull and verify the signed image
 
 ```bash
-podman pull ghcr.io/kit3713/resume-site:v0.3.1-beta-1
+podman pull ghcr.io/kit3713/resume-site:v0.3.1-beta-2
 ```
 
 Verify the cosign signature before you run anything (keyless OIDC,
@@ -56,7 +56,7 @@ recorded in the public Sigstore transparency log):
 cosign verify \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp 'https://github.com/Kit3713/resume-site/.+' \
-  ghcr.io/kit3713/resume-site:v0.3.1-beta-1
+  ghcr.io/kit3713/resume-site:v0.3.1-beta-2
 ```
 
 A non-zero exit means do not deploy — see the
@@ -89,8 +89,8 @@ curl -O https://raw.githubusercontent.com/Kit3713/resume-site/main/config.exampl
 cp config.example.yaml config.yaml
 # Edit config.yaml with your SMTP credentials and admin password.
 # Generate a secret_key + admin password hash with:
-#   podman run --rm ghcr.io/kit3713/resume-site:v0.3.1-beta-1 python manage.py generate-secret
-#   podman run --rm -it ghcr.io/kit3713/resume-site:v0.3.1-beta-1 python manage.py hash-password
+#   podman run --rm ghcr.io/kit3713/resume-site:v0.3.1-beta-2 python manage.py generate-secret
+#   podman run --rm -it ghcr.io/kit3713/resume-site:v0.3.1-beta-2 python manage.py hash-password
 ```
 
 ### 3. Run
@@ -108,7 +108,7 @@ podman run -d \
   -v resume-site-data:/app/data:Z \
   -v resume-site-photos:/app/photos:Z \
   -v resume-site-backups:/app/backups:Z \
-  ghcr.io/kit3713/resume-site:v0.3.1-beta-1
+  ghcr.io/kit3713/resume-site:v0.3.1-beta-2
 ```
 
 Bind to `127.0.0.1` so the reverse proxy is the only public ingress —
@@ -482,11 +482,11 @@ single-shot capture of the entire deployment state.
 ```bash
 # Pin to a specific version for reproducibility (recommended).
 # Re-run cosign verify on the new tag before restarting:
-podman pull ghcr.io/kit3713/resume-site:v0.3.1-beta-1
+podman pull ghcr.io/kit3713/resume-site:v0.3.1-beta-2
 cosign verify \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp 'https://github.com/Kit3713/resume-site/.+' \
-  ghcr.io/kit3713/resume-site:v0.3.1-beta-1
+  ghcr.io/kit3713/resume-site:v0.3.1-beta-2
 
 podman stop resume-site
 podman rm resume-site
