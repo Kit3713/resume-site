@@ -257,17 +257,48 @@ def test_handler_that_registers_another_handler_doesnt_corrupt_dispatch():
 
 
 # ---------------------------------------------------------------------------
-# Unknown event names still dispatch (callers may emit bespoke events)
+# Bespoke event names: emit stays permissive, register does not
 # ---------------------------------------------------------------------------
 
 
-def test_bespoke_event_name_roundtrips():
-    captured = []
-    register('my.custom.event', lambda **p: captured.append(p))
+def test_bespoke_emit_with_no_handlers_is_a_noop():
+    # emit() remains permissive — a caller may dispatch a bespoke event
+    # name that nobody subscribes to. With register() now strict, the
+    # only observable effect is "no handler ran".
+    assert emit('my.custom.event', kind='test') == 0
 
-    emit('my.custom.event', kind='test')
 
-    assert captured == [{'kind': 'test'}]
+def test_register_rejects_unknown_event_name():
+    with pytest.raises(ValueError, match=r'typo\.event') as excinfo:
+        register('typo.event', lambda **_: None)
+    # The offending name appears in the message verbatim so logs / stack
+    # traces let an operator pinpoint the bad call site immediately.
+    assert 'typo.event' in str(excinfo.value)
+    # And the registry stays empty — failed registrations must not leak.
+    assert handler_count('typo.event') == 0
+
+
+def test_register_suggests_close_match():
+    # A one-letter typo of a real canonical name should produce a
+    # difflib suggestion pointing at the canonical spelling.
+    with pytest.raises(ValueError, match=r'photo\.uploaded') as excinfo:
+        register('photo.uploded', lambda **_: None)
+    assert 'photo.uploaded' in str(excinfo.value)
+
+
+def test_register_lists_valid_names_when_no_close_match():
+    # Wildly off names get the full canonical list rather than
+    # misleading suggestions.
+    with pytest.raises(ValueError, match=r'Valid names'):
+        register('xxxxxxxxxxxx', lambda **_: None)
+
+
+def test_register_accepts_canonical_event():
+    # Sanity: every canonical Events.* string passes validation.
+    for name in Events.ALL:
+        register(name, lambda **_: None)
+    # And one specific case the bug report called out by name.
+    register(Events.PHOTO_UPLOADED, lambda **_: None)
 
 
 # ---------------------------------------------------------------------------
