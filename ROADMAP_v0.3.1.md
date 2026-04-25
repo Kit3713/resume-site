@@ -133,7 +133,7 @@ If v0.3.1 ships through its own gate cleanly, v0.3.2 and v0.3.3 each become "fix
 
 ### 36.8 — K8s / Nomad commented-out examples (v0.3.0 Phase 21.4)
 
-- [ ] Commented example k8s Deployment + Service + Ingress manifests in `docs/PRODUCTION.md`. Not an officially supported deployment shape, but the image is designed to work in orchestrated environments. The readiness-probe block already in `compose.yaml` documents the contract; this is the full manifest form operators have asked for. Include the `initialDelaySeconds: 5, failureThreshold: 3` probe pair from Phase 21.2.
+- [x] Commented example k8s Deployment + Service + Ingress manifests in `docs/PRODUCTION.md`. Not an officially supported deployment shape, but the image is designed to work in orchestrated environments. The readiness-probe block already in `compose.yaml` documents the contract; this is the full manifest form operators have asked for. Include the `initialDelaySeconds: 5, failureThreshold: 3` probe pair from Phase 21.2.
 
 ---
 

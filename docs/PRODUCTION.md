@@ -681,32 +681,272 @@ The RC's tag matrix is narrower: only `vX.Y.Z-rc.1` and (optionally)
 
 ## 13. Kubernetes / Nomad manifests {#k8s-manifests}
 
-<!-- ANCHOR: agent-c-k8s-manifests (Phase 36.8).
-     Agent C: drop the commented-out k8s Deployment + Service + Ingress
-     manifests here. Include the readinessProbe / livenessProbe block
-     with `initialDelaySeconds: 5, failureThreshold: 3` (Phase 21.2
-     contract — already documented in compose.yaml). The probe pair is
-     what makes the image work in orchestrated environments; this
-     section is the full manifest form operators have asked for.
-     Not officially supported, but the image is designed to support it. -->
+Not officially supported, but the image is designed to work in
+orchestrated environments. The readiness-probe block in `compose.yaml`
+documents the contract; this is the full manifest form operators have
+asked for.
 
-_Reserved for Agent C's k8s / Nomad commented-example manifests
-(Phase 36.8)._ Until that lands, the `compose.yaml` health-check block
-documents the readiness contract every orchestrator needs:
+The probe pair (`livenessProbe` on `/healthz`, `readinessProbe` on
+`/readyz` with `initialDelaySeconds: 5, failureThreshold: 3`) is the
+Phase 21.2 contract — keep those values verbatim. The two volumes
+mirror what `compose.yaml` mounts: `/app/data` for the SQLite database
+and `/app/photos` for uploaded photos.
+
+### 13.1 Kubernetes Deployment + Service + Ingress
+
+Save as `resume-site.yaml` and `kubectl apply -f resume-site.yaml`.
+Pin to a digest after running `cosign verify` (see §3.0) — the tag
+form below is the floor, not the ceiling.
 
 ```yaml
-healthcheck:
-  test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-  interval: 30s
-  timeout: 5s
-  retries: 3
-  start_period: 10s
+# Deployment ----------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: resume-site
+  labels:
+    app: resume-site
+spec:
+  replicas: 1
+  # SQLite is single-writer — do NOT scale this above 1 replica
+  # unless you have already migrated to Postgres (v0.4.0+ roadmap).
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: resume-site
+  template:
+    metadata:
+      labels:
+        app: resume-site
+    spec:
+      containers:
+        - name: resume-site
+          # Tag form (the floor):
+          image: ghcr.io/kit3713/resume-site:v0.3.1
+          # Digest-pinned form (recommended for production — capture
+          # the digest after `cosign verify` succeeds, see §3.0):
+          # image: ghcr.io/kit3713/resume-site@sha256:<64-hex-digest>
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: RESUME_SITE_BACKUP_DIR
+              value: /app/backups
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: data
+              mountPath: /app/data
+            - name: photos
+              mountPath: /app/photos
+            - name: backups
+              mountPath: /app/backups
+          # Liveness: lightweight, no I/O — see compose.yaml comment.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # Readiness: deeper check (DB, migrations, photos dir, disk).
+          # 503 pulls the pod out of LB rotation without restarting it.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          secret:
+            secretName: resume-site-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: resume-site-data
+        - name: photos
+          persistentVolumeClaim:
+            claimName: resume-site-photos
+        - name: backups
+          persistentVolumeClaim:
+            claimName: resume-site-backups
+---
+# Service -------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: resume-site
+  labels:
+    app: resume-site
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    app: resume-site
+---
+# Ingress -------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: resume-site
+  annotations:
+    # cert-manager-specific — comment out and supply your own cert if
+    # you terminate TLS elsewhere (Cloudflare, an external LB, etc.):
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    # acme.cert-manager.io/http01-edit-in-place: "true"
+    # Body size: photo uploads are up to 10 MB. If your ingress is
+    # ingress-nginx, this is the right knob; other controllers vary.
+    nginx.ingress.kubernetes.io/proxy-body-size: 15m
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - portfolio.yourdomain.com
+      secretName: resume-site-tls
+  rules:
+    - host: portfolio.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: resume-site
+                port:
+                  number: 8080
 ```
 
-For a real Kubernetes deployment, mirror that into a `livenessProbe`
-on `/healthz` and a `readinessProbe` on `/readyz` with
-`initialDelaySeconds: 5, failureThreshold: 3` (matching the Phase
-21.2 contract).
+The `resume-site-config` Secret holds the same `config.yaml` you'd
+write for compose (see §3.2). Create it with:
+
+```bash
+kubectl create secret generic resume-site-config \
+    --from-file=config.yaml=./config.yaml
+```
+
+PVC manifests are intentionally omitted — pick a `storageClassName`
+appropriate to your cluster (a single-node cluster might use
+`local-path`; a managed cluster gets whatever its default class is).
+A 1 GiB / 5 GiB / 1 GiB split for `data` / `photos` / `backups` is a
+reasonable starting allocation; scale `photos` and `backups` upward
+to match your retention plan (§5, §8).
+
+### 13.2 Nomad job spec
+
+For operators on Nomad. The probe contract is identical; the syntax
+is the only thing that changes.
+
+```hcl
+job "resume-site" {
+  datacenters = ["dc1"]
+  type        = "service"
+
+  group "resume-site" {
+    count = 1
+    # SQLite single-writer: do NOT raise count above 1.
+
+    network {
+      port "http" {
+        to = 8080
+      }
+    }
+
+    volume "data" {
+      type      = "host"
+      source    = "resume-site-data"
+      read_only = false
+    }
+    volume "photos" {
+      type      = "host"
+      source    = "resume-site-photos"
+      read_only = false
+    }
+
+    service {
+      name = "resume-site"
+      port = "http"
+
+      check {
+        name     = "liveness"
+        type     = "http"
+        path     = "/healthz"
+        interval = "30s"
+        timeout  = "5s"
+      }
+      check {
+        name     = "readiness"
+        type     = "http"
+        path     = "/readyz"
+        interval = "10s"
+        timeout  = "3s"
+        check_restart {
+          limit = 3
+          grace = "5s"
+        }
+      }
+    }
+
+    task "resume-site" {
+      driver = "docker"
+
+      config {
+        image = "ghcr.io/kit3713/resume-site:v0.3.1"
+        # Digest-pinned form (recommended):
+        # image = "ghcr.io/kit3713/resume-site@sha256:<64-hex-digest>"
+        ports = ["http"]
+      }
+
+      env {
+        RESUME_SITE_BACKUP_DIR = "/app/backups"
+      }
+
+      volume_mount {
+        volume      = "data"
+        destination = "/app/data"
+      }
+      volume_mount {
+        volume      = "photos"
+        destination = "/app/photos"
+      }
+
+      template {
+        destination = "local/config.yaml"
+        data        = file("config.yaml")
+      }
+
+      resources {
+        cpu    = 500
+        memory = 512
+      }
+    }
+  }
+}
+```
 
 ---
 
