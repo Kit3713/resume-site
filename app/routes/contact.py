@@ -57,10 +57,15 @@ def contact_page():
         # legitimate users never see or fill it, but bots do
         is_spam = bool(honeypot)
 
+        # Issue #81 — preserve the visitor's typed input on validation
+        # failure so they don't lose their work. Passed back to the
+        # template only on the error branches; success returns a redirect.
+        form_values = {'name': name, 'email': email, 'message': message}
+
         # Server-side validation
         if not name or not email or not message:
             flash(_('Please fill in all required fields.'), 'error')
-            return render_template('public/contact.html')
+            return render_template('public/contact.html', form_values=form_values)
 
         # Phase 27.5 (#13) — reject null bytes outright. They're never
         # legitimate in any free-text field; silently stripping
@@ -68,7 +73,7 @@ def contact_page():
         # email headers, or filesystem operations elsewhere.
         if any('\x00' in s for s in (name, email, message)):
             flash(_('Invalid characters in input.'), 'error')
-            return render_template('public/contact.html')
+            return render_template('public/contact.html', form_values=form_values)
 
         # Phase 27.4 (#39) — a proper shape check.
         # ``"@" in email and "." in email`` accepts ``@.``, ``a@.``, ``a@a``.
@@ -81,7 +86,7 @@ def contact_page():
         )
         if not _EMAIL_RE.match(email) or '..' in email:
             flash(_('Please enter a valid email address.'), 'error')
-            return render_template('public/contact.html')
+            return render_template('public/contact.html', form_values=form_values)
 
         # Rate limiting — resolve the real client IP via the central
         # helper (Phase 23.2). Before the extraction, this inlined a
@@ -104,7 +109,7 @@ def contact_page():
 
         if count_recent_submissions(db, ip_hash) >= 5:
             flash(_('Too many submissions. Please try again later.'), 'error')
-            return render_template('public/contact.html')
+            return render_template('public/contact.html', form_values=form_values)
 
         # Persist to database (always, even for spam — for admin visibility)
         submission_id = save_contact_submission(
@@ -129,15 +134,24 @@ def contact_page():
             source='public_form',
         )
 
-        # Relay via email (only for legitimate, non-spam submissions)
+        # Relay via email (only for legitimate, non-spam submissions).
+        # Issue #80 — capture the return value so a transient SMTP
+        # failure shows a sorry-couldn't-send flash instead of falsely
+        # confirming delivery. Spam submissions skip the relay and
+        # always show the success line so the honeypot stays hidden.
+        delivered = True
         if not is_spam:
             from app.services.mail import send_contact_email
 
-            send_contact_email(name, email, message)
+            delivered = send_contact_email(name, email, message)
 
-        # Show the same success message for both spam and real submissions
-        # to avoid revealing the honeypot detection to bots
-        flash(_("Message sent successfully! I'll get back to you soon."), 'success')
+        if delivered:
+            flash(_("Message sent successfully! I'll get back to you soon."), 'success')
+        else:
+            flash(
+                _("Sorry, your message couldn't be sent right now. Please try again later."),
+                'error',
+            )
         return redirect(url_for('contact.contact_page'))
 
     return render_template('public/contact.html')

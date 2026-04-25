@@ -148,7 +148,7 @@ def test_contact_page(client):
     assert b'name="message"' in response.data
 
 
-def test_contact_form_submit(client, app):
+def test_contact_form_submit(client, app, smtp_mock):
     """Valid contact form submissions should save and show a success message."""
     response = client.post(
         '/contact',
@@ -178,6 +178,7 @@ def test_contact_form_honeypot(client, app):
     )
     assert response.status_code == 200
     # Same success message shown to avoid revealing the honeypot to bots
+    # (spam submissions skip the SMTP relay, so no smtp_mock needed)
     assert b'Message sent successfully' in response.data
 
 
@@ -193,6 +194,53 @@ def test_contact_form_validation(client):
         follow_redirects=True,
     )
     assert b'Please fill in all required fields' in response.data
+
+
+def test_contact_smtp_failure_flashes_sorry(client, app, monkeypatch):
+    """Issue #80 — when SMTP relay fails, the visitor sees a sorry flash, not success."""
+    monkeypatch.setattr(
+        'app.services.mail.send_contact_email',
+        lambda name, email, message: False,
+    )
+    response = client.post(
+        '/contact',
+        data={
+            'name': 'Test User',
+            'email': 'test@example.com',
+            'message': 'Hello, this is a test message.',
+            'website': '',
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    with client.session_transaction() as sess:
+        flashes = sess.get('_flashes', [])
+    categories_messages = [(cat, msg) for cat, msg in flashes]
+    assert any('Sorry' in msg and cat == 'error' for cat, msg in categories_messages), (
+        f"Expected a sorry-couldn't-send error flash, got: {categories_messages}"
+    )
+    assert not any('successfully' in msg for _cat, msg in categories_messages), (
+        f'Did not expect a success flash on SMTP failure, got: {categories_messages}'
+    )
+
+
+def test_contact_validation_failure_preserves_input(client):
+    """Issue #81 — validation errors re-render the form with the visitor's typed values."""
+    response = client.post(
+        '/contact',
+        data={
+            'name': 'Jane Doe',
+            'email': 'not-a-valid-email',
+            'message': 'A message I do not want to retype, please preserve me.',
+            'website': '',
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert 'value="Jane Doe"' in body
+    assert 'value="not-a-valid-email"' in body
+    assert 'A message I do not want to retype, please preserve me.' in body
 
 
 def test_case_study_404(client):
