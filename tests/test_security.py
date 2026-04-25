@@ -1077,6 +1077,19 @@ def test_server_header_stripped_from_response(client):
     assert 'X-Powered-By' not in resp.headers
 
 
+def test_no_server_header_on_any_route(client):
+    """Phase 24.4 (#14): Server / X-Powered-By stripped from every response.
+
+    One path from each surface (public, health-check, admin-form, blog)
+    so a regression in error handlers, health-check shortcuts, or
+    admin-form rendering can't re-leak the header on a route the
+    single-route test above doesn't touch."""
+    for path in ('/', '/healthz', '/readyz', '/admin/login', '/blog/'):
+        resp = client.get(path)
+        assert 'Server' not in resp.headers, f'Server header leaked on {path}'
+        assert 'X-Powered-By' not in resp.headers, f'X-Powered-By leaked on {path}'
+
+
 # ============================================================
 # Phase 24.3 — log-injection hygiene (#22)
 # ============================================================

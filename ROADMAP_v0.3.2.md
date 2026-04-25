@@ -103,8 +103,8 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 ### 24.4 — `Server: gunicorn` header removal (#14)  [COMPLETED]
 
-- [ ] Strip or rewrite the `Server` response header. Two acceptable fixes: (a) set `app.after_request` to pop `Server` (simplest, works for any WSGI server); (b) document the Caddy `header Server "resume-site"` snippet in `docs/PRODUCTION.md` and recommend (a) as the belt inside the suspenders. Ship (a) in-tree.
-- [ ] Regression test: every route returns no `Server` header (or exactly the rewritten value).
+- [x] Strip or rewrite the `Server` response header. Two acceptable fixes: (a) set `app.after_request` to pop `Server` (simplest, works for any WSGI server); (b) document the Caddy `header Server "resume-site"` snippet in `docs/PRODUCTION.md` and recommend (a) as the belt inside the suspenders. Ship (a) in-tree.
+- [x] Regression test: every route returns no `Server` header (or exactly the rewritten value).
 
 ---
 

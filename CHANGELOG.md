@@ -88,6 +88,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Security — Phase 24.4: `Server` / `X-Powered-By` header stripped (#14)
 
 - `after_request` handler now deletes the `Server` header (and any `X-Powered-By` a middleware might set) before the response goes out. Werkzeug / Gunicorn advertise their exact version by default, which hands an attacker the CVE list to try. The response shape is otherwise unchanged.
+- Multi-route regression test `test_no_server_header_on_any_route` in `tests/test_security.py` sweeps `/`, `/healthz`, `/readyz`, `/admin/login`, `/blog/` so a future regression in error handlers, health-check shortcuts, or admin-form rendering can't re-leak the header on a surface the original single-route test doesn't touch.
 
 ### Security — Phase 23.2: one `get_client_ip()` helper (#34)
 
