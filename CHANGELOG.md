@@ -88,6 +88,14 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `create_review` + `mark_token_used` now run inside an explicit `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` transaction with a third in-transaction token re-validate. Before, two separate statements without a transaction meant two concurrent submissions of the same token could both succeed (race between "token valid" check and "mark used" update). Now exactly one wins; the losing caller rolls back cleanly. `app.db._InstrumentedConnection` doesn't forward the context-manager protocol so the explicit form is used instead of `with db:`.
 - Regression test `test_review_token_concurrent_submission_rejected` in `tests/test_integration.py` asserts exactly one review row exists after two simultaneous POSTs of the same token.
 
+### Added — Phase 37.2: `@deprecated` decorator + webhook envelope deprecation keys + metric
+
+- New `app/services/deprecation.py` with `@deprecated(sunset_date, replacement=None, reason=None)` decorator. Stamps responses with `Deprecation: true` (RFC 9745 draft), `Sunset: <HTTP-date>` (RFC 8594 — ISO date converted via `email.utils.format_datetime` so the day/month names are locale-safe), and `Link: <url>; rel="successor-version"` when a replacement is named. Logs an INFO record on `app.api.deprecation` per call with request id, endpoint name, `User-Agent`, and optional `X-Client-ID` so operators can identify lingering consumers. Idempotent across decorator stacking — the inner wrapper stamps headers + counter + log, the outer wrapper sees `Deprecation` already set and bows out.
+- New Prometheus counter `resume_site_deprecated_api_calls_total{endpoint}` increments once per call. Operators graph against the configured sunset date to confirm consumers have migrated; a still-non-zero rate close to the date pushes the sunset.
+- Webhook envelope plumbing in `app.services.webhooks._build_envelope`: optional `deprecated=True` and `sunset='<iso>'` kwargs inject `"deprecated": true` / `"sunset": <iso>` keys into the inner `data` payload. Default-off; existing callers untouched. Mirrors the HTTP header pair so a webhook consumer can subscribe to the same warning lifecycle when an event schema is on its way out.
+- Imported (`# noqa: F401`) into `app/routes/api.py` so the symbol is on the route-module's import surface; no existing route is decorated yet — the first usage waits for v0.4.0.
+- Six tests in `tests/test_deprecation.py` cover the three headers, the `Link: rel="successor-version"` form, the INFO log line on `app.api.deprecation` (via `caplog`), the counter increment, decorator-stacking idempotency, and the webhook envelope plumbing.
+
 ### Added — Phase 37.1: API compatibility policy doc
 
 - New `docs/API_COMPATIBILITY.md` — the stated contract between this codebase and any API / webhook consumer. Enumerates what MAY NOT change within a major version prefix (endpoints, field names, field types, error codes, event names, webhook envelope shape), what MAY change non-breakingly (new fields, new codes, new events, stricter validation), and the deprecation process every breaking change must go through (at minimum one release of `Deprecation`/`Sunset`/`Link` headers + CHANGELOG `Deprecated` entry + explicit removal release). Paired with the existing `docs/UPGRADE.md` which guarantees data survival; this doc closes the orthogonal consumer-contract gap.
@@ -99,6 +107,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Permanent `### Deprecated` subsection template under every `[Unreleased]` heading in `CHANGELOG.md`. When an operator deprecates an endpoint, the one-line note lands here — the empty section is the slot, and the CI guard below ensures it gets filled.
 - New `quality`-job step in `.github/workflows/ci.yml` (after the SQL-interpolation grep, before the `debug=True` guard) that fails the build when a PR adds `@deprecated(` to anything under `app/` without a matching addition under a `### Deprecated` heading in `CHANGELOG.md`. Push events to main are a no-op (no diff base). The error message points to `docs/API_COMPATIBILITY.md` for the deprecation contract.
+- Deferred to v0.3.3 or v0.4.0: OpenAPI spec drift guard (37.3) and CHANGELOG-enforcement CI grep (37.4). 37.2 (`@deprecated` decorator + metric + envelope plumbing) lands in this release.
 
 ### Security — Phase 25.3: bounded webhook-dispatch thread pool (#47)
 

@@ -404,6 +404,19 @@ login_attempts_total = _registry.counter(
     label_names=('outcome',),
 )
 
+# Phase 37.2 — deprecated-API call counter.
+#
+# Increments once per call to any route wearing the
+# ``@app.services.deprecation.deprecated`` decorator, labelled by
+# Flask endpoint name. Operators graph this against the configured
+# sunset date to confirm consumers have migrated; if the rate is still
+# non-zero close to the date, the sunset gets pushed.
+deprecated_api_calls_total = _registry.counter(
+    'resume_site_deprecated_api_calls_total',
+    'Calls to API endpoints flagged with the @deprecated decorator, by endpoint name.',
+    label_names=('endpoint',),
+)
+
 
 # ---------------------------------------------------------------------------
 # Request instrumentation helper

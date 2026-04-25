@@ -585,13 +585,28 @@ def sign_payload(secret: str | bytes, body: str | bytes) -> str:
     return hmac.new(secret, body, sha256).hexdigest()
 
 
-def _build_envelope(event_name, payload):
+def _build_envelope(event_name, payload, *, deprecated=None, sunset=None):
     """Canonical wire envelope. Stable so downstream verifiers can rely on it.
 
     JSON serialisation uses ``sort_keys=True`` so the same payload
     always hashes to the same signature regardless of dict iteration
     order.
+
+    Phase 37.2 deprecation plumbing: when ``deprecated`` is truthy,
+    inject ``"deprecated": true`` and (when present) ``"sunset": <iso>``
+    keys into ``payload`` so a webhook consumer can detect that the
+    event schema is on its way out — mirrors the HTTP
+    ``Deprecation`` / ``Sunset`` header pair. The keys live on the
+    inner ``data`` payload rather than the envelope so consumers
+    that already crawl ``data`` for typed fields see the flag without
+    extra parsing. No event is flagged in this PR; the callers stay
+    on the no-arg form until the first real deprecation.
     """
+    if deprecated:
+        payload = dict(payload)  # don't mutate the caller's dict
+        payload['deprecated'] = True
+        if sunset:
+            payload['sunset'] = sunset
     envelope = {
         'event': event_name,
         'timestamp': _now_iso(),
