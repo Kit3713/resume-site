@@ -461,14 +461,7 @@ public internet.
 
 ### 7.3 Observability runbook cross-reference {#observability-runbook}
 
-<!-- ANCHOR: agent-c-observability-cross-ref (Phase 36.6).
-     Agent C: drop the one-line pointer to docs/OBSERVABILITY_RUNBOOK.md
-     here. Five-minute edit; section exists so the link has a stable
-     home (and so the v0.3.0 carry-over is visibly closed in this
-     file rather than left as an implicit "see §7"). -->
-
-_Reserved for Agent C's observability runbook pointer (Phase 36.6)._
-Until Agent C lands, the runbook lives at
+The full operator runbook lives at
 [`docs/OBSERVABILITY_RUNBOOK.md`](OBSERVABILITY_RUNBOOK.md) — the
 "when to reach for which tool" decision tree, the Prometheus +
 Grafana + Alertmanager wiring, and the synthetic-monitoring tiers.
