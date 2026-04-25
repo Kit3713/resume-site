@@ -435,6 +435,194 @@ def test_record_successful_login_emits_success_outcome(clean_metrics_registry, t
         conn.close()
 
 
+# ---------------------------------------------------------------------------
+# Photo disk-usage gauge — Phase 26.5 (#36) cached scrape
+# ---------------------------------------------------------------------------
+#
+# The /metrics scrape used to walk the entire photo directory on every
+# Prometheus tick. The Phase 26.5 cache flips that to:
+#
+#   * upload / delete bumps `photos_disk_usage_bytes` by the file-size
+#     delta (cheap O(variants))
+#   * /metrics reads the cached value (O(1))
+#   * `manage.py purge-all` reconciles to ground truth daily
+#
+# These tests lock in the cached read, the upload/delete bookkeeping,
+# and the fresh-install fall-back walk.
+
+
+def _build_test_jpeg(width=400, height=300):
+    """Return a small valid JPEG byte stream for upload tests."""
+    import io
+
+    from PIL import Image
+
+    img = Image.new('RGB', (width, height), color='blue')
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=85)
+    buf.seek(0)
+    return buf
+
+
+def _get_photo_disk_usage_bytes():
+    """Read the photos disk-usage gauge directly off the route's binding.
+
+    ``app.routes.metrics`` imports ``disk_usage_bytes`` at module-load
+    and writes via that reference forever. When other tests run the
+    ``clean_metrics_registry`` fixture (registry reset + module
+    reload), ``app.services.metrics.disk_usage_bytes`` becomes a fresh
+    gauge instance but the route's binding stays on the original
+    one. Reading from the route's binding is therefore the only
+    reliable way to see what the scrape just wrote.
+    """
+    from app.routes import metrics as _metrics_route
+
+    return _metrics_route.disk_usage_bytes._values.get(('photos',), 0)
+
+
+def test_metrics_disk_usage_reflects_upload_then_delete(app, client):
+    """Upload a photo, scrape, expect the gauge to match the on-disk delta.
+    Delete the photo, scrape again, expect the gauge to drop back to zero.
+
+    Locks in the bidirectional bookkeeping (upload bumps up, delete
+    bumps down) plus the cache-vs-walk consistency check.
+    """
+    import os
+
+    from werkzeug.datastructures import FileStorage
+
+    from app.services.photos import (
+        _photo_storage_total_bytes,
+        delete_photo_file,
+        process_upload,
+    )
+
+    _enable_metrics(app, networks='127.0.0.0/8')
+
+    photo_dir = app.config['PHOTO_STORAGE']
+    os.makedirs(photo_dir, exist_ok=True)
+
+    with app.app_context():
+        storage = FileStorage(_build_test_jpeg(), filename='test.jpg', content_type='image/jpeg')
+        result = process_upload(storage)
+    assert isinstance(result, dict), f'process_upload returned: {result!r}'
+
+    expected = _photo_storage_total_bytes(photo_dir)
+    assert expected > 0, 'no bytes landed on disk'
+
+    response = client.get('/metrics')
+    assert response.status_code == 200
+    gauge = _get_photo_disk_usage_bytes()
+    assert gauge == expected, f'gauge {gauge} should equal on-disk total {expected} after upload'
+
+    with app.app_context():
+        delete_photo_file(result['storage_name'])
+
+    response = client.get('/metrics')
+    assert response.status_code == 200
+    gauge_after = _get_photo_disk_usage_bytes()
+    assert gauge_after == 0, f'gauge {gauge_after} should be 0 after delete'
+
+
+def test_metrics_uses_cached_value_not_directory_walk(app, client, monkeypatch):
+    """Once the cache is populated, /metrics scrapes never walk the photo tree.
+
+    Pre-populates the cache, replaces the walk helper with a sentinel
+    that increments a counter on call, and asserts the counter stays
+    at zero across multiple scrapes. Regression guard for the whole
+    point of Phase 26.5: O(1) scrape regardless of photo count.
+    """
+    import sqlite3
+
+    _enable_metrics(app, networks='127.0.0.0/8')
+
+    # Pre-populate the cache to a non-zero value so /metrics serves it
+    # without falling back to the walk path.
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    conn.execute(
+        'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+        ('photos_disk_usage_bytes', '987654'),
+    )
+    conn.commit()
+    conn.close()
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
+    walk_calls = {'count': 0}
+
+    def _spy_walk(photo_dir):
+        walk_calls['count'] += 1
+        return 0
+
+    monkeypatch.setattr('app.services.photos._photo_storage_total_bytes', _spy_walk)
+
+    for _ in range(3):
+        response = client.get('/metrics')
+        assert response.status_code == 200
+        gauge = _get_photo_disk_usage_bytes()
+        assert gauge == 987654, f'expected cached 987654, got {gauge}'
+
+    assert walk_calls['count'] == 0, (
+        f'directory walk was called {walk_calls["count"]} times — '
+        'the whole point of the cache is to skip it on the hot path'
+    )
+
+
+def test_metrics_fresh_install_walks_once_then_caches(app, client):
+    """A fresh install with zero cache walks once on first scrape, writes
+    the result, and serves the cache on every subsequent scrape.
+
+    Confirms the fall-back path actually populates the setting so the
+    next scrape is O(1).
+    """
+    import io
+    import os
+    import sqlite3
+
+    from PIL import Image
+
+    _enable_metrics(app, networks='127.0.0.0/8')
+
+    # Drop any cached row from the test fixture's defaults so we exercise
+    # the fresh-install branch (cached==0).
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    conn.execute("DELETE FROM settings WHERE key = 'photos_disk_usage_bytes'")
+    conn.commit()
+    conn.close()
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
+    # Write one photo file directly (no upload pipeline, so no bump
+    # touches the cache — this is the "out-of-band file appeared"
+    # scenario the fall-back is for).
+    photo_dir = app.config['PHOTO_STORAGE']
+    os.makedirs(photo_dir, exist_ok=True)
+    img = Image.new('RGB', (50, 50), color='green')
+    out = os.path.join(photo_dir, 'manual-fixture.jpg')
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG')
+    with open(out, 'wb') as f:
+        f.write(buf.getvalue())
+    expected = os.path.getsize(out)
+
+    # First scrape: cache is empty, code path walks once and writes back.
+    response = client.get('/metrics')
+    assert response.status_code == 200
+    gauge = _get_photo_disk_usage_bytes()
+    assert gauge == expected, f'first-scrape gauge {gauge} != on-disk {expected}'
+
+    # Cache should now hold the walked value.
+    conn = sqlite3.connect(app.config['DATABASE_PATH'])
+    row = conn.execute(
+        'SELECT value FROM settings WHERE key = ?', ('photos_disk_usage_bytes',)
+    ).fetchone()
+    conn.close()
+    assert row is not None, 'fresh-install fall-back should have written the cache'
+    assert int(row[0]) == expected, f'cache write was {row[0]!r}, expected {expected}'
+
+
 def test_check_lockout_when_locked_emits_locked_outcome(clean_metrics_registry, tmp_path):
     """A locked-out attempt increments the locked counter exactly once."""
     import sqlite3

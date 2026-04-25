@@ -1388,6 +1388,27 @@ def purge_all(_args):
             print(f'admin_activity_log: ERROR {exc}')
             errors += 1
 
+    # Phase 26.5 (#36) — reconcile the cached photo-directory total
+    # against the on-disk truth. Upload / delete bumps keep the cache
+    # in step with live writes (cheap O(1) vs an os.walk on every
+    # /metrics scrape), but a missed bump or out-of-band file change
+    # would otherwise drift forever. Running this here bounds the
+    # staleness window to the purge-all cadence (typically 24 h).
+    try:
+        from app.services.photos import _photo_storage_total_bytes
+        from app.services.settings_svc import _upsert, invalidate_cache
+
+        photo_dir = app.config.get('PHOTO_STORAGE', '')
+        truth = _photo_storage_total_bytes(photo_dir)
+        ts = datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+        _upsert(conn, 'photos_disk_usage_bytes', str(truth))
+        _upsert(conn, 'photos_disk_usage_updated_at', ts)
+        invalidate_cache()
+        print(f'photos_disk_usage: reconciled to {truth} bytes ({photo_dir or "(unset)"})')
+    except Exception as exc:  # noqa: BLE001
+        print(f'photos_disk_usage: ERROR {exc}')
+        errors += 1
+
     conn.commit()
     conn.close()
 

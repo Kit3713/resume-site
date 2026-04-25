@@ -52,6 +52,63 @@ _MAGIC_BYTES = {
 _DEFAULT_MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
+def _bump_disk_usage_cache(delta_bytes: int) -> None:
+    """Adjust the cached photo-directory total by ``delta_bytes``.
+
+    Phase 26.5 (#36) — keeps ``photos_disk_usage_bytes`` in step with
+    upload / delete activity so the /metrics gauge can be served in
+    O(1) instead of walking the photo tree on every Prometheus scrape.
+    A downward drift past zero is clamped to zero so a missed-bump bug
+    can't take the gauge negative; reconciliation in ``manage.py
+    purge-all`` bounds steady-state drift to that cadence.
+
+    Wrapped in ``contextlib.suppress`` because gauge accuracy must
+    never block the surrounding upload / delete — a slow or unhealthy
+    DB at bump time would otherwise turn a Prometheus nicety into a
+    user-facing 500.
+    """
+    import contextlib
+
+    if delta_bytes == 0:
+        return
+    with contextlib.suppress(Exception):
+        from app.db import get_db
+        from app.services.settings_svc import set_one
+
+        db = get_db()
+        row = db.execute(
+            'SELECT value FROM settings WHERE key = ?',
+            ('photos_disk_usage_bytes',),
+        ).fetchone()
+        try:
+            current = int(row['value']) if row else 0
+        except (TypeError, ValueError):
+            current = 0
+        new_total = max(0, current + delta_bytes)
+        # ``set_one`` runs the upsert, commits, and busts the TTL cache
+        # so /metrics sees the fresh total without waiting on the 30 s
+        # window.
+        set_one(db, 'photos_disk_usage_bytes', new_total)
+
+
+def _photo_storage_total_bytes(photo_dir: str) -> int:
+    """Walk ``photo_dir`` once and return the total bytes of all files.
+
+    Used by the `/metrics` first-init fall-back and the
+    ``manage.py purge-all`` reconciliation step. Centralised here so
+    the metrics route doesn't have to import ``os.walk`` plumbing and
+    so tests can stub a single function to verify it isn't called on
+    the request hot path.
+    """
+    if not photo_dir or not os.path.isdir(photo_dir):
+        return 0
+    return sum(
+        os.path.getsize(os.path.join(dirpath, f))
+        for dirpath, _dirnames, filenames in os.walk(photo_dir)
+        for f in filenames
+    )
+
+
 def _get_photo_dir():
     """Resolve the photo storage directory to an absolute path."""
     photo_dir = current_app.config['PHOTO_STORAGE']
@@ -242,6 +299,14 @@ def process_upload(file_storage: FileStorage) -> dict[str, Any] | str | None:
         if quarantine_path and os.path.exists(quarantine_path):
             os.unlink(quarantine_path)
 
+    # Phase 26.5 (#36): bump the cached photo-directory total by the
+    # full delta written to disk for this upload — primary file plus
+    # whatever variants `_generate_responsive_variants` actually
+    # produced. Stat'ing the handful of UUID-prefixed siblings is
+    # O(variants), unlike the O(directory) walk we used to do on
+    # every /metrics scrape.
+    _bump_disk_usage_cache(_stat_storage_files(photo_dir, storage_name))
+
     # Map file extensions to MIME types
     mime_map = {
         '.jpg': 'image/jpeg',
@@ -259,6 +324,40 @@ def process_upload(file_storage: FileStorage) -> dict[str, Any] | str | None:
         'height': height,
         'file_size': file_size,
     }
+
+
+def _variant_storage_names(storage_name: str) -> list[str]:
+    """Return the storage_name plus every responsive-variant filename.
+
+    Single source of truth for the upload / delete / stat call sites
+    that need to enumerate every on-disk file backing a single photo
+    row. Variants that haven't been generated (``_generate_responsive_variants``
+    skips upscales for narrow originals) won't exist on disk; callers
+    use ``os.path.exists`` / ``os.path.getsize`` to skip those.
+    """
+    base, ext = os.path.splitext(storage_name)
+    return [
+        storage_name,
+        f'{base}.webp',
+        *[f'{base}_{w}w{ext}' for w in _RESPONSIVE_WIDTHS],
+    ]
+
+
+def _stat_storage_files(photo_dir: str, storage_name: str) -> int:
+    """Sum the on-disk bytes for ``storage_name`` plus its responsive variants.
+
+    Used by the upload cache-bump path so the gauge moves in lockstep
+    with what landed on disk, without paying for an ``os.walk`` of
+    the whole photo tree.
+    """
+    total = 0
+    for name in _variant_storage_names(storage_name):
+        path = os.path.join(photo_dir, name)
+        try:
+            total += os.path.getsize(path)
+        except OSError:
+            continue
+    return total
 
 
 _RESPONSIVE_WIDTHS = (640, 1024)
@@ -422,15 +521,19 @@ def delete_photo_file(storage_name: str) -> None:
     Args:
         storage_name: The UUID-based filename to delete.
     """
-    photo_dir = _get_photo_dir()
-    base, ext = os.path.splitext(storage_name)
+    import contextlib
 
-    candidates = [
-        storage_name,
-        f'{base}.webp',
-        *[f'{base}_{w}w{ext}' for w in _RESPONSIVE_WIDTHS],
-    ]
-    for name in candidates:
+    photo_dir = _get_photo_dir()
+    # Phase 26.5 (#36): tally the bytes about to disappear *before*
+    # the unlinks so the disk-usage gauge can be debited by the same
+    # delta. Stat'ing siblings that don't exist is fine — getsize
+    # raises OSError and we skip silently.
+    deleted_bytes = 0
+    for name in _variant_storage_names(storage_name):
         path = os.path.join(photo_dir, name)
         if os.path.exists(path):
+            with contextlib.suppress(OSError):
+                deleted_bytes += os.path.getsize(path)
             os.remove(path)
+    if deleted_bytes:
+        _bump_disk_usage_cache(-deleted_bytes)
