@@ -226,6 +226,50 @@ def test_og_locale_empty_returns_default():
 
 
 # ---------------------------------------------------------------------------
+# get_all_translated filter-key whitelist (#124)
+# ---------------------------------------------------------------------------
+
+
+def test_get_all_translated_rejects_unknown_filter_key(multilocale_db):
+    """#124: filter keys must be in the parent table's column allowlist."""
+    from app.services.translations import get_all_translated
+
+    with pytest.raises(ValueError, match='Unknown filter columns'):
+        get_all_translated(multilocale_db, 'content_blocks', 'en', 'en', not_a_real_column='x')
+
+
+def test_get_all_translated_rejects_sql_injection_in_filter_key(multilocale_db):
+    """#124: a forged filter key carrying a SQL fragment is rejected.
+
+    Without the whitelist, ``s.<key>`` would be spliced into the WHERE
+    clause and the trailing ``DROP TABLE`` would execute. The error
+    must come from the validation layer, not from a syntax-error blow-up
+    at execute time.
+    """
+    from app.services.translations import get_all_translated
+
+    payload = {'id; DROP TABLE blog_posts': 1}
+    with pytest.raises(ValueError, match='Unknown filter columns'):
+        get_all_translated(multilocale_db, 'content_blocks', 'en', 'en', **payload)
+
+
+def test_get_all_translated_accepts_canonical_filter_key(multilocale_db):
+    """#124: a legitimate column-name filter still works end-to-end."""
+    from app.services.translations import get_all_translated
+
+    multilocale_db.execute(
+        'INSERT INTO content_blocks (slug, title, content, plain_text) VALUES (?, ?, ?, ?)',
+        ('hero', 'Hero', '<p>body</p>', 'body'),
+    )
+    multilocale_db.commit()
+
+    rows = get_all_translated(multilocale_db, 'content_blocks', 'en', 'en', slug='hero')
+    assert isinstance(rows, list)
+    assert len(rows) == 1
+    assert rows[0]['slug'] == 'hero'
+
+
+# ---------------------------------------------------------------------------
 # Route-level integration
 # ---------------------------------------------------------------------------
 
