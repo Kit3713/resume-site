@@ -2190,3 +2190,66 @@ def test_pagination_per_page_clamped_to_min(client):
     assert response.status_code == 200
     data = response.get_json()
     assert data['pagination']['per_page'] >= 1
+
+
+# ============================================================
+# Phase 37.3 — @deprecated decorator regression test
+# ============================================================
+
+
+def test_deprecated_endpoint_emits_three_headers_and_logs(app, caplog):
+    """A ``@deprecated`` endpoint emits the three RFC headers + INFO log.
+
+    Phase 37.3 / ROADMAP_v0.3.2.md:201 — locks the contract for
+    ``Deprecation`` (RFC 9745 draft), ``Sunset`` (RFC 8594), and
+    ``Link: <url>; rel="successor-version"``, plus the INFO line on the
+    ``app.api.deprecation`` logger so operators can see who's still
+    calling the route as the sunset date approaches.
+    """
+    import logging
+    from datetime import date
+
+    from flask import Blueprint, jsonify
+
+    from app.routes.api import deprecated
+
+    test_bp = Blueprint('phase373_test', __name__, url_prefix='/_test_phase373')
+
+    @test_bp.route('/widget')
+    @deprecated(
+        sunset_date=date(2027, 1, 15),
+        replacement='https://example.test/api/v2/widget',
+        reason='superseded by /api/v2/widget',
+    )
+    def _widget():
+        return jsonify({'ok': True})
+
+    app.register_blueprint(test_bp)
+    client = app.test_client()
+
+    with caplog.at_level(logging.INFO, logger='app.api.deprecation'):
+        response = client.get('/_test_phase373/widget')
+
+    assert response.status_code == 200
+    assert response.headers.get('Deprecation') == 'true'
+    sunset = response.headers.get('Sunset', '')
+    # RFC 7231 HTTP-date — assert the date components landed in the
+    # header without locking the formatter's exact spelling. ``Jan 2027``
+    # plus a UTC zone indicator is enough to guarantee correctness.
+    assert '15 Jan 2027' in sunset, f'Sunset header missing date: {sunset!r}'
+    assert 'GMT' in sunset, f'Sunset header missing GMT zone: {sunset!r}'
+    link = response.headers.get('Link', '')
+    assert 'https://example.test/api/v2/widget' in link
+    assert 'rel="successor-version"' in link
+
+    deprecation_records = [r for r in caplog.records if r.name == 'app.api.deprecation']
+    assert deprecation_records, (
+        'expected an INFO log on app.api.deprecation; got none. '
+        f'all captured loggers: {sorted({r.name for r in caplog.records})}'
+    )
+    record = deprecation_records[-1]
+    assert record.levelno == logging.INFO
+    message = record.getMessage()
+    assert 'phase373_test._widget' in message or '_widget' in message, (
+        f'log line should name the endpoint: {message!r}'
+    )

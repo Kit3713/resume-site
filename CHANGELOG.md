@@ -95,6 +95,11 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Webhook envelope plumbing in `app.services.webhooks._build_envelope`: optional `deprecated=True` and `sunset='<iso>'` kwargs inject `"deprecated": true` / `"sunset": <iso>` keys into the inner `data` payload. Default-off; existing callers untouched. Mirrors the HTTP header pair so a webhook consumer can subscribe to the same warning lifecycle when an event schema is on its way out.
 - Imported (`# noqa: F401`) into `app/routes/api.py` so the symbol is on the route-module's import surface; no existing route is decorated yet — the first usage waits for v0.4.0.
 - Six tests in `tests/test_deprecation.py` cover the three headers, the `Link: rel="successor-version"` form, the INFO log line on `app.api.deprecation` (via `caplog`), the counter increment, decorator-stacking idempotency, and the webhook envelope plumbing.
+### Added — Phase 37.3: OpenAPI deprecation drift guard + header regression test
+
+- `tests/test_openapi_spec.py::test_openapi_deprecated_flag_matches_decorator` walks every operation in `docs/openapi.yaml`, and for each one flagged `deprecated: true` resolves the matching Flask view via `app.url_map`, asserts the `@deprecated` decorator is applied (detected via the `__deprecated_sunset__` marker), and that the spec's `x-sunset` extension matches the decorator's `sunset_date`. Walks no operations today (no endpoints are deprecated yet) but locks the contract for the first deprecation.
+- `tests/test_api.py::test_deprecated_endpoint_emits_three_headers_and_logs` exercises the runtime contract: a `@deprecated`-wrapped handler emits `Deprecation: true`, `Sunset` (RFC 7231 HTTP-date), and `Link: <url>; rel="successor-version"` response headers plus an INFO log on `app.api.deprecation`. Closes ROADMAP_v0.3.2.md line 201.
+- Includes a stub `@deprecated(sunset_date, replacement, reason)` decorator in `app/routes/api.py` that performs the header writes and logging — accepts the kwargs from Phase 37.2 so the regression test compiles and locks the contract before the full Phase 37.2 implementation lands.
 
 ### Added — Phase 37.1: API compatibility policy doc
 

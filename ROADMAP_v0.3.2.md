@@ -197,8 +197,8 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 ### 37.3 — OpenAPI spec support
 
-- [ ] Extend the v0.3.0 drift-guard test (`tests/test_openapi_spec.py`) to assert that every operation flagged `deprecated: true` in the spec has the `@deprecated` decorator applied on the Flask route, with the `Sunset` date matching. An operation can't be marked deprecated in only one of the two places.
-- [ ] New regression test: a deprecated endpoint served through the test client emits all three response headers (`Deprecation`, `Sunset`, `Link`) and the INFO log line on `app.api.deprecation`.
+- [x] Extend the v0.3.0 drift-guard test (`tests/test_openapi_spec.py`) to assert that every operation flagged `deprecated: true` in the spec has the `@deprecated` decorator applied on the Flask route, with the `Sunset` date matching. An operation can't be marked deprecated in only one of the two places.
+- [x] New regression test: a deprecated endpoint served through the test client emits all three response headers (`Deprecation`, `Sunset`, `Link`) and the INFO log line on `app.api.deprecation`.
 
 ### 37.4 — CHANGELOG enforcement
 
