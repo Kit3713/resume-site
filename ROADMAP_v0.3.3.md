@@ -72,8 +72,8 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 ### 26.6 — Benchmark harness sets its own log level (#64)
 
-- [ ] `scripts/benchmark_routes.py` is documented to need `RESUME_SITE_LOG_LEVEL=WARNING`, but the script doesn't set it. Any contributor following the top-of-file docstring silently measures the stderr sink.
-- [ ] Have the script `os.environ.setdefault('RESUME_SITE_LOG_LEVEL', 'WARNING')` at import time, **before** importing `app`. Print the effective level in the banner so it's obvious if the operator overrode it.
+- [x] `scripts/benchmark_routes.py` is documented to need `RESUME_SITE_LOG_LEVEL=WARNING`, but the script doesn't set it. Any contributor following the top-of-file docstring silently measures the stderr sink.
+- [x] Have the script `os.environ.setdefault('RESUME_SITE_LOG_LEVEL', 'WARNING')` at import time, **before** importing `app`. Print the effective level in the banner so it's obvious if the operator overrode it.
 
 ---
 
