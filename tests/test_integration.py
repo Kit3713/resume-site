@@ -376,19 +376,17 @@ def test_upload_accepts_valid_png(auth_client, app):
 # ============================================================
 
 
-def test_session_timeout_redirects_to_login(app):
+def test_session_timeout_redirects_to_login(auth_client):
     """An expired session should redirect to the login page."""
     from datetime import datetime, timedelta
 
-    client = app.test_client()
-    with client.session_transaction() as sess:
-        sess['_user_id'] = 'admin'
-        sess['_fresh'] = True
-        # Set last activity to 2 hours ago (well past the 60-min default)
+    # Backdate last_activity on the canonical authenticated session so the
+    # timeout guard fires. ``auth_client`` already seeds _user_id / _fresh.
+    with auth_client.session_transaction() as sess:
         old_time = datetime.now(UTC) - timedelta(hours=2)
         sess['_last_activity'] = old_time.isoformat()
 
-    response = client.get('/admin/', follow_redirects=False)
+    response = auth_client.get('/admin/', follow_redirects=False)
     assert response.status_code == 302
     assert '/admin/login' in response.headers['Location']
 

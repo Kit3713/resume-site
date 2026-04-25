@@ -22,6 +22,9 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - New `app/services/form.py:get_stripped(form, key, default='')` replaces the `request.form.get(...).strip()` and `(request.form.get(...) or '').strip()` idioms that had accreted across `app/routes/admin.py`, `app/routes/api.py`, `app/routes/blog_admin.py`, `app/routes/contact.py`, and `app/routes/review.py` (24 call sites total). Behaviour is byte-identical — same `str.strip()` semantics, same default-on-absent / default-on-empty, same whitespace-only → `''` collapse. No case folding, no normalisation; callers that needed `.lower()` or other downstream transforms keep them explicit.
 - 19 regression tests in `tests/test_form_helper.py` pin the contract against both legacy idioms (default-arg form and `or '' ` form), including whitespace-character coverage (`\t`, `\n`, `\r`, mixed) and the `display_tier='grid'` non-empty-default case from `app/routes/api.py`.
+### Refactor — Phase 29.3: consolidate admin-login test fixtures (#56)
+
+- Three tests that hand-rolled their own admin-login setup (`tests/test_integration.py::test_session_timeout_redirects_to_login`, `tests/test_security.py::test_logout_revokes_cookie_on_another_client`, `tests/test_security.py::test_logout_revokes_cookie_on_blog_admin_routes`) now use the canonical `auth_client` fixture from `tests/conftest.py`. Removes duplicated `client.post('/admin/login', data={...})` boilerplate and inline `sess['_user_id'] = 'admin'` session manipulation. Behaviour is byte-identical — `auth_client` produces the same `_user_id` / `_fresh` / `_admin_epoch=0` session a real fresh-DB login produces, so the cookie-revocation and session-timeout assertions still trigger the exact same code paths.
 
 ### Performance — Phase 26.3: paginate `/admin/blog` (#54)
 

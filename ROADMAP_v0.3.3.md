@@ -116,7 +116,7 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 ### 29.3 — Test fixture consolidation
 
-- [ ] `#56` flags multiple ad-hoc admin-login fixtures across `tests/test_admin*.py`. Consolidate on the canonical `logged_in_admin_client` fixture and remove the variants.
+- [x] `#56` flags multiple ad-hoc admin-login fixtures across `tests/test_admin*.py`. Consolidate on the canonical `logged_in_admin_client` fixture and remove the variants.
 
 ### 29.4 — Roll the rest forward
 

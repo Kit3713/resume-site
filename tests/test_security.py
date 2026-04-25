@@ -689,7 +689,7 @@ def test_admin_blueprint_middleware_parity(app):
     assert 'update_last_activity' in blog_after
 
 
-def test_logout_revokes_cookie_on_another_client(app):
+def test_logout_revokes_cookie_on_another_client(auth_client):
     """Phase 23.1 (#33): after one client logs out, a second client
     holding a copy of the same pre-logout cookie must be rejected on its
     NEXT admin request — not after the 30 s settings-cache TTL.
@@ -700,23 +700,15 @@ def test_logout_revokes_cookie_on_another_client(app):
     """
     import time
 
-    # Seed the session on client A via the login form so both clients
-    # share the same underlying cookie stamp.
-    client_a = app.test_client()
-    client_a.post(
-        '/admin/login',
-        data={'username': 'admin', 'password': 'testpassword123'},
-        follow_redirects=False,
-    )
-    # Clone A's session cookie into client B. Reading session via the
-    # test-client session transaction is enough to keep B authenticated.
-    with client_a.session_transaction() as sess_a:
+    # Clone the canonical authenticated session into a second client to
+    # simulate two workers holding the same pre-logout cookie.
+    with auth_client.session_transaction() as sess_a:
         user_id = sess_a.get('_user_id')
         admin_epoch = sess_a.get('_admin_epoch')
     assert user_id == 'admin'
     assert admin_epoch is not None
 
-    client_b = app.test_client()
+    client_b = auth_client.application.test_client()
     with client_b.session_transaction() as sess_b:
         sess_b['_user_id'] = user_id
         sess_b['_admin_epoch'] = admin_epoch
@@ -727,7 +719,7 @@ def test_logout_revokes_cookie_on_another_client(app):
 
     # A logs out — epoch bumps in the settings table.
     t0 = time.monotonic()
-    client_a.get('/admin/logout')
+    auth_client.get('/admin/logout')
 
     # B's next admin request must be rejected immediately (within 250 ms
     # per the roadmap SLA) — the uncached read path makes this the cost
@@ -742,21 +734,15 @@ def test_logout_revokes_cookie_on_another_client(app):
     assert elapsed_ms < 250, f'revocation took {elapsed_ms:.0f}ms — SLA is <250ms'
 
 
-def test_logout_revokes_cookie_on_blog_admin_routes(app):
+def test_logout_revokes_cookie_on_blog_admin_routes(auth_client):
     """Phase 23.1 (#51): the blog_admin blueprint must honour the epoch
     check too. A post-logout cookie must not grant access to /admin/blog.
     """
-    client_a = app.test_client()
-    client_a.post(
-        '/admin/login',
-        data={'username': 'admin', 'password': 'testpassword123'},
-        follow_redirects=False,
-    )
-    with client_a.session_transaction() as sess_a:
+    with auth_client.session_transaction() as sess_a:
         user_id = sess_a['_user_id']
         admin_epoch = sess_a['_admin_epoch']
 
-    client_b = app.test_client()
+    client_b = auth_client.application.test_client()
     with client_b.session_transaction() as sess_b:
         sess_b['_user_id'] = user_id
         sess_b['_admin_epoch'] = admin_epoch
@@ -764,7 +750,7 @@ def test_logout_revokes_cookie_on_blog_admin_routes(app):
 
     assert client_b.get('/admin/blog').status_code == 200
 
-    client_a.get('/admin/logout')
+    auth_client.get('/admin/logout')
 
     resp = client_b.get('/admin/blog', follow_redirects=False)
     assert resp.status_code in (302, 401), (
