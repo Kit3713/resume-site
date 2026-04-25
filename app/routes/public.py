@@ -376,7 +376,18 @@ def sitemap():
     entry carries ``<xhtml:link rel="alternate" hreflang="...">``
     children and an ``x-default`` pointer, matching Google's
     recommended multilingual sitemap format.
+
+    Phase 30 (#128): all interpolated values (slugs, locales,
+    canonical host) flow through ``html.escape`` so a legitimate
+    slug like ``q&a-with-jane`` doesn't produce malformed XML that
+    search engines reject. ``html.escape`` covers ``&``, ``<``, ``>``,
+    plus ``"`` and ``'`` (the ``quote=True`` default) so attribute
+    values are safe too. Matches the convention already used by
+    ``app/routes/blog.py`` for the RSS feed. A future cleanup could
+    move to ``xml.etree.ElementTree`` if this function grows.
     """
+    from html import escape as _xml_escape
+
     from app.models import get_visible_projects as _visible_projects
 
     db = get_db()
@@ -423,20 +434,27 @@ def sitemap():
     emit_alternates = len(locales) > 1
     xhtml_ns = ' xmlns:xhtml="http://www.w3.org/1999/xhtml"' if emit_alternates else ''
 
+    # Pre-escape the canonical host once — reused on every URL.
+    safe_base = _xml_escape(base_url)
+
     # Build the XML response
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
     xml += f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"{xhtml_ns}>\n'
     for path, priority in pages:
+        safe_path = _xml_escape(path)
         xml += '  <url>'
-        xml += f'<loc>{base_url}{path}</loc>'
-        xml += f'<priority>{priority}</priority>'
+        xml += f'<loc>{safe_base}{safe_path}</loc>'
+        xml += f'<priority>{_xml_escape(priority)}</priority>'
         if emit_alternates:
             for loc in locales:
+                safe_loc = _xml_escape(loc)
                 xml += (
-                    f'<xhtml:link rel="alternate" hreflang="{loc}" '
-                    f'href="{base_url}{path}?lang={loc}"/>'
+                    f'<xhtml:link rel="alternate" hreflang="{safe_loc}" '
+                    f'href="{safe_base}{safe_path}?lang={safe_loc}"/>'
                 )
-            xml += f'<xhtml:link rel="alternate" hreflang="x-default" href="{base_url}{path}"/>'
+            xml += (
+                f'<xhtml:link rel="alternate" hreflang="x-default" href="{safe_base}{safe_path}"/>'
+            )
         xml += '</url>\n'
     xml += '</urlset>'
 
