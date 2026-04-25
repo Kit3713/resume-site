@@ -45,6 +45,13 @@ ARCHIVE_SUFFIX = '.tar.gz'
 TMP_SUFFIX = '.tar.gz.tmp'
 SIDECAR_PREFIX = 'pre-restore-'
 
+# Issue #89 — backups carry secret_key, password_hash, SMTP credentials,
+# and the entire site DB. tarfile/copytree honour the process umask,
+# which would otherwise leak these as 0o644. Force operator-only modes
+# on every artifact (archive + pre-restore sidecar).
+_BACKUP_FILE_MODE = 0o600
+_BACKUP_DIR_MODE = 0o700
+
 # Arcnames — the layout inside a backup archive.
 _ARCNAME_DB = 'db/site.db'
 _ARCNAME_CONFIG = 'config.yaml'
@@ -81,6 +88,31 @@ def _format_timestamp(now):
     if now is None:
         now = datetime.now(UTC)
     return now.strftime('%Y%m%d-%H%M%S')
+
+
+# ---------------------------------------------------------------------------
+# Permission helpers — Phase v0.3.3-beta-2 #89
+# ---------------------------------------------------------------------------
+
+
+def _lock_down_tree(root):
+    """Recursively chmod ``root``: dirs to 0o700, regular files to 0o600.
+
+    Used after ``shutil.copytree`` because copytree honours the source
+    file modes (which can be 0o644 from a default umask) — we don't want
+    the operator-readable photos sidecar to outlive the backup as a
+    world-readable mirror of the original tree.
+    """
+    if not os.path.isdir(root):
+        return
+    os.chmod(root, _BACKUP_DIR_MODE)
+    for dirpath, dirnames, filenames in os.walk(root):
+        for d in dirnames:
+            with contextlib.suppress(OSError):
+                os.chmod(os.path.join(dirpath, d), _BACKUP_DIR_MODE)
+        for f in filenames:
+            with contextlib.suppress(OSError):
+                os.chmod(os.path.join(dirpath, f), _BACKUP_FILE_MODE)
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +264,9 @@ def create_backup(
                         file=sys.stderr,
                     )
 
+        # chmod *before* replace — POSIX rename preserves the source mode,
+        # so the final-named file is never world-readable.
+        os.chmod(tmp_path, _BACKUP_FILE_MODE)
         os.replace(tmp_path, final_path)
     except Exception:
         # Clean up partial state — never leave a .tmp lying around.
@@ -403,14 +438,16 @@ def restore_backup(
     # Safety-net sidecar: copy current state before touching anything.
     sidecar = os.path.join(output_dir, f'{SIDECAR_PREFIX}{_format_timestamp(now)}')
     os.makedirs(sidecar, exist_ok=True)
+    os.chmod(sidecar, _BACKUP_DIR_MODE)
     if os.path.isfile(db_path):
-        shutil.copy2(db_path, os.path.join(sidecar, os.path.basename(db_path)))
+        sidecar_db = os.path.join(sidecar, os.path.basename(db_path))
+        shutil.copy2(db_path, sidecar_db)
+        os.chmod(sidecar_db, _BACKUP_FILE_MODE)
     if photos_dir and os.path.isdir(photos_dir):
-        shutil.copytree(
-            photos_dir,
-            os.path.join(sidecar, _ARCNAME_PHOTOS_ROOT),
-            symlinks=False,
-        )
+        sidecar_photos = os.path.join(sidecar, _ARCNAME_PHOTOS_ROOT)
+        # copytree honours source modes — re-chmod the whole tree.
+        shutil.copytree(photos_dir, sidecar_photos, symlinks=False)
+        _lock_down_tree(sidecar_photos)
 
     # Extract to a staging directory so we can swap atomically.
     staging = os.path.join(output_dir, f'.restore-staging-{_format_timestamp(now)}')
