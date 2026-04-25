@@ -176,19 +176,31 @@ def get_all_translated(
 
     Uses a single LEFT JOIN query to avoid N+1. Falls back to original
     values when no translation exists.
+
+    Filter keys (#124) are validated against the parent table's column
+    list before being interpolated into SQL. Defence-in-depth — every
+    in-tree caller already passes canonical column names, but this
+    rejects any future caller that forwards user-controlled mappings
+    (e.g. ``request.args``) before SQL injection becomes possible.
     """
     config = _TRANSLATION_TABLES.get(source_table)
     if not config:
         return []
+
+    valid_columns = _columns_for(db, source_table)
+    bad_filters = set(filters) - set(valid_columns)
+    if bad_filters:
+        raise ValueError(
+            f'Unknown filter columns for {source_table}: {sorted(bad_filters)}. '
+            f'Valid: {sorted(valid_columns)}'
+        )
 
     trans_table = config['table']
     fk = config['fk']
     fields = config['fields']
 
     coalesce_cols = ', '.join(f'COALESCE(NULLIF(t.{f}, ""), s.{f}) AS {f}' for f in fields)
-    non_trans_cols = ', '.join(
-        f's.{col}' for col in _get_column_names(db, source_table) if col not in fields
-    )
+    non_trans_cols = ', '.join(f's.{col}' for col in valid_columns if col not in fields)
 
     where_clauses = ['1=1']
     params: list = []
@@ -328,10 +340,23 @@ def get_available_translations(
     return [row['locale'] for row in rows]
 
 
-def _get_column_names(db: sqlite3.Connection, table: str) -> list[str]:
-    """Return column names for a table via PRAGMA."""
-    rows = db.execute(f'PRAGMA table_info({table})').fetchall()  # noqa: S608  # nosec B608 — table keyed from _TRANSLATION_TABLES dict literal
-    return [row['name'] for row in rows]
+# Per-table column whitelist cache (#124). Schema is process-lifetime
+# stable — migrations always restart the app — so a plain dict guarded
+# only by GIL-atomic dict assignment is enough. Used to validate
+# ``**filters`` keys in :func:`get_all_translated` before they're
+# spliced into SQL.
+_columns_cache: dict[str, tuple[str, ...]] = {}
+
+
+def _columns_for(db: sqlite3.Connection, table: str) -> tuple[str, ...]:
+    """Return cached column names for ``table`` via ``PRAGMA table_info``."""
+    cached = _columns_cache.get(table)
+    if cached is not None:
+        return cached
+    rows = db.execute(f'PRAGMA table_info({table})').fetchall()  # noqa: S608  # nosec B608 — table name from internal callers (dict literal keys), not user input
+    cols = tuple(row['name'] for row in rows)
+    _columns_cache[table] = cols
+    return cols
 
 
 # ============================================================

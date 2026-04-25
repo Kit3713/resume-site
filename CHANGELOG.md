@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.3 (Proof)
 
+### Security — `get_all_translated` filter-key whitelist (#124)
+
+- `app/services/translations.py:get_all_translated` previously interpolated `**filters` keys directly into the generated SQL as `s.{col}` identifiers. Every in-tree caller passes canonical column names from the schema (`visible=1` from the four `get_visible_*_for_locale` wrappers), so there was no live SQL injection — but a future caller forwarding `request.args` or any other user-controlled mapping would land it. Function entry now validates filter keys against a per-table column allowlist sourced from `PRAGMA table_info`, raising `ValueError` for anything not on the list. Defence-in-depth — closes the gap before the first dangerous caller exists.
+- The column list is cached per table for the process lifetime in a module-level dict. Schema is process-stable (migrations always restart the app), so a one-shot `PRAGMA` per table per process is enough; the previous code paid a `PRAGMA` per `get_all_translated` call. Net win on the hot path.
+- Three regression tests in `tests/test_translations_public.py`: an unknown column key raises with `Unknown filter columns`, a forged key carrying a `; DROP TABLE` payload is rejected at the validation layer (not at SQL parse time), and a canonical key still routes through to a working query.
+
 ### Changed — Phase 26.6: benchmark harness sets its own log level (#64)
 
 - `scripts/benchmark_routes.py` now `os.environ.setdefault('RESUME_SITE_LOG_LEVEL', 'WARNING')` before importing app code, so contributors following the docstring no longer silently measure stderr-sink overhead. The startup banner prints the effective `RESUME_SITE_LOG_LEVEL` so an operator override (`RESUME_SITE_LOG_LEVEL=DEBUG python scripts/benchmark_routes.py`) is visible at a glance. Docstring rewritten — the script handles the default, operators only set the variable to override.
