@@ -177,7 +177,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Stacked area of resume_site_errors_total by category (ClientError / AuthError / ExternalError / DataError / InternalError). Any non-zero InternalError is a bug — see ResumeInternalErrorRate.",
+      "description": "Stacked area of resume_site_errors_total by category (ClientError / AuthError / ExternalError / UpstreamError / DataError / InternalError). Any non-zero InternalError is a bug — see ResumeInternalErrorRate. UpstreamError captures 502/503/504 + ECONNREFUSED separately so deploys don't page (see ResumeUpstreamErrorRate).",
       "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
       "targets": [
         {

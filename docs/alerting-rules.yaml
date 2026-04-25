@@ -56,6 +56,33 @@ groups:
           runbook_url: "./alerting-rules.md#ResumeInternalErrorRate"
 
       # -----------------------------------------------------------------
+      # ResumeUpstreamErrorRate
+      # -----------------------------------------------------------------
+      # 502 / 503 / 504 status codes and refused TCP connections classify
+      # as UpstreamError (issue #134). These fire on rolling restarts,
+      # /readyz blips during a deploy, or transient reverse-proxy
+      # hiccups, so the threshold is intentionally looser than the
+      # sibling InternalError rule — we want a warning when upstream
+      # health is genuinely degraded, not a page on every restart.
+      - alert: ResumeUpstreamErrorRate
+        expr: |
+          rate(resume_site_errors_total{category="UpstreamError"}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: availability
+        annotations:
+          summary: Elevated rate of upstream/gateway 5xx (502/503/504)
+          description: |
+            UpstreamError counter is incrementing faster than 0.05/sec
+            (~3/min) over 5 minutes. Likely sources: reverse-proxy
+            misconfiguration, upstream worker pool saturated, or a
+            container that hasn't passed readyz yet. Check structured
+            logs for error_category=UpstreamError and the reverse-proxy
+            access log around the same window.
+          runbook_url: "./alerting-rules.md#ResumeUpstreamErrorRate"
+
+      # -----------------------------------------------------------------
       # ResumeAuthErrorSpike
       # -----------------------------------------------------------------
       # Matches failed login attempts + IP-restriction rejections + rate
