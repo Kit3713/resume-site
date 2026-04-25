@@ -22,6 +22,7 @@ from app import limiter
 from app.db import get_db
 from app.events import Events, emit
 from app.models import create_review, mark_token_used
+from app.services.form import get_stripped
 from app.services.tokens import validate_token
 
 
@@ -69,10 +70,10 @@ def review_form(token):
             return render_template('public/review.html', error=error, token_data=token_row)
 
         # Extract and sanitize form fields
-        reviewer_name = request.form.get('reviewer_name', '').strip()
-        reviewer_title = request.form.get('reviewer_title', '').strip()
-        relationship = request.form.get('relationship', '').strip()
-        message = request.form.get('message', '').strip()
+        reviewer_name = get_stripped(request.form, 'reviewer_name')
+        reviewer_title = get_stripped(request.form, 'reviewer_title')
+        relationship = get_stripped(request.form, 'relationship')
+        message = get_stripped(request.form, 'message')
 
         # Parse optional star rating (1-5 integer, or None)
         rating_str = request.form.get('rating', '')

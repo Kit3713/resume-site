@@ -24,6 +24,7 @@ from app import limiter
 from app.db import get_db
 from app.events import Events, emit
 from app.models import count_recent_submissions, get_setting, save_contact_submission
+from app.services.form import get_stripped
 
 contact_bp = Blueprint('contact', __name__, template_folder='../templates')
 
@@ -47,10 +48,10 @@ def contact_page():
             return redirect(url_for('contact.contact_page'))
 
         # Extract form data
-        name = request.form.get('name', '').strip()
-        email = request.form.get('email', '').strip()
-        message = request.form.get('message', '').strip()
-        honeypot = request.form.get('website', '').strip()
+        name = get_stripped(request.form, 'name')
+        email = get_stripped(request.form, 'email')
+        message = get_stripped(request.form, 'message')
+        honeypot = get_stripped(request.form, 'website')
 
         # Honeypot check — the "website" field is hidden via CSS;
         # legitimate users never see or fill it, but bots do
