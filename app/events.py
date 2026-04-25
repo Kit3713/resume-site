@@ -33,6 +33,7 @@ canonical set.
 from __future__ import annotations
 
 import contextlib
+import difflib
 import logging
 import threading
 
@@ -101,11 +102,25 @@ def register(event_name, callback):
     dedup if they care. Registration is thread-safe.
 
     Args:
-        event_name: One of the :class:`Events` constants. Registering an
-            unknown name is allowed but will only fire if some caller
-            emits the same bespoke string.
+        event_name: One of the canonical strings declared as constants
+            on :class:`Events`. Unknown names are rejected with
+            :class:`ValueError` so a typo (``"photo.uploded"``) fails
+            loudly at registration rather than silently no-opping at
+            dispatch time. ``emit`` itself remains permissive — bespoke
+            event names can still be dispatched ad-hoc.
         callback: A callable taking keyword arguments (the payload).
+
+    Raises:
+        ValueError: If ``event_name`` is not a canonical event name.
+            The message includes close-match suggestions when available.
     """
+    if event_name not in Events.ALL:
+        matches = difflib.get_close_matches(event_name, Events.ALL, n=3, cutoff=0.6)
+        if matches:
+            raise ValueError(
+                f'Unknown event name: {event_name!r}. Did you mean: {", ".join(matches)}?'
+            )
+        raise ValueError(f'Unknown event name: {event_name!r}. Valid names: {sorted(Events.ALL)}.')
     with _lock:
         _handlers.setdefault(event_name, []).append(callback)
 
