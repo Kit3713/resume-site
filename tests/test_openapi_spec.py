@@ -364,3 +364,106 @@ def test_error_code_catalog_has_no_unused_codes(spec):
         f'Error codes in the spec enum but never raised: {sorted(unused)}. '
         f'Drop them or add to EXEMPT here with a comment.'
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 37.3 — deprecation drift guard (spec ↔ @deprecated decorator)
+# ---------------------------------------------------------------------------
+
+
+def _spec_path_to_flask_pattern(spec_path):
+    """Convert ``/blog/{slug}`` (spec) → ``/api/v1/blog/<slug>`` (Flask rule).
+
+    The Flask url_map stores rules with the blueprint's ``url_prefix``
+    intact and Werkzeug-style ``<name>`` placeholders. We rebuild that
+    shape so the drift guard can resolve a spec path back to a registered
+    rule without typed-converter knowledge (``<int:photo_id>`` collapses
+    to ``<photo_id>`` for the comparison).
+    """
+    return '/api/v1' + re.sub(r'\{([a-zA-Z_][a-zA-Z0-9_]*)\}', r'<\1>', spec_path)
+
+
+def _flask_view_for(app, method, spec_path):
+    """Return the Flask view function for ``(method, spec_path)`` or ``None``.
+
+    The drift guard tolerates an absent route (the phantom-routes test
+    catches that case with a clearer message); when this helper returns
+    ``None`` the deprecation test reports its own dedicated failure so
+    the operator sees both signals.
+    """
+    target = _spec_path_to_flask_pattern(spec_path)
+    for rule in app.url_map.iter_rules():
+        if not rule.endpoint.startswith('api.'):
+            continue
+        if rule.endpoint in DOCS_SELF_ROUTES:
+            continue
+        # Strip typed converters from the registered rule the same way the
+        # main drift guard does, so ``/portfolio/<int:photo_id>`` and a
+        # spec path of ``/portfolio/{photo_id}`` line up.
+        normalised = re.sub(r'<(?:[a-z]+:)?([a-zA-Z_][a-zA-Z0-9_]*)>', r'<\1>', rule.rule)
+        if normalised != target:
+            continue
+        if method.upper() not in (rule.methods or ()):
+            continue
+        return app.view_functions.get(rule.endpoint)
+    return None
+
+
+def test_openapi_deprecated_flag_matches_decorator(app, spec, operations):
+    """Phase 37.3: spec ``deprecated: true`` ↔ ``@deprecated`` decorator.
+
+    Every OpenAPI operation flagged ``deprecated: true`` must:
+
+    * Resolve to a registered Flask view in the ``api`` blueprint.
+    * Have the ``@deprecated`` decorator applied (detected via the
+      ``__deprecated_sunset__`` marker the decorator sets on the wrapped
+      function).
+    * Declare an ``x-sunset`` extension key in the spec.
+    * Have its ``x-sunset`` value match the decorator's ``sunset_date``.
+
+    A drift in either direction (spec-only or decorator-only) fails.
+
+    If no operations are currently flagged ``deprecated``, the loop walks
+    nothing and the test passes — that's correct: there's no drift to
+    detect yet, but the guard is in place for the first deprecation.
+    """
+    drift = []
+    for method, path, operation in operations:
+        if operation.get('deprecated') is not True:
+            continue
+
+        view = _flask_view_for(app, method, path)
+        if view is None:
+            drift.append(
+                f'{method} {path}: spec marks deprecated, but no matching Flask route '
+                f'is registered under the api blueprint'
+            )
+            continue
+
+        sunset = getattr(view, '__deprecated_sunset__', None)
+        if sunset is None:
+            drift.append(
+                f'{method} {path}: spec marks deprecated, but the Flask view '
+                f'{view.__module__}.{view.__name__} is missing the @deprecated decorator '
+                f'(no __deprecated_sunset__ marker)'
+            )
+            continue
+
+        spec_sunset = operation.get('x-sunset')
+        if not spec_sunset:
+            drift.append(
+                f'{method} {path}: deprecated operations must declare an x-sunset '
+                f'extension key carrying the same date as the decorator '
+                f'(decorator says {sunset!r})'
+            )
+            continue
+
+        # Compare on the date portion only — the decorator stores the
+        # ISO date, the spec may or may not include a time component.
+        if str(spec_sunset).split('T', 1)[0] != sunset:
+            drift.append(
+                f'{method} {path}: x-sunset {spec_sunset!r} does not match '
+                f'@deprecated(sunset_date) {sunset!r}'
+            )
+
+    assert not drift, 'OpenAPI deprecation drift:\n  - ' + '\n  - '.join(drift)
