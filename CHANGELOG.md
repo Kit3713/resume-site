@@ -7,6 +7,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.3 (Proof)
 
+### Changed — Phase 26.6: benchmark harness sets its own log level (#64)
+
+- `scripts/benchmark_routes.py` now `os.environ.setdefault('RESUME_SITE_LOG_LEVEL', 'WARNING')` before importing app code, so contributors following the docstring no longer silently measure stderr-sink overhead. The startup banner prints the effective `RESUME_SITE_LOG_LEVEL` so an operator override (`RESUME_SITE_LOG_LEVEL=DEBUG python scripts/benchmark_routes.py`) is visible at a glance. Docstring rewritten — the script handles the default, operators only set the variable to override.
+
 ### Performance — Phase 26.3: paginate `/admin/blog` (#54)
 
 - The admin blog list previously rendered every row in one pass. Documented 8.3 ms at 150 posts, scaling linearly. The list route now wires up a new `get_all_posts_paginated` helper — default 25 posts/page, `?page=N` navigation, existing `?status=` filter preserved on paginator links so filter + page compose. Invalid `?page=` falls back to page 1.

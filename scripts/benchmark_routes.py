@@ -17,17 +17,27 @@ Notes:
       That's the number Phase 12.1 indexes and cache layer are supposed to
       keep stable across releases.
     * The first request per route is not timed (warm-up).
+    * The script defaults `RESUME_SITE_LOG_LEVEL=WARNING` so timings aren't
+      polluted by the stderr log sink; export the variable explicitly to
+      override (e.g. `RESUME_SITE_LOG_LEVEL=DEBUG` for diagnostics).
 """
 
 from __future__ import annotations
 
-import sqlite3
-import statistics
-import sys
-import tempfile
-import time
-from collections import Counter
-from pathlib import Path
+import os
+
+# Default the app log level to WARNING before importing app code so
+# benchmarks don't measure the stderr-sink overhead. setdefault honours
+# an operator override from the shell.
+os.environ.setdefault('RESUME_SITE_LOG_LEVEL', 'WARNING')
+
+import sqlite3  # noqa: E402
+import statistics  # noqa: E402
+import sys  # noqa: E402
+import tempfile  # noqa: E402
+import time  # noqa: E402
+from collections import Counter  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 # Allow running from anywhere
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -179,6 +189,10 @@ def _benchmark_route(client, path: str) -> dict:
 
 
 def main() -> int:
+    print(
+        f'effective RESUME_SITE_LOG_LEVEL={os.environ["RESUME_SITE_LOG_LEVEL"]}',
+        file=sys.stderr,
+    )
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         config_path = _write_test_config(tmp_path)
