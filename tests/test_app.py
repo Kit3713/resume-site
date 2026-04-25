@@ -236,3 +236,48 @@ def test_index_has_sections(client):
     assert b'hero__heading' in response.data
     assert b'id="about"' in response.data
     assert b'id="contact"' in response.data
+
+
+# ============================================================
+# Asset fingerprinting (#133)
+# ============================================================
+
+
+def test_hashed_static_url_recovers_when_missing_file_appears(app, tmp_path):
+    """A missing file looked up before deploy must hash correctly once it lands.
+
+    Regression for #133: ``_cache`` previously pinned the literal ``"missing"``
+    forever for any path that wasn't on disk at first lookup. A volume mount
+    that finishes propagating after the first request would then serve
+    ``?v=missing`` URLs for the lifetime of the worker. The fix doesn't cache
+    misses, so a re-stat on the second call picks up the freshly written file.
+    """
+    import os
+    from pathlib import Path
+
+    from app.assets import _cache, clear_cache, hashed_static_url
+
+    # Point the app at a writable static dir we control so we can simulate
+    # the late-arriving file. Disable debug so the hashing branch runs.
+    app.static_folder = str(tmp_path / 'static')
+    app.debug = False
+    os.makedirs(app.static_folder, exist_ok=True)
+    clear_cache()
+
+    rel = 'css/late-deploy.css'
+    file_path = Path(app.static_folder) / rel
+
+    with app.test_request_context():
+        first = hashed_static_url(rel, app)
+        assert first.endswith('?v=missing')
+        # The miss must NOT be cached, otherwise step 3 would still see "missing".
+        assert rel not in _cache
+
+        os.makedirs(file_path.parent, exist_ok=True)
+        file_path.write_text('body { color: red; }')
+
+        second = hashed_static_url(rel, app)
+        assert '?v=missing' not in second
+        assert '?v=' in second
+        assert rel in _cache
+        assert _cache[rel] != 'missing'
