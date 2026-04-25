@@ -35,6 +35,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The "Check for unsafe SQL patterns" step in `.github/workflows/ci.yml` previously suppressed lines tagged `# nosec B608` (bandit) but not `# noqa: S608` (ruff/flake8-bandit). Every intentional interpolation in this codebase carries both annotations, so the bug had no false-positives in tree — but a future contributor who used only the ruff annotation would have been silently un-checked. The `grep -v` filter now matches either annotation via `grep -vE 'nosec B608|noqa: S608'`. The error message points to both styles.
 - New `tests/test_ci_guards.py` with seven regression tests that shell out to `grep` against `tmp_path` fixtures and lock the suppression contract: bare interpolations fire, `nosec`-only suppresses, `noqa`-only suppresses (Phase 28.1 acceptance test), both together suppress, and the `.format()` half of the guard honours both annotations identically.
+### CI — Phase 28.2: un-advisory `vulture` (#30)
+
+- The `quality` job's vulture step is now blocking instead of advisory. `continue-on-error: true` removed; any new dead-code finding at `--min-confidence 80` fails the build. Current tree is already clean at that threshold, so the flip lands without code deletions or new allowlist entries.
+- Matching pre-commit hook added (`https://github.com/jendrikseipp/vulture` v2.16) with the same paths and confidence as CI, so contributors catch findings before push. `CONTRIBUTING.md` documents the workflow: real dead code gets deleted, runtime-dispatched callables (Flask url_map handlers, reflection-invoked methods) get a single-line `vulture_allowlist.py` entry with an inline rationale.
 
 ### Performance — Phase 26.3: paginate `/admin/blog` (#54)
 

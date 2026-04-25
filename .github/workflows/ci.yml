@@ -57,8 +57,11 @@ jobs:
         run: bandit -r app/ -c pyproject.toml -ll
 
       - name: Vulture dead code detection
+        # Phase 28.2 — blocking. Surviving findings either get the
+        # vulture_allowlist.py entry (with a one-line rationale) or the
+        # code deletion they deserve. The matching pre-commit hook
+        # catches this locally before push.
         run: vulture app/ manage.py vulture_allowlist.py --min-confidence 80
-        continue-on-error: true  # Advisory — ratchet to blocking in v0.4.0
 
       - name: Check for unsafe SQL patterns
         run: |
