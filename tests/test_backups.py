@@ -20,6 +20,7 @@ import gzip
 import os
 import re
 import sqlite3
+import stat
 import tarfile
 import time
 from datetime import UTC, datetime
@@ -855,3 +856,112 @@ def test_round_trip_backup_is_restorable_to_a_different_path(
 
     recovered = _snapshot_all_user_data(new_db)
     assert recovered == source_snapshot
+
+
+# ---------------------------------------------------------------------------
+# Phase v0.3.3-beta-2 #89 — backup file modes are 0o600 regardless of umask
+#
+# Default process umask of 0o022 leaves tarfile.open() output as 0o644
+# (world-readable). Backups carry secret_key, password_hash, SMTP
+# credentials, and the entire site DB — every operator-readable artifact
+# (the archive itself + the pre-restore sidecar) must be 0o600.
+# ---------------------------------------------------------------------------
+
+
+def _mode(path):
+    return stat.S_IMODE(os.stat(path).st_mode)
+
+
+def test_backup_archive_mode_is_0600(seeded_db, output_dir):
+    """Phase v0.3.3-beta-2 #89: backup tarball MUST be 0o600 regardless of umask."""
+    old_umask = os.umask(0o022)  # the umask that would otherwise yield 0o644
+    try:
+        archive = create_backup(
+            db_path=seeded_db,
+            photos_dir=None,
+            config_path=None,
+            output_dir=output_dir,
+            db_only=True,
+        )
+        assert _mode(archive) == 0o600, f'backup file mode {oct(_mode(archive))} (expected 0o600)'
+    finally:
+        os.umask(old_umask)
+
+
+def test_backup_archive_mode_is_0600_under_permissive_umask(seeded_db, output_dir):
+    """Even at umask 0o000 — where tarfile.open would land as 0o666 — chmod wins."""
+    old_umask = os.umask(0o000)
+    try:
+        archive = create_backup(
+            db_path=seeded_db,
+            photos_dir=None,
+            config_path=None,
+            output_dir=output_dir,
+            db_only=True,
+        )
+        assert _mode(archive) == 0o600
+    finally:
+        os.umask(old_umask)
+
+
+def test_restore_sidecar_db_mode_is_0600(seeded_db, output_dir):
+    """The pre-restore sidecar DB copy is the same secrets payload as the archive."""
+    archive = create_backup(
+        db_path=seeded_db,
+        photos_dir=None,
+        config_path=None,
+        output_dir=output_dir,
+        db_only=True,
+    )
+    old_umask = os.umask(0o022)
+    try:
+        sidecar = restore_backup(
+            archive_path=archive,
+            db_path=seeded_db,
+            photos_dir=None,
+            output_dir=output_dir,
+        )
+    finally:
+        os.umask(old_umask)
+
+    sidecar_db = os.path.join(sidecar, os.path.basename(seeded_db))
+    assert os.path.isfile(sidecar_db)
+    assert _mode(sidecar_db) == 0o600, f'sidecar DB mode {oct(_mode(sidecar_db))} (expected 0o600)'
+    # Sidecar directory itself should be operator-only too.
+    assert _mode(sidecar) == 0o700, f'sidecar dir mode {oct(_mode(sidecar))} (expected 0o700)'
+
+
+def test_restore_sidecar_photos_tree_is_locked_down(
+    seeded_db, seeded_photos, seeded_config, output_dir
+):
+    """Sidecar photo tree (copied via shutil.copytree) must also be 0o600/0o700."""
+    archive = create_backup(
+        db_path=seeded_db,
+        photos_dir=seeded_photos,
+        config_path=seeded_config,
+        output_dir=output_dir,
+    )
+    # shutil.copytree honours source modes — give the source 0o644 to prove
+    # the sidecar lockdown chmods do real work, not just inherit a clean mode.
+    for fname in os.listdir(seeded_photos):
+        os.chmod(os.path.join(seeded_photos, fname), 0o644)
+
+    old_umask = os.umask(0o022)
+    try:
+        sidecar = restore_backup(
+            archive_path=archive,
+            db_path=seeded_db,
+            photos_dir=seeded_photos,
+            output_dir=output_dir,
+        )
+    finally:
+        os.umask(old_umask)
+
+    sidecar_photos = os.path.join(sidecar, 'photos')
+    assert os.path.isdir(sidecar_photos)
+    assert _mode(sidecar_photos) == 0o700
+    for fname in os.listdir(sidecar_photos):
+        fpath = os.path.join(sidecar_photos, fname)
+        assert _mode(fpath) == 0o600, (
+            f'sidecar photo {fname} mode {oct(_mode(fpath))} (expected 0o600)'
+        )
