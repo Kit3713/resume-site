@@ -93,6 +93,7 @@ from app.services.blog import (
     unpublish_post,
     update_post,
 )
+from app.services.form import get_stripped
 from app.services.pagination import clamp_page, offset_for, paginate
 from app.services.reviews import (
     approve_review,
@@ -1228,11 +1229,11 @@ def portfolio_create():
             details={'field': 'photo', 'reason': 'rejected'},
         )
 
-    title = (request.form.get('title') or '').strip()
-    description = (request.form.get('description') or '').strip()
-    category = (request.form.get('category') or '').strip()
-    tech_used = (request.form.get('tech_used') or '').strip()
-    display_tier = (request.form.get('display_tier') or 'grid').strip()
+    title = get_stripped(request.form, 'title')
+    description = get_stripped(request.form, 'description')
+    category = get_stripped(request.form, 'category')
+    tech_used = get_stripped(request.form, 'tech_used')
+    display_tier = get_stripped(request.form, 'display_tier', 'grid')
 
     if display_tier not in _VALID_DISPLAY_TIERS:
         # The DB's CHECK constraint would reject the INSERT anyway, but

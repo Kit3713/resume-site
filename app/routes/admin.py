@@ -54,6 +54,7 @@ from app.db import get_db
 from app.models import AdminUser
 from app.services.activity_log import get_recent_activity, log_action
 from app.services.content import create_block, delete_block, get_all_blocks, save_block
+from app.services.form import get_stripped
 from app.services.reviews import (
     approve_review,
     get_reviews_by_status,
@@ -591,9 +592,9 @@ def content_new():
         db = get_db()
         from app.services.content import get_block_by_slug
 
-        raw_slug = request.form.get('slug', '').strip()
+        raw_slug = get_stripped(request.form, 'slug')
         normalized = raw_slug.lower().replace(' ', '_')
-        title = request.form.get('title', '').strip()
+        title = get_stripped(request.form, 'title')
         content_html = request.form.get('content', '')
         if not normalized:
             flash(_('Slug is required.'), 'error')
@@ -842,7 +843,7 @@ def tokens_generate():
     or 'client_review') which is inherited by the submitted review.
     """
     db = get_db()
-    name = request.form.get('name', '').strip()
+    name = get_stripped(request.form, 'name')
     token_type = request.form.get('type', 'recommendation')
     if token_type not in ('recommendation', 'client_review'):
         token_type = 'recommendation'  # noqa: S105 — enum label, not a credential
@@ -904,9 +905,9 @@ def api_tokens_generate():
     )
 
     db = get_db()
-    name = (request.form.get('name') or '').strip()
+    name = get_stripped(request.form, 'name')
     scope_items = request.form.getlist('scope')
-    expires_raw = (request.form.get('expires') or '').strip()
+    expires_raw = get_stripped(request.form, 'expires')
 
     if not name:
         flash(_('Name is required.'), 'error')
@@ -1116,9 +1117,9 @@ def webhooks_create():
     from app.services.webhooks import create_webhook, validate_webhook_target
 
     db = get_db()
-    name = (request.form.get('name') or '').strip()
-    url = (request.form.get('url') or '').strip()
-    secret = (request.form.get('secret') or '').strip() or _generate_webhook_secret()
+    name = get_stripped(request.form, 'name')
+    url = get_stripped(request.form, 'url')
+    secret = get_stripped(request.form, 'secret') or _generate_webhook_secret()
     enabled = bool(request.form.get('enabled'))
     events_list = _normalise_webhook_events_form(request.form.get('events'))
 
@@ -1181,9 +1182,9 @@ def webhooks_update(webhook_id):
 
     fields = {}
     if 'name' in request.form:
-        fields['name'] = (request.form.get('name') or '').strip() or existing.name
+        fields['name'] = get_stripped(request.form, 'name') or existing.name
     if 'url' in request.form:
-        url = (request.form.get('url') or '').strip()
+        url = get_stripped(request.form, 'url')
         if url:
             allow_private = get_setting(
                 db, 'webhook_allow_private_targets', 'false'
@@ -1197,7 +1198,7 @@ def webhooks_update(webhook_id):
         fields['events'] = _normalise_webhook_events_form(request.form.get('events'))
     if 'enabled' in request.form:
         fields['enabled'] = bool(request.form.get('enabled'))
-    new_secret = (request.form.get('secret') or '').strip()
+    new_secret = get_stripped(request.form, 'secret')
     if new_secret:
         fields['secret'] = new_secret
     # Manual reset of the auto-disable counter — handy after fixing a
@@ -1363,14 +1364,14 @@ def translations(table, item_id):
         abort(404)
 
     if request.method == 'POST':
-        locale = request.form.get('locale', '').strip()
+        locale = get_stripped(request.form, 'locale')
         if locale and locale in available_locales:
             from app.services.translations import _TRANSLATION_TABLES
 
             config = _TRANSLATION_TABLES.get(table, {})
             fields = {}
             for field in config.get('fields', ()):
-                val = request.form.get(field, '').strip()
+                val = get_stripped(request.form, field)
                 if val:
                     fields[field] = val
             if fields:
@@ -1916,7 +1917,7 @@ def services():
 def services_add():
     """Add a new service card."""
     db = get_db()
-    title = request.form.get('title', '').strip()
+    title = get_stripped(request.form, 'title')
     description = request.form.get('description', '')
     icon = request.form.get('icon', '')
     sort_order = request.form.get('sort_order', '0')
@@ -1932,7 +1933,7 @@ def services_add():
 def services_edit(service_id):
     """Update an existing service card."""
     db = get_db()
-    title = request.form.get('title', '').strip()
+    title = get_stripped(request.form, 'title')
     description = request.form.get('description', '')
     icon = request.form.get('icon', '')
     sort_order = request.form.get('sort_order', '0')
@@ -1972,7 +1973,7 @@ def stats():
 def stats_add():
     """Add a new animated stat counter for the landing page."""
     db = get_db()
-    label = request.form.get('label', '').strip()
+    label = get_stripped(request.form, 'label')
     value = request.form.get('value', '0')
     suffix = request.form.get('suffix', '')
     sort_order = request.form.get('sort_order', '0')
@@ -1988,7 +1989,7 @@ def stats_add():
 def stats_edit(stat_id):
     """Update an existing stat counter."""
     db = get_db()
-    label = request.form.get('label', '').strip()
+    label = get_stripped(request.form, 'label')
     value = request.form.get('value', '0')
     suffix = request.form.get('suffix', '')
     sort_order = request.form.get('sort_order', '0')

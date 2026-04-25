@@ -37,6 +37,7 @@ from app.services.blog import (
     unpublish_post,
     update_post,
 )
+from app.services.form import get_stripped
 
 
 def _blog_event_payload(post_row, *, source):
@@ -112,7 +113,7 @@ def blog_new():
     """Create a new blog post."""
     if request.method == 'POST':
         db = get_db()
-        title = request.form.get('title', '').strip()
+        title = get_stripped(request.form, 'title')
         if not title:
             flash(_('Title is required.'), 'error')
             return render_template('admin/blog_edit.html', post=None, tags_str='')
@@ -181,7 +182,7 @@ def blog_edit(post_id):
         return redirect(url_for('blog_admin.blog_list'))
 
     if request.method == 'POST':
-        title = request.form.get('title', '').strip()
+        title = get_stripped(request.form, 'title')
         if not title:
             flash(_('Title is required.'), 'error')
             tags = get_tags_for_post(db, post_id)

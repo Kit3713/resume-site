@@ -108,7 +108,7 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 ### 29.1 — Form-field extraction helper
 
-- [ ] The pattern `request.form.get('field', '').strip()` is repeated across eight admin/blog/API files. Extract `app/services/form.py:get_stripped(form, key, default='')` and migrate every call site. Keep the behaviour byte-identical (`strip()` only, no case folding).
+- [x] The pattern `request.form.get('field', '').strip()` is repeated across eight admin/blog/API files. Extract `app/services/form.py:get_stripped(form, key, default='')` and migrate every call site. Keep the behaviour byte-identical (`strip()` only, no case folding).
 
 ### 29.2 — CRUD service-layer pass
 
