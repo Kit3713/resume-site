@@ -262,6 +262,20 @@ def save_translation(
     ``sanitize_html`` policy the default-locale save paths use. Callers
     can therefore pass raw form input without risking that a per-locale
     save becomes the XSS smuggle path.
+
+    Phase 27.2-style atomicity (#122) — the SELECT-then-INSERT/UPDATE
+    pair is wrapped in an explicit ``BEGIN IMMEDIATE`` transaction. Two
+    concurrent saves to the same ``(parent_id, locale)`` would otherwise
+    both observe "no existing row" and both attempt the INSERT, with
+    one tripping the ``UNIQUE(parent_id, locale)`` constraint and
+    raising ``IntegrityError`` 500. On the rare race where the second
+    INSERT still loses (the racing writer landed between our SELECT and
+    INSERT inside the transaction window), we retry once as an UPDATE
+    so our caller's values overlay the racing caller's row. Explicit
+    BEGIN/COMMIT/ROLLBACK is used rather than ``with db:`` because
+    ``app.db._InstrumentedConnection`` does not forward sqlite3's
+    context-manager protocol (same constraint as
+    ``app/routes/review.py``'s atomic review-create block).
     """
     config = _TRANSLATION_TABLES.get(source_table)
     if not config:
@@ -276,24 +290,38 @@ def save_translation(
     trans_table = config['table']
     fk = config['fk']
 
-    existing = db.execute(
-        f'SELECT id FROM {trans_table} WHERE {fk} = ? AND locale = ?',  # noqa: S608
-        (parent_id, locale),
-    ).fetchone()
+    select_sql = f'SELECT id FROM {trans_table} WHERE {fk} = ? AND locale = ?'  # noqa: S608
+    set_clause = ', '.join(f'{k} = ?' for k in valid_fields)
+    update_by_id_sql = f'UPDATE {trans_table} SET {set_clause} WHERE id = ?'  # noqa: S608
+    cols = [fk, 'locale', *valid_fields.keys()]
+    placeholders = ', '.join('?' * len(cols))
+    insert_sql = f'INSERT INTO {trans_table} ({", ".join(cols)}) VALUES ({placeholders})'  # noqa: S608
 
-    if existing:
-        set_clause = ', '.join(f'{k} = ?' for k in valid_fields)
-        db.execute(
-            f'UPDATE {trans_table} SET {set_clause} WHERE id = ?',  # noqa: S608
-            [*valid_fields.values(), existing['id']],
-        )
-    else:
-        cols = [fk, 'locale', *valid_fields.keys()]
-        placeholders = ', '.join('?' * len(cols))
-        db.execute(
-            f'INSERT INTO {trans_table} ({", ".join(cols)}) VALUES ({placeholders})',  # noqa: S608
-            [parent_id, locale, *valid_fields.values()],
-        )
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        try:
+            existing = db.execute(select_sql, (parent_id, locale)).fetchone()
+            if existing:
+                db.execute(update_by_id_sql, [*valid_fields.values(), existing['id']])
+            else:
+                db.execute(insert_sql, [parent_id, locale, *valid_fields.values()])
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+    except sqlite3.IntegrityError:
+        # A concurrent INSERT for the same (parent_id, locale) won the
+        # race between our SELECT and our INSERT. Re-read the row that
+        # landed and overlay our values on top — the racing call's
+        # intent is real, we simply update on top of it instead of
+        # trying to win the race. If no row materialised the
+        # IntegrityError was something other than the UNIQUE collision
+        # (e.g. a foreign-key violation on parent_id) — re-raise it.
+        existing = db.execute(select_sql, (parent_id, locale)).fetchone()
+        if not existing:
+            raise
+        db.execute(update_by_id_sql, [*valid_fields.values(), existing['id']])
+        db.commit()
 
 
 def delete_translation(
