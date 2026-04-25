@@ -18,7 +18,7 @@ URL structure:
     /projects/<slug>        Detailed project write-up
     /testimonials           Featured and standard review display
     /certifications         Professional certification badges
-    /resume                 PDF resume download (visibility-controlled)
+    /resume                 PDF resume download (public/off toggle, no auth tier)
     /photos/<storage_name>  Serve uploaded photos from storage directory
     /sitemap.xml            Auto-generated XML sitemap for search engines
     /robots.txt             Crawler directives
@@ -323,15 +323,24 @@ def resume_download():
 
     Controlled by the 'resume_visibility' setting:
     - 'public': Anyone can download.
-    - 'private': Accessible via direct link only (no nav link shown).
-    - 'off': Returns 404.
+    - 'off' (default): Returns 404.
+
+    Issue #126 — the former 'private' tier was security-through-obscurity.
+    There was no auth, token, or IP gate on the ``/resume`` URL, so
+    'private' was indistinguishable from 'public' to anyone who had the
+    link. Likewise the documented ``?visibility=private`` query parameter
+    had never been honoured by this handler. Both vestiges have been
+    removed: ``/resume`` is the only public URL, and any ``?visibility=``
+    query parameter is ignored. Existing databases with
+    ``resume_visibility='private'`` are migrated to 'public' by
+    migration 013 so previously-reachable downloads stay reachable.
 
     The PDF must be placed at uploads/resume.pdf (uploaded via admin in
     a future enhancement, or manually placed on the server).
     """
     db = get_db()
     visibility = get_setting(db, 'resume_visibility', 'off')
-    if visibility == 'off':
+    if visibility != 'public':
         abort(404)
     upload_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(__file__))),

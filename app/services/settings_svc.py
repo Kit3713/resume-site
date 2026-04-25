@@ -287,9 +287,13 @@ SETTINGS_REGISTRY = {
         'default': 'off',
         'label': 'Resume Visibility',
         'category': 'Contact & Social',
+        # Issue #126 — the former 'private' option was security-through-
+        # obscurity: ``/resume`` had no auth or token gate, so 'private'
+        # was indistinguishable from 'public' to anyone who knew the URL.
+        # The setting is now binary (public / off); legacy 'private' rows
+        # are normalised to 'public' by migration 013.
         'options': [
             ('public', 'Public'),
-            ('private', 'Private Link'),
             ('off', 'Disabled'),
         ],
     },

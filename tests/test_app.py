@@ -261,6 +261,60 @@ def test_resume_off_by_default(client):
     assert response.status_code == 404
 
 
+def test_resume_visibility_private_param_no_longer_special(client, app):
+    """#126: ``?visibility=private`` is not a separate access tier.
+
+    The route used to advertise a 'private' tier in its docstring while
+    actually serving the file regardless of any query parameter. The fix
+    drops the false tier; whether the query parameter is present or not
+    must produce the same response (no auth gate, no special path).
+    """
+    import sqlite3
+
+    db_path = app.config['DATABASE_PATH']
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("UPDATE settings SET value = 'public' WHERE key = 'resume_visibility'")
+        conn.commit()
+    finally:
+        conn.close()
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
+    public = client.get('/resume')
+    private_attempt = client.get('/resume?visibility=private')
+    assert private_attempt.status_code == public.status_code
+
+
+def test_resume_visibility_private_setting_treated_as_off(client, app):
+    """#126: a legacy ``resume_visibility='private'`` row no longer enables download.
+
+    The new route requires ``resume_visibility='public'`` exactly, and
+    migration 013 rewrites legacy 'private' rows to 'public'. If a
+    deployment somehow ends up with a stale 'private' value (a
+    partially-applied migration, a hand-edited DB, a test bypass), the
+    route must fail closed — not fall through to ``send_from_directory``.
+    """
+    import sqlite3
+
+    db_path = app.config['DATABASE_PATH']
+    conn = sqlite3.connect(db_path)
+    try:
+        # Bypass the registry validation that would otherwise refuse
+        # the legacy value at write time. We're simulating a stale row.
+        conn.execute("UPDATE settings SET value = 'private' WHERE key = 'resume_visibility'")
+        conn.commit()
+    finally:
+        conn.close()
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
+    response = client.get('/resume')
+    assert response.status_code == 404
+
+
 def test_review_invalid_token(client):
     """Invalid review tokens should show an error message (not a 404)."""
     response = client.get('/review/invalid-token-123')
