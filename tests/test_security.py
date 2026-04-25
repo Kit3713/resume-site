@@ -560,7 +560,7 @@ def _admin_app_with_trusted_proxies(tmp_path, proxies):
     for a directly-exposed instance post-22.5).
     """
     from app import create_app
-    from tests.conftest import _init_test_db
+    from tests.conftest import TEST_SECRET_KEY, _init_test_db
 
     pw_hash = (
         'pbkdf2:sha256:600000$bngNDaCGXphoecmK$'
@@ -569,7 +569,7 @@ def _admin_app_with_trusted_proxies(tmp_path, proxies):
     cfg = tmp_path / 'config.yaml'
     proxy_lines = ''.join(f'  - "{p}"\n' for p in proxies) if proxies else ''
     cfg.write_text(
-        'secret_key: "test-secret-key-for-testing-only"\n'
+        f'secret_key: "{TEST_SECRET_KEY}"\n'
         f'database_path: "{tmp_path}/xff.db"\n'
         f'photo_storage: "{tmp_path}/photos"\n'
         'session_cookie_secure: false\n'
@@ -1272,6 +1272,41 @@ def test_strong_secret_key_accepted():
     from app.services.config import _validate_secret_key
 
     assert _validate_secret_key(secrets.token_hex(32)) is True
+
+
+def test_well_known_test_secret_key_is_denylisted(tmp_path):
+    """Issue #125: the literal value the test fixture used to write
+    (``test-secret-key-for-testing-only``) lives forever in this repo's
+    git history and is exactly 32 chars — i.e., it slips past the length
+    floor on its own. The denylist is the second line of defence for
+    the operator who copies the fixture verbatim into a real config.
+    Confirm ``load_config`` fatally exits when handed that string."""
+    from app.services.config import load_config
+
+    config_path = tmp_path / 'config.yaml'
+    config_path.write_text(
+        'secret_key: "test-secret-key-for-testing-only"\n'
+        f'database_path: "{tmp_path}/site.db"\n'
+        f'photo_storage: "{tmp_path}/photos"\n'
+        'admin:\n'
+        '  username: "admin"\n'
+        '  password_hash: ""\n'
+        '  allowed_networks:\n'
+        '    - "127.0.0.0/8"\n'
+    )
+    with pytest.raises(SystemExit):
+        load_config(str(config_path))
+
+
+def test_current_test_fixture_secret_key_validates_cleanly():
+    """Issue #125: the conftest's NEW sentinel (``TEST_SECRET_KEY``)
+    must NOT be on the denylist and must clear the 32-char floor — if
+    it ever drifts onto the list every test in the suite would fail to
+    boot, so pin the contract directly."""
+    from app.services.config import _validate_secret_key
+    from tests.conftest import TEST_SECRET_KEY
+
+    assert _validate_secret_key(TEST_SECRET_KEY) is True
 
 
 def test_login_scrypt_cost_paid_on_username_miss():

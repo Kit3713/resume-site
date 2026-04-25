@@ -85,10 +85,17 @@ _ENV_VAR_MAP = {
 # Example/placeholder secret keys that trigger a fatal at boot (Phase
 # 23.4 #48). Match the exact value after ``lower()`` so
 # ``config.example.yaml``'s ``CHANGE-ME-generate-a-random-key`` and
-# every common placeholder operators copy-paste are caught. The old
-# ``test-secret-key-for-testing-only`` entry was dropped from this set
-# when the 32-char floor landed — that value is 32 chars exactly (the
-# floor accepts it) and the conftest test fixtures rely on it.
+# every common placeholder operators copy-paste are caught.
+#
+# Issue #125: ``test-secret-key-for-testing-only`` is back on the list.
+# The string sits in plain view in ``tests/conftest.py`` git history,
+# is exactly 32 chars (passes the length floor), and an operator who
+# copies the test fixture into a real ``config.yaml`` would otherwise
+# boot a production instance with a guessable session-signing key.
+# The current test fixture uses a different, recognisably-test-flavoured
+# value (``tests.conftest.TEST_SECRET_KEY``) that is not on this list.
+# ``benchmark-key`` is included for the same reason — early drafts of
+# ``scripts/benchmark_routes.py`` used it before the 32-char floor.
 _WEAK_SECRET_KEYS = {
     'generate-a-random-key',
     'change-me-generate-a-random-key',
@@ -97,6 +104,8 @@ _WEAK_SECRET_KEYS = {
     'secret',
     'your-secret-key',
     'replace-this-with-a-real-key',
+    'test-secret-key-for-testing-only',
+    'benchmark-key',
 }
 
 

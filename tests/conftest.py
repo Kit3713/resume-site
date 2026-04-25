@@ -24,6 +24,17 @@ from app import create_app
 # ---------------------------------------------------------------------------
 
 
+#: High-entropy sentinel secret_key for the test suite. The
+#: ``test-do-not-use-`` prefix flags it as a test artefact to any human
+#: who greps the repo, while the trailing 64 hex chars give it enough
+#: entropy that an operator who copies this verbatim into prod isn't
+#: handing attackers a guessable session key. Kept as a module-level
+#: constant so the regression test in :mod:`tests.test_security` can
+#: pin "this exact value validates cleanly" alongside "the OLD value
+#: fails fatally" without a copy-paste drift hazard. See issue #125.
+TEST_SECRET_KEY = 'test-do-not-use-c8f4e2d9a1b6f0e5c7d3a4b8e2f1d9c6e3a7b1f5d2c8e4a6b9d1f3c7e0a5b2d8'
+
+
 def _write_test_config(tmp_path):
     """Write a minimal test config.yaml to tmp_path and return its path."""
     config_path = tmp_path / 'config.yaml'
@@ -36,7 +47,7 @@ def _write_test_config(tmp_path):
         '7e35934ae555af4c418e1399fa0c866411b05f64bf8c3ef64d50c93990a7497b'
     )
     config_path.write_text(
-        'secret_key: "test-secret-key-for-testing-only"\n'
+        f'secret_key: "{TEST_SECRET_KEY}"\n'
         f'database_path: "{db_path}"\n'
         f'photo_storage: "{photos_path}"\n'
         'session_cookie_secure: false\n'  # Tests use HTTP, so disable Secure flag
