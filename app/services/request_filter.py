@@ -68,7 +68,7 @@ _UNQUOTE_MAX_ITER = 5
 # Bidi-override characters (#136). Stripped before regex so an
 # attacker can't smuggle visual ``..`` past the filter using RTL
 # overrides.
-_BIDI_OVERRIDES = re.compile(r'[‮⁦-⁩]')
+_BIDI_OVERRIDES = re.compile('[\u202e\u2066-\u2069]')
 
 _PATH_TRAVERSAL = re.compile(r'(\.\./|\.\.\\|%00|\x00)', re.IGNORECASE)
 
