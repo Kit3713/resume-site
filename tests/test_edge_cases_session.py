@@ -9,6 +9,11 @@ value keeps granting read access to every admin page indefinitely.
 The fix (``app/routes/admin.py::logout``) adds ``session.clear()`` so the
 response reissues a fresh signed cookie; the old cookie value no longer
 deserialises to an authenticated user.
+
+Also covers issue #123 — ``check_session_timeout`` previously swallowed a
+malformed ``_last_activity`` parse error and let the request proceed on an
+authenticated session whose freshness could not be verified (fail-OPEN).
+The fix clears the session and forces re-login on any parse failure.
 """
 
 from __future__ import annotations
@@ -85,3 +90,48 @@ def test_logout_clears_every_admin_page(auth_client, no_rate_limits):
         assert response.status_code in (302, 401), (
             f'stale cookie granted read access to {path} (status {response.status_code})'
         )
+
+
+def test_session_with_malformed_last_activity_is_cleared(auth_client, no_rate_limits):
+    """#123: malformed ``_last_activity`` must clear the session, not extend it.
+
+    The previous bare ``except`` swallowed the parse error and let the
+    request proceed on an authenticated session whose freshness could not
+    be verified — fail-OPEN, the wrong direction for a timeout check. The
+    fix clears the session and forces re-login on any parse failure.
+    """
+    with auth_client.session_transaction() as sess:
+        # ``auth_client`` already seeds _user_id / _fresh / _admin_epoch.
+        # Plant a malformed ISO timestamp that ``datetime.fromisoformat``
+        # cannot parse to trip the new fail-closed branch.
+        sess['_last_activity'] = 'not-a-timestamp'
+
+    response = auth_client.get('/admin/', follow_redirects=False)
+    assert response.status_code in (302, 401), (
+        f'malformed _last_activity must fail closed; got {response.status_code}'
+    )
+    if response.status_code == 302:
+        assert '/admin/login' in response.headers.get('Location', '')
+
+    # Subsequent request should also be unauthenticated — ``session.clear()``
+    # in the fail-closed path drops _user_id, so the same client jar can no
+    # longer hit any admin route.
+    follow_up = auth_client.get('/admin/', follow_redirects=False)
+    assert follow_up.status_code in (302, 401), (
+        f'session was not cleared on malformed _last_activity; got {follow_up.status_code}'
+    )
+
+
+def test_session_with_non_iso_last_activity_type_is_cleared(auth_client, no_rate_limits):
+    """#123: a non-string ``_last_activity`` (TypeError on parse) must also
+    fail closed. Catches the TypeError half of the fail-closed exception
+    list — covers cookie tampering that swaps the string for a list/dict
+    payload that ``datetime.fromisoformat`` rejects with TypeError.
+    """
+    with auth_client.session_transaction() as sess:
+        sess['_last_activity'] = 12345  # int → fromisoformat raises TypeError
+
+    response = auth_client.get('/admin/', follow_redirects=False)
+    assert response.status_code in (302, 401), (
+        f'non-string _last_activity must fail closed; got {response.status_code}'
+    )

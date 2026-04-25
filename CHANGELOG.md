@@ -7,6 +7,11 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — v0.3.3 (Proof)
 
+### Security — `check_session_timeout` fails closed on malformed `_last_activity` (#123)
+
+- `app/routes/admin.py::check_session_timeout` previously wrapped the timestamp parse in a `try: ... except (ValueError, TypeError): pass` block, so a corrupted cookie or hand-tampered `_last_activity` value would have its parse error swallowed and the authenticated request would proceed — fail-OPEN on a freshness check. The exception handler now clears the session and redirects to the login page, forcing re-login on any parse failure. A `WARNING` is emitted to the `app.security` logger so the event is visible in the same stream as the existing IP-restriction and login-throttle alerts.
+- Two regression tests in `tests/test_edge_cases_session.py` lock the new behaviour: a malformed string `_last_activity` (`'not-a-timestamp'` → `ValueError`) and a non-string `_last_activity` (`12345` → `TypeError`) both clear the session and force the next admin request to redirect to login.
+
 ### Changed — Phase 26.6: benchmark harness sets its own log level (#64)
 
 - `scripts/benchmark_routes.py` now `os.environ.setdefault('RESUME_SITE_LOG_LEVEL', 'WARNING')` before importing app code, so contributors following the docstring no longer silently measure stderr-sink overhead. The startup banner prints the effective `RESUME_SITE_LOG_LEVEL` so an operator override (`RESUME_SITE_LOG_LEVEL=DEBUG python scripts/benchmark_routes.py`) is visible at a glance. Docstring rewritten — the script handles the default, operators only set the variable to override.
