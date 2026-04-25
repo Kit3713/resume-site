@@ -177,12 +177,12 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 ### 37.1 — `docs/API_COMPATIBILITY.md`  [COMPLETED]
 
-- [ ] New doc formalising the compat contract for every `/api/v1/*` endpoint and every webhook payload. Three sections:
+- [x] New doc formalising the compat contract for every `/api/v1/*` endpoint and every webhook payload. Three sections:
   - **Guaranteed stable within a major prefix (`/api/v1/`):** URL prefix, documented field names and types in the OpenAPI spec, webhook envelope shape (`event`, `timestamp`, `data` keys), error-code taxonomy, pagination envelope shape, HMAC signature algorithm, `Content-Language` / `Vary: Accept-Language` headers.
   - **Allowed to change within a major prefix (non-breaking):** addition of new fields (consumers must tolerate unknown keys), addition of new error codes (consumers must tolerate unknown codes), addition of new events, addition of new endpoints, tightening of input validation (always backward-compatible from a server perspective).
   - **Deprecation process:** field/endpoint flagged with `deprecated: true` in the OpenAPI spec for at least one full release; `Sunset` response header carries an RFC 3339 removal date at least one minor release in the future; `CHANGELOG.md` "Deprecated" section lists every such flag; removal only in the release named by the `Sunset` header, and only if the flag has been live for at least one prior release.
   - **Breaking change triggers a prefix bump:** `/api/v2/` only for genuinely breaking changes (field rename, type change, removed endpoint with no sunset notice, altered webhook envelope). `/api/v1/` continues to be served during a documented overlap window — minimum two minor releases.
-- [ ] Cross-references added to `README.md` (API section), `docs/PRODUCTION.md` (upgrade section), and `docs/API.md`.
+- [x] Cross-references added to `README.md` (API section), `docs/PRODUCTION.md` (upgrade section), and `docs/API.md`.
 
 ### 37.2 — `Sunset` / `Deprecation` HTTP headers
 
