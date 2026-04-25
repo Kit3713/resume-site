@@ -240,6 +240,11 @@ def test_every_custom_metric_is_referenced_at_least_once(all_rules, custom_metri
         'resume_site_photo_uploads_total',
         'resume_site_contact_submissions_total',
         'resume_site_blog_posts_total',
+        # Phase 37.2: deprecated-API call counter exists so operators can
+        # see consumer migration progress as a sunset date approaches.
+        # Not alertable on its own — a non-zero value is informational
+        # (operators set their own threshold per deprecation timeline).
+        'resume_site_deprecated_api_calls_total',
     }
 
     all_expr_text = '\n'.join(r['expr'] for r in all_rules)

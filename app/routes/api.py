@@ -93,6 +93,9 @@ from app.services.blog import (
     unpublish_post,
     update_post,
 )
+from app.services.deprecation import (  # Phase 37.2 — plumbing imported; no route flagged yet
+    deprecated,  # noqa: F401
+)
 from app.services.form import get_stripped
 from app.services.pagination import clamp_page, offset_for, paginate
 from app.services.reviews import (

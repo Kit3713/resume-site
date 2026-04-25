@@ -186,14 +186,14 @@ The new piece — **Phase 37, a formal API compatibility / deprecation policy** 
 
 ### 37.2 — `Sunset` / `Deprecation` HTTP headers
 
-- [ ] `app/routes/api.py` gains a `@deprecated(sunset_date, replacement=None, reason=None)` decorator that:
+- [x] `app/routes/api.py` gains a `@deprecated(sunset_date, replacement=None, reason=None)` decorator that:
   - Sets `Deprecation: true` header (RFC 9745 draft — widely enough implemented to be useful).
   - Sets `Sunset: <HTTP-date>` header (RFC 8594) from the passed `sunset_date`.
   - Sets `Link: <replacement_url>; rel="successor-version"` when a replacement is named.
   - Logs the deprecated call at INFO on `app.api.deprecation` with the request id + endpoint + source (user-agent + optional `X-Client-ID`) so operators can see who's still calling.
   - No-ops on responses that have already set these headers (idempotent across decorator stacking).
-- [ ] Matching webhook-envelope deprecation: a `deprecated: true` optional key on the webhook `data` payload when the event schema is flagged for removal; a `sunset` ISO-8601 key carries the same date as the HTTP header. Webhook consumers can subscribe to a warning log on first seeing the flag.
-- [ ] New metric `resume_site_deprecated_api_calls_total{endpoint}` — lets operators see if any consumer is still hitting a deprecated endpoint as the sunset date approaches.
+- [x] Matching webhook-envelope deprecation: a `deprecated: true` optional key on the webhook `data` payload when the event schema is flagged for removal; a `sunset` ISO-8601 key carries the same date as the HTTP header. Webhook consumers can subscribe to a warning log on first seeing the flag.
+- [x] New metric `resume_site_deprecated_api_calls_total{endpoint}` — lets operators see if any consumer is still hitting a deprecated endpoint as the sunset date approaches.
 
 ### 37.3 — OpenAPI spec support
 
