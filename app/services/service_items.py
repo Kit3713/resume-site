@@ -13,9 +13,19 @@ through sanitize_html() on every write as defense in depth against XSS
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 
 from app.exceptions import ValidationError
 from app.services.content import sanitize_html
+from app.services.crud import update_fields
+
+#: Phase 29.2 (#56) — column allowlist consumed by
+#: :func:`app.services.crud.update_fields`. ``updated_at`` is included
+#: because :func:`update_service` overwrites it on every save (the
+#: previous inline UPDATE bumped it via ``strftime('now')`` and we
+#: preserve that behaviour so the admin dashboard's "last edited" sort
+#: keeps working).
+_SERVICE_COLUMNS = {'title', 'description', 'icon', 'sort_order', 'visible', 'updated_at'}
 
 
 def get_all_services(db: sqlite3.Connection) -> list[sqlite3.Row]:
@@ -67,20 +77,25 @@ def update_service(
         icon: Emoji or icon identifier.
         sort_order: Display order.
         visible: Whether to show on the public site.
+
+    Phase 29.2 (#56) — delegates to :func:`app.services.crud.update_fields`
+    so the column-name allowlist + UPDATE + activity-log INSERT all live
+    behind one transaction. The caller contract is unchanged.
     """
-    db.execute(
-        'UPDATE services SET title = ?, description = ?, icon = ?, sort_order = ?, visible = ?, '
-        "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
-        (
-            title.strip(),
-            sanitize_html(description),
-            icon,
-            int(sort_order),
-            1 if visible else 0,
-            service_id,
-        ),
+    update_fields(
+        db,
+        'services',
+        service_id,
+        {
+            'title': title.strip(),
+            'description': sanitize_html(description),
+            'icon': icon,
+            'sort_order': int(sort_order),
+            'visible': 1 if visible else 0,
+            'updated_at': datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        },
+        column_allowlist=_SERVICE_COLUMNS,
     )
-    db.commit()
 
 
 def delete_service(db: sqlite3.Connection, service_id: int) -> None:
