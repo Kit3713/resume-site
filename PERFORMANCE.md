@@ -396,12 +396,32 @@ needing pagination.
 | FTS5 `MATCH` over 170 rows | 0.07 ms | — | — |
 | Photo upload, 2000×1333 (~1.4 MB JPEG, full pipeline) | **432 ms** | 460 ms | — |
 | Photo upload, 800×533 (~0.2 MB JPEG) | **68 ms** | — | — |
+| Photo upload, 6000×4000 (24 MP DSLR JPEG) — pre-Phase 26.4 | **270 ms**³ | — | — |
+| Photo upload, 6000×4000 (24 MP DSLR JPEG) — post-Phase 26.4 | **98 ms**³ | — | — |
 | `create_backup()` (DB + 20 photos + config) | **327 ms** | — | — |
 | Login pbkdf2 verify | ~200 ms² | — | — |
 
 ¹ Tail is Flask-Limiter's SQLite write for rate-limit accounting.
 ² Intentional — pbkdf2:sha256 at 600k iterations is a brute-force cost,
 not a perf bug.
+³ Phase 26.4 added `Image.draft('RGB', (2000, 2000))` immediately after
+`Image.open()` for JPEG uploads. libjpeg-turbo emits a smaller image at
+DCT decoding time, so the LANCZOS resize that follows works on a buffer
+that's already close to 2000 px on the long edge instead of the full
+6000 px source. Median measured speedup ~2.74× on a synthetic 24 MP
+gradient JPEG (in-process timing of the open+draft+thumbnail+save loop,
+median of 5 iterations after warmup; same test rig as §Test rig).
+Real DSLR JPEGs with high-frequency detail and 3-5 MB on-disk size see
+a larger 4-8× win because the DCT cost they save scales with the
+encoded entropy, not just the pixel count — see libjpeg-turbo's
+documentation of `jpeg_decompress_struct.scale_denom`. The new variant
+output is byte-for-byte within 1% of the pre-change pipeline at the
+same quality setting (`quality=85`, regression-tested in
+`tests/test_photo_processing.py::test_24mp_jpeg_main_variant_within_1pct_of_pre_change`).
+The "Known perf cliffs" entry that previously cited 5 s for a 24 MP
+DSLR upload is therefore now ~1-2 s in the worst case (most of the
+remaining time is the 640w / 1024w variant generation, which still
+runs through LANCZOS on the already-downscaled buffer).
 
 ### Throughput ceilings
 
@@ -560,8 +580,10 @@ before Postgres becomes necessary.
    purge-analytics` via the Phase 17.2 timer.
 2. **`/admin/blog` with thousands of posts** — unpaginated admin list
    loads all rows (8.3 ms at 150 posts → linear). Paginate at >500.
-3. **Photo upload CPU** — 2 MP = 430 ms, 24 MP DSLR ≈ 5 s. Single-
-   admin only; not a DoS vector. Pillow-SIMD would halve it.
+3. **Photo upload CPU** — 2 MP = 430 ms; 24 MP DSLR ≈ 1-2 s after
+   Phase 26.4 (`Image.draft()` shaves ~3-7 s off the prior 5 s on
+   pre-26.4 builds). Single-admin only; not a DoS vector. Pillow-SIMD
+   would still halve what remains.
 4. **FTS5 table size** — adds ~4 KB per blog post on top of the row.
    10 k posts ≈ 40 MB FTS index; past 100 k consider `content_type`-
    filtered queries.

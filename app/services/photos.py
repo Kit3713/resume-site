@@ -188,10 +188,19 @@ def process_upload(file_storage: FileStorage) -> dict[str, Any] | str | None:
         # and the ``finally`` block deletes the quarantine file.
         try:
             with Image.open(quarantine_path) as img:
+                # Phase 26.4: Pillow's Image.draft() asks libjpeg-turbo to
+                # emit a smaller image during DCT decoding. On 24 MP DSLR
+                # JPEGs this is documented to be 4-8× faster than decoding
+                # at full size and resizing afterwards. The full pipeline
+                # (resize -> strip EXIF -> save) works the same on the
+                # already-downscaled buffer.
+                max_dim = 2000
+                if img.format == 'JPEG':
+                    img.draft('RGB', (max_dim, max_dim))
+
                 width, height = img.size
                 exif_data = img.info.get('exif') if preserve_exif else None
 
-                max_dim = 2000
                 if width > max_dim or height > max_dim:
                     img.thumbnail((max_dim, max_dim), Image.LANCZOS)
 
