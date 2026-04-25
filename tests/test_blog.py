@@ -599,3 +599,123 @@ def test_markdown_post_rendered(auth_client, app):
     assert '<h1>' in data or '<h1' in data  # Rendered from # heading
     assert '<strong>bold</strong>' in data
     assert '<em>italic</em>' in data
+
+
+# ============================================================
+# CONCURRENT SAVE / UNKNOWN-ID GUARDS (Issues #139, #140)
+# ============================================================
+
+
+def test_create_post_concurrent_same_title_does_not_500(app):
+    """Issue #139: two concurrent ``create_post`` calls with the same
+    title must both succeed.
+
+    Before the BEGIN IMMEDIATE + retry-on-IntegrityError fix, both
+    threads observed "no row with slug `hello-world`" inside
+    ``_ensure_unique_slug`` and both INSERTed `hello-world`. The
+    second INSERT tripped ``UNIQUE(slug)`` and raised
+    :class:`sqlite3.IntegrityError`. The fix wraps the SELECT + INSERT
+    pair in BEGIN IMMEDIATE (so only one writer holds the slug-check
+    snapshot) and retries on IntegrityError so the loser computes
+    `hello-world-2` on its second pass.
+    """
+    import sqlite3
+    import threading
+
+    from app.services.blog import create_post
+
+    db_path = app.config['DATABASE_PATH']
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+    results: list[int | None] = []
+
+    def _worker():
+        try:
+            conn = sqlite3.connect(db_path, timeout=10.0)
+            conn.row_factory = sqlite3.Row
+            try:
+                barrier.wait(timeout=5.0)
+                post_id = create_post(
+                    conn,
+                    title='Hello World',
+                    content='<p>body</p>',
+                )
+                results.append(post_id)
+            finally:
+                conn.close()
+        except BaseException as exc:  # pragma: no cover — surfaced in assertion
+            errors.append(exc)
+
+    t1 = threading.Thread(target=_worker)
+    t2 = threading.Thread(target=_worker)
+    t1.start()
+    t2.start()
+    t1.join(timeout=15.0)
+    t2.join(timeout=15.0)
+
+    assert not errors, f'unexpected exceptions: {errors!r}'
+    assert len(results) == 2
+
+    # Verify both posts landed with distinct, well-formed slugs.
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT slug FROM blog_posts WHERE title = 'Hello World' ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+    slugs = sorted(r['slug'] for r in rows)
+    assert slugs == ['hello-world', 'hello-world-2'], (
+        f'expected hello-world + hello-world-2, got {slugs!r}'
+    )
+
+
+def test_update_post_unknown_id_raises_and_does_not_create_tags(app):
+    """Issue #140: ``update_post`` against an unknown post id must
+    raise ``ValueError`` and NOT leave orphan tag rows / junction
+    entries.
+
+    Before the rowcount check, the UPDATE silently affected 0 rows
+    and ``_sync_tags`` cheerfully INSERTed a new ``blog_tags`` row
+    plus a ``blog_post_tags`` junction entry pointing at the missing
+    id — leaving the junction table inconsistent with the parent
+    table.
+    """
+    import sqlite3
+
+    import pytest
+
+    from app.services.blog import update_post
+
+    db_path = app.config['DATABASE_PATH']
+    conn = sqlite3.connect(db_path, timeout=10.0)
+    conn.row_factory = sqlite3.Row
+    try:
+        with pytest.raises(ValueError):
+            update_post(
+                conn,
+                post_id=999999,
+                title='Ghost Post',
+                content='<p>nope</p>',
+                tags='orphan-tag',
+            )
+
+        # No junction rows for the missing id.
+        junction_rows = conn.execute(
+            'SELECT 1 FROM blog_post_tags WHERE post_id = ?',
+            (999999,),
+        ).fetchall()
+        assert junction_rows == [], (
+            f'expected no junction rows for missing post, got {junction_rows!r}'
+        )
+
+        # And the tag was never created either — the rollback caught
+        # ``_sync_tags``'s INSERT before it landed.
+        tag_rows = conn.execute(
+            'SELECT 1 FROM blog_tags WHERE slug = ?',
+            ('orphan-tag',),
+        ).fetchall()
+        assert tag_rows == [], f'expected no orphan tag, got {tag_rows!r}'
+    finally:
+        conn.close()

@@ -93,6 +93,54 @@ rate floor of zero is the design.
 
 ---
 
+## ResumeUpstreamErrorRate
+
+**Severity:** warning • **Component:** availability
+
+**What it means:** the application is emitting 502 / 503 / 504 status
+codes (or `OSError(ECONNREFUSED)` is escaping a request handler) faster
+than 0.05/sec (~3/min) averaged over 5 minutes. Issue #134 carved this
+category out of `InternalError` so rolling restarts and brief readyz
+windows don't page on-call. A sustained rate, however, is a genuine
+upstream availability problem.
+
+**Likely causes:**
+
+- A reverse proxy (Caddy / nginx) is racing the application boot —
+  scrape windows fall inside the gap between TCP listen and readyz
+  flipping green.
+- Worker pool is saturated; new requests queue past Gunicorn's backlog
+  and the proxy times them out.
+- An outbound dependency the request handler calls (SMTP relay, an
+  upstream HTTP API) is refusing connections, and the application is
+  surfacing that as a 503.
+- Container restart loop — see ResumeProcessRestarted.
+
+**What to check:**
+
+1. Tail structured logs for `error_category=UpstreamError` over the
+   same window — `path` and `status` distinguish gateway-imposed 502s
+   from application-emitted 503s.
+2. `podman logs caddy` (or your reverse proxy) — the proxy is the most
+   likely emitter of a clustered 502/504 burst.
+3. Cross-check ResumeProcessRestarted; if it's also firing, the root
+   cause is restart-rate, not steady-state availability.
+4. If `OSError(ECONNREFUSED)` features in the logs, confirm the named
+   upstream (SMTP relay, DNS resolver) is reachable from the container
+   network namespace.
+
+**Mitigations:**
+
+- Tune the reverse-proxy upstream timeout / health-check window so it
+  doesn't race the boot path.
+- Bump worker count or the Gunicorn backlog (`--backlog`) if the
+  request rate genuinely exceeds capacity.
+- For a transient upstream API outage, add a circuit-breaker (or the
+  existing retry budget) so a refused connection doesn't surface as a
+  user-visible 503.
+
+---
+
 ## ResumeAuthErrorSpike
 
 **Severity:** warning • **Component:** security

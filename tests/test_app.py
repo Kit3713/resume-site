@@ -148,7 +148,7 @@ def test_contact_page(client):
     assert b'name="message"' in response.data
 
 
-def test_contact_form_submit(client, app):
+def test_contact_form_submit(client, app, smtp_mock):
     """Valid contact form submissions should save and show a success message."""
     response = client.post(
         '/contact',
@@ -178,6 +178,7 @@ def test_contact_form_honeypot(client, app):
     )
     assert response.status_code == 200
     # Same success message shown to avoid revealing the honeypot to bots
+    # (spam submissions skip the SMTP relay, so no smtp_mock needed)
     assert b'Message sent successfully' in response.data
 
 
@@ -195,6 +196,53 @@ def test_contact_form_validation(client):
     assert b'Please fill in all required fields' in response.data
 
 
+def test_contact_smtp_failure_flashes_sorry(client, app, monkeypatch):
+    """Issue #80 — when SMTP relay fails, the visitor sees a sorry flash, not success."""
+    monkeypatch.setattr(
+        'app.services.mail.send_contact_email',
+        lambda name, email, message: False,
+    )
+    response = client.post(
+        '/contact',
+        data={
+            'name': 'Test User',
+            'email': 'test@example.com',
+            'message': 'Hello, this is a test message.',
+            'website': '',
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    with client.session_transaction() as sess:
+        flashes = sess.get('_flashes', [])
+    categories_messages = [(cat, msg) for cat, msg in flashes]
+    assert any('Sorry' in msg and cat == 'error' for cat, msg in categories_messages), (
+        f"Expected a sorry-couldn't-send error flash, got: {categories_messages}"
+    )
+    assert not any('successfully' in msg for _cat, msg in categories_messages), (
+        f'Did not expect a success flash on SMTP failure, got: {categories_messages}'
+    )
+
+
+def test_contact_validation_failure_preserves_input(client):
+    """Issue #81 — validation errors re-render the form with the visitor's typed values."""
+    response = client.post(
+        '/contact',
+        data={
+            'name': 'Jane Doe',
+            'email': 'not-a-valid-email',
+            'message': 'A message I do not want to retype, please preserve me.',
+            'website': '',
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert 'value="Jane Doe"' in body
+    assert 'value="not-a-valid-email"' in body
+    assert 'A message I do not want to retype, please preserve me.' in body
+
+
 def test_case_study_404(client):
     """Nonexistent case study slugs should return 404."""
     response = client.get('/portfolio/nonexistent')
@@ -209,6 +257,60 @@ def test_project_detail_404(client):
 
 def test_resume_off_by_default(client):
     """Resume download should return 404 when visibility is set to 'off' (default)."""
+    response = client.get('/resume')
+    assert response.status_code == 404
+
+
+def test_resume_visibility_private_param_no_longer_special(client, app):
+    """#126: ``?visibility=private`` is not a separate access tier.
+
+    The route used to advertise a 'private' tier in its docstring while
+    actually serving the file regardless of any query parameter. The fix
+    drops the false tier; whether the query parameter is present or not
+    must produce the same response (no auth gate, no special path).
+    """
+    import sqlite3
+
+    db_path = app.config['DATABASE_PATH']
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("UPDATE settings SET value = 'public' WHERE key = 'resume_visibility'")
+        conn.commit()
+    finally:
+        conn.close()
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
+    public = client.get('/resume')
+    private_attempt = client.get('/resume?visibility=private')
+    assert private_attempt.status_code == public.status_code
+
+
+def test_resume_visibility_private_setting_treated_as_off(client, app):
+    """#126: a legacy ``resume_visibility='private'`` row no longer enables download.
+
+    The new route requires ``resume_visibility='public'`` exactly, and
+    migration 013 rewrites legacy 'private' rows to 'public'. If a
+    deployment somehow ends up with a stale 'private' value (a
+    partially-applied migration, a hand-edited DB, a test bypass), the
+    route must fail closed — not fall through to ``send_from_directory``.
+    """
+    import sqlite3
+
+    db_path = app.config['DATABASE_PATH']
+    conn = sqlite3.connect(db_path)
+    try:
+        # Bypass the registry validation that would otherwise refuse
+        # the legacy value at write time. We're simulating a stale row.
+        conn.execute("UPDATE settings SET value = 'private' WHERE key = 'resume_visibility'")
+        conn.commit()
+    finally:
+        conn.close()
+    from app.services.settings_svc import invalidate_cache
+
+    invalidate_cache()
+
     response = client.get('/resume')
     assert response.status_code == 404
 
@@ -236,3 +338,48 @@ def test_index_has_sections(client):
     assert b'hero__heading' in response.data
     assert b'id="about"' in response.data
     assert b'id="contact"' in response.data
+
+
+# ============================================================
+# Asset fingerprinting (#133)
+# ============================================================
+
+
+def test_hashed_static_url_recovers_when_missing_file_appears(app, tmp_path):
+    """A missing file looked up before deploy must hash correctly once it lands.
+
+    Regression for #133: ``_cache`` previously pinned the literal ``"missing"``
+    forever for any path that wasn't on disk at first lookup. A volume mount
+    that finishes propagating after the first request would then serve
+    ``?v=missing`` URLs for the lifetime of the worker. The fix doesn't cache
+    misses, so a re-stat on the second call picks up the freshly written file.
+    """
+    import os
+    from pathlib import Path
+
+    from app.assets import _cache, clear_cache, hashed_static_url
+
+    # Point the app at a writable static dir we control so we can simulate
+    # the late-arriving file. Disable debug so the hashing branch runs.
+    app.static_folder = str(tmp_path / 'static')
+    app.debug = False
+    os.makedirs(app.static_folder, exist_ok=True)
+    clear_cache()
+
+    rel = 'css/late-deploy.css'
+    file_path = Path(app.static_folder) / rel
+
+    with app.test_request_context():
+        first = hashed_static_url(rel, app)
+        assert first.endswith('?v=missing')
+        # The miss must NOT be cached, otherwise step 3 would still see "missing".
+        assert rel not in _cache
+
+        os.makedirs(file_path.parent, exist_ok=True)
+        file_path.write_text('body { color: red; }')
+
+        second = hashed_static_url(rel, app)
+        assert '?v=missing' not in second
+        assert '?v=' in second
+        assert rel in _cache
+        assert _cache[rel] != 'missing'

@@ -278,9 +278,19 @@ def test_javascript_url_in_href_is_stripped(client, no_rate_limits, api_write_to
 def test_sql_metacharacters_in_title_do_not_break_create(
     client, no_rate_limits, api_write_token, app
 ):
+    """SQL metacharacters that don't trip the WAF (#84) must still pass
+    cleanly through the parameterized-query layer.
+
+    The WAF body-scan added in v0.3.3 (#84) blocks fingerprints like
+    ``;DROP TABLE`` or ``' OR 1=1`` outright, so the original
+    "Bobby Tables" payload now returns 400 at the WAF before reaching
+    the DB. The DB-layer defense (parameterized queries) still needs
+    coverage — exercise it with metacharacters the WAF allows: a bare
+    apostrophe and a literal hyphen pair are both legal in titles.
+    """
     response = client.post(
         '/api/v1/blog',
-        json={'title': "Robert'); DROP TABLE blog_posts;--"},
+        json={'title': "O'Reilly's Guide to SQL -- best practices"},
         headers=_auth(api_write_token),
     )
     assert response.status_code == 201
@@ -292,6 +302,22 @@ def test_sql_metacharacters_in_title_do_not_break_create(
     finally:
         conn.close()
     assert rows[0] >= 1
+
+
+def test_sql_injection_fingerprint_in_body_blocked_by_waf(client, no_rate_limits, api_write_token):
+    """#84: the WAF body-scan blocks JSON payloads carrying SQLi
+    fingerprints (``;DROP TABLE``, ``' OR 1=1``, ``UNION SELECT``).
+
+    This is an earlier line of defense than the parameterized-query
+    layer — both must hold. The classic Bobby Tables payload that
+    used to slip through the WAF now returns 400.
+    """
+    response = client.post(
+        '/api/v1/blog',
+        json={'title': "Robert'); DROP TABLE blog_posts;--"},
+        headers=_auth(api_write_token),
+    )
+    assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------

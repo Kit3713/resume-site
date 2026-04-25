@@ -223,8 +223,6 @@ def test_api_classifies_oversized_user_agent_as_coarse_class(client, no_rate_lim
 @pytest.mark.parametrize(
     'payload',
     [
-        "Robert'); DROP TABLE contact_submissions;--",
-        "' OR 1=1 --",
         '"><script>alert(1)</script>',
         '{{ 7*7 }}',  # Jinja2 template injection
         '${7*7}',
@@ -235,6 +233,13 @@ def test_api_classifies_oversized_user_agent_as_coarse_class(client, no_rate_lim
 def test_injection_payloads_are_stored_safely_and_dont_500(
     client, no_rate_limits, smtp_mock, app, payload
 ):
+    """Non-SQLi injection payloads still hit the parameterized-query
+    layer and must be stored verbatim without breaking the handler.
+
+    SQLi-fingerprint payloads (``;DROP TABLE``, ``' OR 1=1``) are now
+    blocked earlier by the v0.3.3 WAF body-scan (#84) — see
+    ``test_sql_injection_payload_blocked_by_waf`` below.
+    """
     response = _api_post(client, message=payload)
     assert response.status_code == 201, response.get_json()
     # Either the payload is preserved verbatim (parameterised queries make
@@ -245,6 +250,22 @@ def test_injection_payloads_are_stored_safely_and_dont_500(
     assert payload.strip() in stored or stored == payload
     # The submission persists — no SQL metacharacter got interpreted.
     assert _count_submissions(app) >= 1
+
+
+@pytest.mark.parametrize(
+    'payload',
+    [
+        "Robert'); DROP TABLE contact_submissions;--",
+        "' OR 1=1 --",
+    ],
+)
+def test_sql_injection_payload_blocked_by_waf(client, no_rate_limits, payload):
+    """#84: SQLi fingerprints in a JSON body are blocked at the WAF
+    before reaching the contact handler. Earlier line of defense than
+    the parameterized-query layer — both must hold.
+    """
+    response = _api_post(client, message=payload)
+    assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------

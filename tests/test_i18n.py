@@ -78,6 +78,27 @@ def test_accept_language_falls_back_to_default(client):
 
 
 # ============================================================
+# VARY: ACCEPT-LANGUAGE (CDN cache-key correctness — #90)
+# ============================================================
+
+
+def test_vary_accept_language_on_public_routes(client):
+    """#90: every public response carries Vary: Accept-Language so CDNs key by locale."""
+    for path in ('/', '/blog', '/portfolio', '/contact'):
+        resp = client.get(path)
+        vary = resp.headers.get('Vary', '')
+        assert 'Accept-Language' in vary, f'{path}: Vary header {vary!r} missing Accept-Language'
+
+
+def test_vary_preserves_other_values(client):
+    """#90: appending Accept-Language must not strip existing Vary entries."""
+    resp = client.get('/')
+    vary = resp.headers.get('Vary', '')
+    parts = [p.strip() for p in vary.split(',')]
+    assert 'Accept-Language' in parts
+
+
+# ============================================================
 # SESSION LOCALE PERSISTENCE
 # ============================================================
 

@@ -26,6 +26,7 @@ Admin features:
 import contextlib
 import hmac
 import ipaddress
+import logging
 import os
 import re
 import secrets
@@ -160,25 +161,47 @@ def check_session_timeout():
     (default 60 minutes). Only applies to authenticated users — the login
     page is always accessible. On timeout, the user is logged out and
     redirected to the login page with a flash message.
+
+    Issue #123 — fail closed on a malformed ``_last_activity``. A corrupted
+    cookie, downgraded payload, or hand-tampered session value would
+    otherwise have its parse failure swallowed and the request would proceed
+    on an authenticated session whose freshness can no longer be verified.
+    Clearing the session forces re-login, which is the safe direction for
+    a freshness check.
     """
     if not current_user.is_authenticated:
         return
 
     last_activity = session.get('_last_activity')
-    if last_activity:
-        try:
-            last_dt = datetime.fromisoformat(last_activity)
-            if last_dt.tzinfo is None:
-                last_dt = last_dt.replace(tzinfo=UTC)
-            timeout_minutes = current_app.config.get('SESSION_TIMEOUT_MINUTES', 60)
-            elapsed = (datetime.now(UTC) - last_dt).total_seconds() / 60
-            if elapsed > timeout_minutes:
-                logout_user()
-                session.clear()
-                flash(_('Session expired due to inactivity. Please log in again.'), 'error')
-                return redirect(url_for('admin.login'))
-        except (ValueError, TypeError):
-            pass  # Malformed timestamp — let the request proceed
+    if last_activity is None:
+        # Never set or already cleared — nothing to compare against. Let the
+        # ``after_request`` hook stamp a fresh timestamp.
+        return
+
+    try:
+        last_dt = datetime.fromisoformat(last_activity)
+        if last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=UTC)
+    except (ValueError, TypeError) as exc:
+        # Malformed timestamp — fail closed. Clearing the session forces
+        # re-login on the next request rather than silently extending an
+        # authenticated session whose freshness cannot be verified.
+        logging.getLogger('app.security').warning(
+            'admin session cleared due to malformed _last_activity: %r',
+            exc,
+        )
+        logout_user()
+        session.clear()
+        flash(_('Session expired due to inactivity. Please log in again.'), 'error')
+        return redirect(url_for('admin.login'))
+
+    timeout_minutes = current_app.config.get('SESSION_TIMEOUT_MINUTES', 60)
+    elapsed = (datetime.now(UTC) - last_dt).total_seconds() / 60
+    if elapsed > timeout_minutes:
+        logout_user()
+        session.clear()
+        flash(_('Session expired due to inactivity. Please log in again.'), 'error')
+        return redirect(url_for('admin.login'))
 
 
 def check_session_epoch():

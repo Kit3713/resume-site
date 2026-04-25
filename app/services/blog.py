@@ -311,6 +311,13 @@ def _sync_tags(db, post_id, tag_string):
 # ============================================================
 
 
+# Cap on retry attempts after an IntegrityError on the slug. A pathological
+# burst could in theory loop indefinitely; in normal operation one retry is
+# sufficient because the racing INSERT has already taken `<slug>` so the
+# next ``_ensure_unique_slug`` computes ``<slug>-2``.
+_MAX_SLUG_RETRIES = 3
+
+
 def create_post(
     db: sqlite3.Connection,
     title: str,
@@ -328,39 +335,62 @@ def create_post(
     Auto-generates a slug from the title and calculates reading time.
     Content is sanitized if HTML format.
 
+    Issue #139: ``_ensure_unique_slug`` + the INSERT used to be a
+    SELECT-then-INSERT race. Two concurrent saves with the same title
+    both observed "no slug `hello-world`" exists, then both INSERTed
+    `hello-world` and the second tripped ``UNIQUE(slug)``. The whole
+    pair now runs inside an explicit ``BEGIN IMMEDIATE`` transaction
+    (matches Phase 27.2's pattern; ``app.db._InstrumentedConnection``
+    doesn't forward the context-manager protocol). On
+    :class:`sqlite3.IntegrityError` we roll back and retry once with
+    ``_ensure_unique_slug`` re-run — the racing INSERT has already
+    taken ``<slug>`` by then, so the retry's slug is ``<slug>-2``.
+
     Returns:
         int: The new post's ID.
     """
-    slug = _ensure_unique_slug(db, slugify(title))
     if content_format == 'html':
         content = sanitize_html(content)
     reading_time = _calculate_reading_time(content, content_format)
 
-    cursor = db.execute(
-        'INSERT INTO blog_posts '
-        '(slug, title, summary, content, content_format, cover_image, author, '
-        'featured, reading_time, meta_description) '
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        (
-            slug,
-            title.strip(),
-            summary,
-            content,
-            content_format,
-            cover_image,
-            author,
-            1 if featured else 0,
-            reading_time,
-            meta_description,
-        ),
-    )
-    post_id = cursor.lastrowid
+    base_slug = slugify(title)
+    for attempt in range(_MAX_SLUG_RETRIES):
+        db.execute('BEGIN IMMEDIATE')
+        try:
+            slug = _ensure_unique_slug(db, base_slug)
+            cursor = db.execute(
+                'INSERT INTO blog_posts '
+                '(slug, title, summary, content, content_format, cover_image, author, '
+                'featured, reading_time, meta_description) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                (
+                    slug,
+                    title.strip(),
+                    summary,
+                    content,
+                    content_format,
+                    cover_image,
+                    author,
+                    1 if featured else 0,
+                    reading_time,
+                    meta_description,
+                ),
+            )
+            post_id = cursor.lastrowid
 
-    if tags:
-        _sync_tags(db, post_id, tags)
+            if tags:
+                _sync_tags(db, post_id, tags)
 
-    db.commit()
-    return post_id
+            db.commit()
+            return post_id
+        except sqlite3.IntegrityError:
+            db.rollback()
+            if attempt == _MAX_SLUG_RETRIES - 1:
+                raise
+        except Exception:
+            db.rollback()
+            raise
+    return None  # unreachable; loop either returns or re-raises
 
 
 def update_post(
@@ -381,38 +411,63 @@ def update_post(
 
     If slug is provided and different from auto-generated, uses the
     provided slug (after ensuring uniqueness). Recalculates reading time.
-    """
-    if slug:
-        slug = _ensure_unique_slug(db, slugify(slug), exclude_id=post_id)
-    else:
-        slug = _ensure_unique_slug(db, slugify(title), exclude_id=post_id)
 
+    Issue #140: the UPDATE + ``_sync_tags`` pair previously ran without
+    verifying ``post_id`` existed. A stale form (post deleted by another
+    admin between page load and save) used to silently UPDATE 0 rows
+    and then have ``_sync_tags`` create orphan ``blog_post_tags``
+    junction entries pointing at the missing id. The pair now runs
+    inside ``BEGIN IMMEDIATE``; if ``cursor.rowcount`` is 0 we raise
+    :class:`ValueError` and roll back so no orphan tags land.
+
+    Issue #139: same SELECT-then-INSERT race shape as ``create_post``
+    when the slug rename collides with a concurrent writer. Wrapped in
+    the same retry-on-IntegrityError loop.
+
+    Raises:
+        ValueError: When ``post_id`` does not match an existing row.
+    """
     if content_format == 'html':
         content = sanitize_html(content)
     reading_time = _calculate_reading_time(content, content_format)
 
-    db.execute(
-        'UPDATE blog_posts SET slug=?, title=?, summary=?, content=?, '
-        'content_format=?, cover_image=?, author=?, featured=?, '
-        'reading_time=?, meta_description=?, '
-        "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id=?",
-        (
-            slug,
-            title.strip(),
-            summary,
-            content,
-            content_format,
-            cover_image,
-            author,
-            1 if featured else 0,
-            reading_time,
-            meta_description,
-            post_id,
-        ),
-    )
+    base_slug = slugify(slug) if slug else slugify(title)
+    for attempt in range(_MAX_SLUG_RETRIES):
+        db.execute('BEGIN IMMEDIATE')
+        try:
+            new_slug = _ensure_unique_slug(db, base_slug, exclude_id=post_id)
+            cursor = db.execute(
+                'UPDATE blog_posts SET slug=?, title=?, summary=?, content=?, '
+                'content_format=?, cover_image=?, author=?, featured=?, '
+                'reading_time=?, meta_description=?, '
+                "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id=?",
+                (
+                    new_slug,
+                    title.strip(),
+                    summary,
+                    content,
+                    content_format,
+                    cover_image,
+                    author,
+                    1 if featured else 0,
+                    reading_time,
+                    meta_description,
+                    post_id,
+                ),
+            )
+            if (cursor.rowcount or 0) == 0:
+                raise ValueError(f'post not found: id={post_id}')
 
-    _sync_tags(db, post_id, tags)
-    db.commit()
+            _sync_tags(db, post_id, tags)
+            db.commit()
+            return
+        except sqlite3.IntegrityError:
+            db.rollback()
+            if attempt == _MAX_SLUG_RETRIES - 1:
+                raise
+        except Exception:
+            db.rollback()
+            raise
 
 
 def publish_post(db: sqlite3.Connection, post_id: int) -> None:

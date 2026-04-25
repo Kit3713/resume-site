@@ -41,6 +41,7 @@ import queue
 import sqlite3
 import threading
 import time
+from urllib.parse import urlparse, urlunparse
 
 from flask import current_app, request
 
@@ -147,6 +148,30 @@ def _signal_shutdown(db_path: str) -> None:
     _flush_remaining(db_path)
 
 
+def _redact_referrer(referrer: str | None, app_origin: str) -> str | None:
+    """Strip privacy-sensitive bits before persisting a referrer.
+
+    Issue #97: ``request.referrer`` ships query strings + fragments
+    that routinely carry secrets — OAuth ``code=``/``state=``,
+    password-reset tokens, session IDs from misconfigured upstreams.
+    The path alone is enough for analytics ("people are coming from
+    /blog/post-x"); query and fragment are dropped unconditionally.
+
+    For same-origin referrers we also drop scheme + netloc — there's
+    no privacy difference (we already know our own origin) and it
+    saves a row's worth of storage. Cross-origin referrers keep
+    scheme + netloc + path so the operator can still see which
+    external sites send traffic.
+    """
+    if not referrer:
+        return referrer
+    parsed = urlparse(referrer)
+    redacted = parsed._replace(query='', fragment='')
+    if f'{parsed.scheme}://{parsed.netloc}' == app_origin:
+        redacted = redacted._replace(scheme='', netloc='')
+    return urlunparse(redacted) or '/'
+
+
 def track_page_view() -> None:
     """Enqueue a page view. Runs before every request.
 
@@ -184,7 +209,12 @@ def track_page_view() -> None:
         ip_hash = hash_client_ip(client_ip or '', current_app.secret_key or '')
         ua_class = classify_user_agent(request.user_agent.string)
 
-        row = (path, request.referrer or '', ua_class, ip_hash)
+        site_config = current_app.config.get('SITE_CONFIG', {}) or {}
+        canonical = (site_config.get('canonical_host') or '').strip().rstrip('/')
+        app_origin = canonical or request.url_root.rstrip('/')
+        redacted_referrer = _redact_referrer(request.referrer, app_origin) or ''
+
+        row = (path, redacted_referrer, ua_class, ip_hash)
 
         if current_app.config.get('TESTING'):
             # Synchronous path for tests — assertions reading page_views

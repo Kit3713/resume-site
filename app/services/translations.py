@@ -176,19 +176,31 @@ def get_all_translated(
 
     Uses a single LEFT JOIN query to avoid N+1. Falls back to original
     values when no translation exists.
+
+    Filter keys (#124) are validated against the parent table's column
+    list before being interpolated into SQL. Defence-in-depth — every
+    in-tree caller already passes canonical column names, but this
+    rejects any future caller that forwards user-controlled mappings
+    (e.g. ``request.args``) before SQL injection becomes possible.
     """
     config = _TRANSLATION_TABLES.get(source_table)
     if not config:
         return []
+
+    valid_columns = _columns_for(db, source_table)
+    bad_filters = set(filters) - set(valid_columns)
+    if bad_filters:
+        raise ValueError(
+            f'Unknown filter columns for {source_table}: {sorted(bad_filters)}. '
+            f'Valid: {sorted(valid_columns)}'
+        )
 
     trans_table = config['table']
     fk = config['fk']
     fields = config['fields']
 
     coalesce_cols = ', '.join(f'COALESCE(NULLIF(t.{f}, ""), s.{f}) AS {f}' for f in fields)
-    non_trans_cols = ', '.join(
-        f's.{col}' for col in _get_column_names(db, source_table) if col not in fields
-    )
+    non_trans_cols = ', '.join(f's.{col}' for col in valid_columns if col not in fields)
 
     where_clauses = ['1=1']
     params: list = []
@@ -262,6 +274,20 @@ def save_translation(
     ``sanitize_html`` policy the default-locale save paths use. Callers
     can therefore pass raw form input without risking that a per-locale
     save becomes the XSS smuggle path.
+
+    Phase 27.2-style atomicity (#122) — the SELECT-then-INSERT/UPDATE
+    pair is wrapped in an explicit ``BEGIN IMMEDIATE`` transaction. Two
+    concurrent saves to the same ``(parent_id, locale)`` would otherwise
+    both observe "no existing row" and both attempt the INSERT, with
+    one tripping the ``UNIQUE(parent_id, locale)`` constraint and
+    raising ``IntegrityError`` 500. On the rare race where the second
+    INSERT still loses (the racing writer landed between our SELECT and
+    INSERT inside the transaction window), we retry once as an UPDATE
+    so our caller's values overlay the racing caller's row. Explicit
+    BEGIN/COMMIT/ROLLBACK is used rather than ``with db:`` because
+    ``app.db._InstrumentedConnection`` does not forward sqlite3's
+    context-manager protocol (same constraint as
+    ``app/routes/review.py``'s atomic review-create block).
     """
     config = _TRANSLATION_TABLES.get(source_table)
     if not config:
@@ -276,24 +302,38 @@ def save_translation(
     trans_table = config['table']
     fk = config['fk']
 
-    existing = db.execute(
-        f'SELECT id FROM {trans_table} WHERE {fk} = ? AND locale = ?',  # noqa: S608
-        (parent_id, locale),
-    ).fetchone()
+    select_sql = f'SELECT id FROM {trans_table} WHERE {fk} = ? AND locale = ?'  # noqa: S608
+    set_clause = ', '.join(f'{k} = ?' for k in valid_fields)
+    update_by_id_sql = f'UPDATE {trans_table} SET {set_clause} WHERE id = ?'  # noqa: S608
+    cols = [fk, 'locale', *valid_fields.keys()]
+    placeholders = ', '.join('?' * len(cols))
+    insert_sql = f'INSERT INTO {trans_table} ({", ".join(cols)}) VALUES ({placeholders})'  # noqa: S608
 
-    if existing:
-        set_clause = ', '.join(f'{k} = ?' for k in valid_fields)
-        db.execute(
-            f'UPDATE {trans_table} SET {set_clause} WHERE id = ?',  # noqa: S608
-            [*valid_fields.values(), existing['id']],
-        )
-    else:
-        cols = [fk, 'locale', *valid_fields.keys()]
-        placeholders = ', '.join('?' * len(cols))
-        db.execute(
-            f'INSERT INTO {trans_table} ({", ".join(cols)}) VALUES ({placeholders})',  # noqa: S608
-            [parent_id, locale, *valid_fields.values()],
-        )
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        try:
+            existing = db.execute(select_sql, (parent_id, locale)).fetchone()
+            if existing:
+                db.execute(update_by_id_sql, [*valid_fields.values(), existing['id']])
+            else:
+                db.execute(insert_sql, [parent_id, locale, *valid_fields.values()])
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+    except sqlite3.IntegrityError:
+        # A concurrent INSERT for the same (parent_id, locale) won the
+        # race between our SELECT and our INSERT. Re-read the row that
+        # landed and overlay our values on top — the racing call's
+        # intent is real, we simply update on top of it instead of
+        # trying to win the race. If no row materialised the
+        # IntegrityError was something other than the UNIQUE collision
+        # (e.g. a foreign-key violation on parent_id) — re-raise it.
+        existing = db.execute(select_sql, (parent_id, locale)).fetchone()
+        if not existing:
+            raise
+        db.execute(update_by_id_sql, [*valid_fields.values(), existing['id']])
+        db.commit()
 
 
 def delete_translation(
@@ -328,10 +368,23 @@ def get_available_translations(
     return [row['locale'] for row in rows]
 
 
-def _get_column_names(db: sqlite3.Connection, table: str) -> list[str]:
-    """Return column names for a table via PRAGMA."""
-    rows = db.execute(f'PRAGMA table_info({table})').fetchall()  # noqa: S608  # nosec B608 — table keyed from _TRANSLATION_TABLES dict literal
-    return [row['name'] for row in rows]
+# Per-table column whitelist cache (#124). Schema is process-lifetime
+# stable — migrations always restart the app — so a plain dict guarded
+# only by GIL-atomic dict assignment is enough. Used to validate
+# ``**filters`` keys in :func:`get_all_translated` before they're
+# spliced into SQL.
+_columns_cache: dict[str, tuple[str, ...]] = {}
+
+
+def _columns_for(db: sqlite3.Connection, table: str) -> tuple[str, ...]:
+    """Return cached column names for ``table`` via ``PRAGMA table_info``."""
+    cached = _columns_cache.get(table)
+    if cached is not None:
+        return cached
+    rows = db.execute(f'PRAGMA table_info({table})').fetchall()  # noqa: S608  # nosec B608 — table name from internal callers (dict literal keys), not user input
+    cols = tuple(row['name'] for row in rows)
+    _columns_cache[table] = cols
+    return cols
 
 
 # ============================================================

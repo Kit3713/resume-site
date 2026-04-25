@@ -44,14 +44,18 @@ def hashed_static_url(filename: str, app: Flask) -> str:
         return url_for('static', filename=filename)
 
     with _lock:
-        if filename not in _cache:
+        if filename in _cache:
+            version = _cache[filename]
+        else:
             file_path = os.path.join(app.static_folder or '', filename)
             if os.path.isfile(file_path):
-                _cache[filename] = _compute_hash(file_path)
+                version = _compute_hash(file_path)
+                _cache[filename] = version
             else:
-                _cache[filename] = 'missing'
-
-        version = _cache[filename]
+                # Don't cache misses — a file deployed after first lookup
+                # would otherwise serve `?v=missing` forever (#133). Re-stat
+                # on every miss; missing-file lookups are an edge case.
+                version = 'missing'
 
     return url_for('static', filename=filename) + f'?v={version}'
 

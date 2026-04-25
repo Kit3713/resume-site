@@ -16,6 +16,7 @@ Verifies:
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import sqlite3
@@ -41,6 +42,7 @@ def test_category_constants_are_stable_strings():
     assert ErrorCategory.CLIENT == 'ClientError'
     assert ErrorCategory.AUTH == 'AuthError'
     assert ErrorCategory.EXTERNAL == 'ExternalError'
+    assert ErrorCategory.UPSTREAM == 'UpstreamError'
     assert ErrorCategory.DATA == 'DataError'
     assert ErrorCategory.INTERNAL == 'InternalError'
 
@@ -50,6 +52,7 @@ def test_category_all_covers_every_constant():
         ErrorCategory.CLIENT,
         ErrorCategory.AUTH,
         ErrorCategory.EXTERNAL,
+        ErrorCategory.UPSTREAM,
         ErrorCategory.DATA,
         ErrorCategory.INTERNAL,
     }
@@ -81,15 +84,36 @@ def test_categorize_status_maps_other_4xx_to_client():
 
 
 def test_categorize_status_maps_5xx_to_internal():
+    # 500/501 stay InternalError (a bug). 505+ keeps the legacy default.
     assert categorize_status(500) == ErrorCategory.INTERNAL
-    assert categorize_status(502) == ErrorCategory.INTERNAL
-    assert categorize_status(504) == ErrorCategory.INTERNAL
+    assert categorize_status(501) == ErrorCategory.INTERNAL
+    assert categorize_status(505) == ErrorCategory.INTERNAL
+
+
+@pytest.mark.parametrize(
+    'status,expected',
+    [
+        # Issue #134 — 502/503/504 are reverse-proxy / gateway / availability
+        # signals (rolling restarts, transient blips); they MUST NOT be lumped
+        # into InternalError or every deploy will page on-call.
+        (500, ErrorCategory.INTERNAL),
+        (501, ErrorCategory.INTERNAL),
+        (502, ErrorCategory.UPSTREAM),
+        (503, ErrorCategory.UPSTREAM),
+        (504, ErrorCategory.UPSTREAM),
+        (404, ErrorCategory.CLIENT),
+        (200, None),
+    ],
+)
+def test_categorize_status(status, expected):
+    assert categorize_status(status) == expected
 
 
 def test_categorize_status_handles_weird_inputs():
     assert categorize_status('not a number') is None
     assert categorize_status('200') is None  # str accepted via int()
     assert categorize_status('500') == ErrorCategory.INTERNAL
+    assert categorize_status('503') == ErrorCategory.UPSTREAM
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +141,23 @@ def test_categorize_exception_network_errors_are_external():
     assert categorize_exception(TimeoutError()) == ErrorCategory.EXTERNAL
     assert categorize_exception(ConnectionResetError()) == ErrorCategory.EXTERNAL
     assert categorize_exception(TimeoutError()) == ErrorCategory.EXTERNAL
+
+
+@pytest.mark.parametrize(
+    'exc_factory',
+    [
+        lambda: OSError(errno.ECONNREFUSED, 'Connection refused'),
+        lambda: ConnectionRefusedError(errno.ECONNREFUSED, 'Connection refused'),
+    ],
+    ids=['OSError', 'ConnectionRefusedError'],
+)
+def test_categorize_econnrefused_is_upstream(exc_factory):
+    # Issue #134 — refused-connection signals an unavailable upstream (port
+    # closed, container not ready). Categorise as UpstreamError so it
+    # doesn't pollute the InternalError bug counter. Both the bare OSError
+    # form and the ConnectionRefusedError subclass form must classify the
+    # same way — the branch keys on errno, not class.
+    assert categorize_exception(exc_factory()) == ErrorCategory.UPSTREAM
 
 
 def test_categorize_exception_domain_errors_are_client():

@@ -17,13 +17,19 @@ Categories (see :class:`ErrorCategory`):
 * ``AuthError``     — 401 / 403. Failed login, invalid API token, IP
   restriction. Security-relevant — spikes warrant investigation.
 * ``ExternalError`` — SMTP failure, DNS resolution, upstream CDN
-  timeout. Infrastructure health, may need operator action but usually
-  resolves without intervention.
+  timeout (raised as an exception in our process). Infrastructure
+  health, may need operator action but usually resolves without
+  intervention.
+* ``UpstreamError`` — 502 / 503 / 504 status codes and refused TCP
+  connections (``OSError(ECONNREFUSED)``). Reserved-proxy / gateway /
+  upstream-availability signals — rolling restarts and brief network
+  blips trigger them, so the threshold is intentionally less strict
+  than ``InternalError``.
 * ``DataError``     — SQLite corruption, migration failure, constraint
   violation at the storage boundary. Critical — never should happen in
   steady state.
-* ``InternalError`` — Unhandled exceptions, assertion failures, bugs.
-  Any non-zero rate here is a bug and should page.
+* ``InternalError`` — Unhandled 5xx (500/501) bugs: assertion failures,
+  programming errors. Any non-zero rate here is a bug and should page.
 
 This module is deliberately stdlib-only. It does not import Flask or
 the logging or metrics modules so it can be safely imported from any
@@ -34,6 +40,7 @@ log record and increment the counter live in :mod:`app` next to the
 
 from __future__ import annotations
 
+import errno
 import socket
 import sqlite3
 
@@ -49,6 +56,7 @@ class ErrorCategory:
     CLIENT = 'ClientError'
     AUTH = 'AuthError'
     EXTERNAL = 'ExternalError'
+    UPSTREAM = 'UpstreamError'
     DATA = 'DataError'
     INTERNAL = 'InternalError'
 
@@ -57,6 +65,7 @@ class ErrorCategory:
             CLIENT,
             AUTH,
             EXTERNAL,
+            UPSTREAM,
             DATA,
             INTERNAL,
         }
@@ -97,6 +106,14 @@ def categorize_status(status_code):
     ``None`` or 2xx/3xx return ``None`` — the caller uses the absence
     of a category to mean "not an error, don't count it".
 
+    5xx mapping:
+        * 500, 501 → ``InternalError`` (a bug — page).
+        * 502, 503, 504 → ``UpstreamError`` (reverse-proxy / gateway /
+          availability signal — restarts and transient blips trigger
+          these; threshold is looser than the internal-error one so
+          rolling deploys don't page on-call).
+        * Other 5xx (505-599) → ``InternalError`` (default).
+
     Args:
         status_code: An HTTP status code (int) or ``None``.
 
@@ -115,6 +132,8 @@ def categorize_status(status_code):
         return ErrorCategory.AUTH
     if status < 500:
         return ErrorCategory.CLIENT
+    if status in (502, 503, 504):
+        return ErrorCategory.UPSTREAM
     return ErrorCategory.INTERNAL
 
 
@@ -125,8 +144,12 @@ def categorize_exception(exc, status_code=None):
         1. Explicit subclasses: :class:`ExternalError`, :class:`DataError`.
         2. Stdlib signatures that map cleanly:
            * ``sqlite3.DatabaseError`` / ``OperationalError`` → ``DataError``
-           * ``socket.timeout`` / ``ConnectionError`` / ``OSError`` with
-             a network-looking errno → ``ExternalError``
+           * ``OSError`` / ``ConnectionRefusedError`` with
+             ``errno=ECONNREFUSED`` → ``UpstreamError`` (the upstream
+             socket isn't accepting connections — restart-window or
+             availability blip rather than a bug here).
+           * ``socket.timeout`` / other ``ConnectionError`` /
+             ``TimeoutError`` → ``ExternalError``.
         3. :class:`app.exceptions.DomainError` subclasses → ``ClientError``
            (domain errors surface as 4xx to the user).
         4. Fallback: if ``status_code`` is supplied, use
@@ -149,6 +172,12 @@ def categorize_exception(exc, status_code=None):
     if isinstance(exc, sqlite3.DatabaseError):
         # OperationalError, IntegrityError, etc. all inherit from DatabaseError.
         return ErrorCategory.DATA
+
+    # Refused TCP connection — the upstream port is closed (rolling
+    # restart, container not ready). UpstreamError so it doesn't pollute
+    # the InternalError signal that pages on-call.
+    if isinstance(exc, OSError) and getattr(exc, 'errno', None) == errno.ECONNREFUSED:
+        return ErrorCategory.UPSTREAM
 
     if isinstance(exc, (socket.timeout, ConnectionError, TimeoutError)):
         return ErrorCategory.EXTERNAL

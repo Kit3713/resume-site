@@ -18,7 +18,7 @@ URL structure:
     /projects/<slug>        Detailed project write-up
     /testimonials           Featured and standard review display
     /certifications         Professional certification badges
-    /resume                 PDF resume download (visibility-controlled)
+    /resume                 PDF resume download (public/off toggle, no auth tier)
     /photos/<storage_name>  Serve uploaded photos from storage directory
     /sitemap.xml            Auto-generated XML sitemap for search engines
     /robots.txt             Crawler directives
@@ -323,15 +323,24 @@ def resume_download():
 
     Controlled by the 'resume_visibility' setting:
     - 'public': Anyone can download.
-    - 'private': Accessible via direct link only (no nav link shown).
-    - 'off': Returns 404.
+    - 'off' (default): Returns 404.
+
+    Issue #126 — the former 'private' tier was security-through-obscurity.
+    There was no auth, token, or IP gate on the ``/resume`` URL, so
+    'private' was indistinguishable from 'public' to anyone who had the
+    link. Likewise the documented ``?visibility=private`` query parameter
+    had never been honoured by this handler. Both vestiges have been
+    removed: ``/resume`` is the only public URL, and any ``?visibility=``
+    query parameter is ignored. Existing databases with
+    ``resume_visibility='private'`` are migrated to 'public' by
+    migration 013 so previously-reachable downloads stay reachable.
 
     The PDF must be placed at uploads/resume.pdf (uploaded via admin in
     a future enhancement, or manually placed on the server).
     """
     db = get_db()
     visibility = get_setting(db, 'resume_visibility', 'off')
-    if visibility == 'off':
+    if visibility != 'public':
         abort(404)
     upload_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
@@ -376,7 +385,18 @@ def sitemap():
     entry carries ``<xhtml:link rel="alternate" hreflang="...">``
     children and an ``x-default`` pointer, matching Google's
     recommended multilingual sitemap format.
+
+    Phase 30 (#128): all interpolated values (slugs, locales,
+    canonical host) flow through ``html.escape`` so a legitimate
+    slug like ``q&a-with-jane`` doesn't produce malformed XML that
+    search engines reject. ``html.escape`` covers ``&``, ``<``, ``>``,
+    plus ``"`` and ``'`` (the ``quote=True`` default) so attribute
+    values are safe too. Matches the convention already used by
+    ``app/routes/blog.py`` for the RSS feed. A future cleanup could
+    move to ``xml.etree.ElementTree`` if this function grows.
     """
+    from html import escape as _xml_escape
+
     from app.models import get_visible_projects as _visible_projects
 
     db = get_db()
@@ -423,20 +443,27 @@ def sitemap():
     emit_alternates = len(locales) > 1
     xhtml_ns = ' xmlns:xhtml="http://www.w3.org/1999/xhtml"' if emit_alternates else ''
 
+    # Pre-escape the canonical host once — reused on every URL.
+    safe_base = _xml_escape(base_url)
+
     # Build the XML response
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
     xml += f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"{xhtml_ns}>\n'
     for path, priority in pages:
+        safe_path = _xml_escape(path)
         xml += '  <url>'
-        xml += f'<loc>{base_url}{path}</loc>'
-        xml += f'<priority>{priority}</priority>'
+        xml += f'<loc>{safe_base}{safe_path}</loc>'
+        xml += f'<priority>{_xml_escape(priority)}</priority>'
         if emit_alternates:
             for loc in locales:
+                safe_loc = _xml_escape(loc)
                 xml += (
-                    f'<xhtml:link rel="alternate" hreflang="{loc}" '
-                    f'href="{base_url}{path}?lang={loc}"/>'
+                    f'<xhtml:link rel="alternate" hreflang="{safe_loc}" '
+                    f'href="{safe_base}{safe_path}?lang={safe_loc}"/>'
                 )
-            xml += f'<xhtml:link rel="alternate" hreflang="x-default" href="{base_url}{path}"/>'
+            xml += (
+                f'<xhtml:link rel="alternate" hreflang="x-default" href="{safe_base}{safe_path}"/>'
+            )
         xml += '</url>\n'
     xml += '</urlset>'
 
