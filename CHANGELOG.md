@@ -13,6 +13,11 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Closed — Phase 29.4: code-redundancy tracking issue closeout (#56)
 
 - Issue #56 (the v0.3.3 audit's omnibus tracking issue for ~40 redundancy items across routes, services, models, templates, tests, and `manage.py`) carried a closeout comment listing which bullets landed in v0.3.3 (29.1 form-field helper, 29.2 CRUD `update_fields` triad, 29.3 test fixture consolidation) and which roll forward as standalone issues. The remaining bullets (A2-A13, B1-B15, C1-C4, D1-D2, E1-E5) are tracked individually so each one can be triaged on its own merits rather than as a half-life-decaying batch. Don't keep a tracking issue indefinitely — it stops tracking once the half-life exceeds the release cycle.
+### Security — Phase 28.4: systemd hardening on Quadlet + backup service (#27)
+
+- `resume-site.container` and `resume-site-backup.service` now ship the low-risk `systemd.exec` hardening set under `[Service]`: `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`, `ProtectHome`, `RestrictSUIDSGID`, `LockPersonality`, `RestrictNamespaces`, `SystemCallArchitectures=native`. Each directive carries an inline comment with its purpose and the per-line rollback (comment out + `daemon-reload`). `ReadWritePaths=` whitelists the dirs each unit actually needs writable under `ProtectSystem=strict` (`%h/.local/share/containers` + `%t/containers` for the container unit; `%t/containers` for the backup unit).
+- `MemoryDenyWriteExecute=yes` ships **commented out** pending Pillow validation in staging — Pillow's libjpeg/libwebp DSOs sometimes use W^X-violating mappings on the image-processing path. Operators with the photo-upload code path should validate in a staging deployment before uncommenting; if Pillow segfaults on photo upload, leave it commented out.
+- The `resume-site-purge.service` follow-up is unchanged from v0.3.2 — the unit was deferred and does not exist in-tree, so this phase ships hardening for the two units that do.
 
 ### Performance — Phase 26.3: paginate `/admin/blog` (#54)
 

@@ -58,6 +58,70 @@ TimeoutStartSec=30min
 # (disk full, container down).
 Restart=no
 
+# -------------------------------------------------------------
+# Phase 28.4 — systemd.exec hardening (#27)
+#
+# This unit shells out to `podman exec` against the long-running
+# container. The actual write to the backups volume happens *inside*
+# the container; the host-side process is just the podman CLI plus
+# its socket-talker. Hardening here closes the host-side surface —
+# it does NOT need to whitelist the backup directory, because that
+# directory is the container's view, not a host path systemd sees.
+#
+# Rollback for any single directive: comment out the line and run
+# `systemctl --user daemon-reload` then restart the timer.
+# -------------------------------------------------------------
+
+# NoNewPrivileges: blocks setuid/setcap escalation. Pure restriction;
+# rarely breaks anything. Rollback: comment out the line.
+NoNewPrivileges=yes
+
+# PrivateTmp: gives the unit a private /tmp and /var/tmp namespace.
+# Pure restriction. Rollback: comment out.
+PrivateTmp=yes
+
+# ProtectSystem=strict: mounts /, /usr, /boot, /efi, /etc read-only.
+# `podman exec` only needs to read from /usr (the binary) and talk
+# to the Podman socket under XDG_RUNTIME_DIR (covered by the implicit
+# allowlist that ProtectSystem leaves open). Rollback: drop to
+# ProtectSystem=full if a future change writes to /etc.
+ProtectSystem=strict
+
+# ProtectHome: hides /home, /root, /run/user. `podman exec` reaches
+# the rootless daemon via the socket under %t (XDG_RUNTIME_DIR),
+# whitelisted below — it doesn't need /home for this command.
+# Rollback: ProtectHome=read-only if a future invocation needs to
+# read a config from %h.
+ProtectHome=yes
+
+# ReadWritePaths: the Podman socket lives under %t (XDG_RUNTIME_DIR);
+# whitelist it so `podman exec` can talk to the daemon under
+# ProtectSystem=strict.
+ReadWritePaths=%t/containers
+
+# RestrictSUIDSGID: forbids creating setuid/setgid files. Pure
+# restriction. Rollback: comment out.
+RestrictSUIDSGID=yes
+
+# LockPersonality: locks personality(2) to the boot default. Pure
+# restriction. Rollback: comment out.
+LockPersonality=yes
+
+# RestrictNamespaces: forbids the unit from creating new namespaces.
+# `podman exec` enters an existing container's namespaces; it does
+# not create new ones from this process. Rollback: if podman errors
+# with EPERM on unshare/clone after a Podman upgrade, set to
+# RestrictNamespaces=user mnt or comment out.
+RestrictNamespaces=yes
+
+# SystemCallArchitectures=native: blocks non-native syscalls. Pure
+# restriction on a 64-bit host. Rollback: comment out.
+SystemCallArchitectures=native
+
+# MemoryDenyWriteExecute=yes  # NOTE: untested against Pillow's image-processing
+                              # path. Enable in a staging deployment first; if
+                              # Pillow segfaults on photo upload, comment out.
+
 [Install]
 # Pulled in as a dependency by the timer; no separate WantedBy needed.
 WantedBy=default.target

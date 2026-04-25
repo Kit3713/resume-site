@@ -63,5 +63,73 @@ HealthStartPeriod=10s
 Restart=on-failure
 TimeoutStartSec=30
 
+# -------------------------------------------------------------
+# Phase 28.4 — systemd.exec hardening (#27)
+#
+# Defence-in-depth for the unit that launches the Podman container.
+# The container runtime itself sandboxes the workload; these
+# directives confine the *systemd-spawned process tree* (the podman
+# CLI, conmon, and any helpers) at the host level.
+#
+# Rollback for any single directive: comment out the line and run
+# `systemctl --user daemon-reload` then restart the unit.
+# -------------------------------------------------------------
+
+# NoNewPrivileges: blocks setuid/setcap escalation inside the unit's
+# process tree. Pure restriction; rarely breaks anything. Rollback:
+# comment out the line.
+NoNewPrivileges=yes
+
+# PrivateTmp: gives the unit a private /tmp and /var/tmp namespace so
+# tmpfile races against other services are impossible. Rollback:
+# comment out if a helper expects to read another service's /tmp.
+PrivateTmp=yes
+
+# ProtectSystem=strict: mounts /, /usr, /boot, /efi, and /etc read-only
+# for this unit. Combined with ReadWritePaths= below for the dirs the
+# container's bind-mounts need writable. Rollback: drop to
+# ProtectSystem=full or comment out if a host-side write outside the
+# whitelisted paths is required.
+ProtectSystem=strict
+
+# ProtectHome: hides /home, /root, and /run/user from the unit. The
+# container reads config.yaml from %h/resume-site/ — that bind-mount
+# is resolved by Podman before this restriction applies, so it's
+# safe. Rollback: set to ProtectHome=read-only or comment out.
+ProtectHome=yes
+
+# ReadWritePaths: explicit writable allowlist that overrides
+# ProtectSystem=strict. Podman state and the named-volume backing
+# stores live under XDG_DATA_HOME; the container's bind-mounts
+# (resume-site-data, resume-site-photos, resume-site-backups) all
+# resolve there for rootless Podman. Rollback: extend this list if
+# you move the volume root, or comment out alongside ProtectSystem.
+ReadWritePaths=%h/.local/share/containers %t/containers
+
+# RestrictSUIDSGID: forbids the unit from creating files with the
+# setuid/setgid bits set. Pure restriction. Rollback: comment out.
+RestrictSUIDSGID=yes
+
+# LockPersonality: locks the kernel personality(2) to the boot
+# default, blocking a class of exploits that pivot through legacy
+# personality bits. Rollback: comment out.
+LockPersonality=yes
+
+# RestrictNamespaces: forbids the unit from creating new kernel
+# namespaces. Podman's user-namespace setup happens in a child
+# process that systemd treats as already-namespaced, so rootless
+# Podman keeps working. Rollback: if `podman` errors with EPERM on
+# unshare/clone, set to RestrictNamespaces=user mnt or comment out.
+RestrictNamespaces=yes
+
+# SystemCallArchitectures=native: blocks syscalls from non-native
+# architectures (x32, i386 on x86_64). Pure restriction on a 64-bit
+# host. Rollback: comment out if you ship a 32-bit helper binary.
+SystemCallArchitectures=native
+
+# MemoryDenyWriteExecute=yes  # NOTE: untested against Pillow's image-processing
+                              # path. Enable in a staging deployment first; if
+                              # Pillow segfaults on photo upload, comment out.
+
 [Install]
 WantedBy=default.target

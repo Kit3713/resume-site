@@ -97,8 +97,8 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 ### 28.4 — Quadlet / systemd hardening (#27)
 
-- [ ] Add the low-risk `systemd.exec` hardening directives to `resume-site.container` and `resume-site-backup.service`: `NoNewPrivileges=yes`, `PrivateTmp=yes`, `ProtectSystem=strict`, `ProtectHome=yes`, `RestrictSUIDSGID=yes`, `LockPersonality=yes`, `MemoryDenyWriteExecute=yes` (test against Pillow first), `RestrictNamespaces=yes`, `SystemCallArchitectures=native`. Document each in comments with the rationale and the rollback procedure.
-- [ ] Apply the same set to the `resume-site-purge.service` added in v0.3.2 Phase 25.1.
+- [x] Add the low-risk `systemd.exec` hardening directives to `resume-site.container` and `resume-site-backup.service`: `NoNewPrivileges=yes`, `PrivateTmp=yes`, `ProtectSystem=strict`, `ProtectHome=yes`, `RestrictSUIDSGID=yes`, `LockPersonality=yes`, `MemoryDenyWriteExecute=yes` (test against Pillow first), `RestrictNamespaces=yes`, `SystemCallArchitectures=native`. Document each in comments with the rationale and the rollback procedure.
+- [x] Apply the same set to the `resume-site-purge.service` added in v0.3.2 Phase 25.1.
 
 ---
 
