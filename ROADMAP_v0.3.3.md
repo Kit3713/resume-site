@@ -66,9 +66,9 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 ### 26.5 — `/metrics` disk-usage scrape cost (#36)
 
-- [ ] Currently walks the entire photo directory on every Prometheus scrape. At 10k photos this is seconds per scrape.
-- [ ] Cache the photo-directory size in the settings table (`photos_disk_usage_bytes`, `photos_disk_usage_updated_at`). Refresh in two places: (a) every photo upload/delete bumps the value by the file size delta (cheap); (b) the `manage.py purge-all` run (v0.3.2 Phase 25.1) writes a ground-truth total as a reconciliation step. `/metrics` reads the cached value in O(1). Document the staleness window (max 24 h between reconciliations).
-- [ ] Same pattern for the DB size gauge (stat the file, cheap — leave as-is).
+- [x] Currently walks the entire photo directory on every Prometheus scrape. At 10k photos this is seconds per scrape.
+- [x] Cache the photo-directory size in the settings table (`photos_disk_usage_bytes`, `photos_disk_usage_updated_at`). Refresh in two places: (a) every photo upload/delete bumps the value by the file size delta (cheap); (b) the `manage.py purge-all` run (v0.3.2 Phase 25.1) writes a ground-truth total as a reconciliation step. `/metrics` reads the cached value in O(1). Document the staleness window (max 24 h between reconciliations).
+- [x] Same pattern for the DB size gauge (stat the file, cheap — leave as-is).
 
 ### 26.6 — Benchmark harness sets its own log level (#64)
 

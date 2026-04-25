@@ -46,6 +46,13 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `process_upload` now calls `img.draft('RGB', (2000, 2000))` immediately after `Image.open()` when the source is a JPEG. Pillow forwards this to libjpeg-turbo which emits a smaller image during DCT decoding — so the LANCZOS resize that follows works on a buffer already close to the 2000 px target rather than the full 6000 px source. Measured ~2.74× faster on a synthetic 24 MP gradient JPEG (median of 5 in-process iterations); libjpeg-turbo docs cite 4-8× on real DSLR JPEGs with 3-5 MB on-disk size and high-frequency detail. The "Photo upload CPU" perf cliff for 24 MP DSLR JPEGs drops from ≈ 5 s to ~1-2 s. Variant ladder (640w / 1024w / 2000 px) is unchanged; EXIF stripping still works.
 - Three regression tests in `tests/test_photo_processing.py`: full variant ladder produced for a 24 MP fixture, post-`draft()` output stays within 1% byte tolerance of the pre-change pipeline at the same `quality=85` save (compared via monkeypatched draft no-op), and EXIF tags are still stripped on the 24 MP path.
+### Performance — Phase 26.5: cache photo-directory size for `/metrics` (#36)
+
+- The `resume_site_disk_usage_bytes{path="photos"}` gauge previously walked the entire photo directory on every Prometheus scrape — at 10 k photos that was multiple seconds per scrape, paid by every reader. The route now reads a cached `photos_disk_usage_bytes` setting in O(1). Photo upload and delete bump the value by the file-size delta (primary file plus whatever responsive variants landed); `manage.py purge-all` reconciles to a ground-truth directory walk so steady-state drift is bounded by the purge cadence (typically 24 h). Fresh installs with a missing or zero cache fall back to a one-time walk and cache the result for the next scrape.
+- DB-size half left as-is — `os.stat()` on the SQLite file is already O(1) and always-fresh.
+- Two new internal-only settings: `photos_disk_usage_bytes`, `photos_disk_usage_updated_at`. Not surfaced in the admin UI (category `Internal` is excluded from `SETTINGS_CATEGORIES`).
+- Three regression tests in `tests/test_metrics.py`: gauge tracks an upload and delete in lockstep, scrapes never call the directory-walk function once the cache is populated, and a fresh install with no cache walks once and writes the result back.
+- `PERFORMANCE.md` documents the cached-scrape contract and the staleness window.
 
 ### Performance — Phase 26.3: paginate `/admin/blog` (#54)
 

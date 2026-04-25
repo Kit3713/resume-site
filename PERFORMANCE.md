@@ -595,6 +595,26 @@ before Postgres becomes necessary.
    `--max-requests 1000 --max-requests-jitter 100` for periodic
    recycling.
 
+### Cached scrape gauges (Phase 26.5, #36)
+
+| Gauge                                   | Strategy                                                                                | Staleness window                                                                                                               |
+|-----------------------------------------|-----------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| `resume_site_disk_usage_bytes{path="photos"}`   | `photos_disk_usage_bytes` setting, bumped by upload / delete deltas; reconciled by `manage.py purge-all` | **Bounded by `purge-all` cadence** (typical: 24 h via the Phase 25.1 `resume-site-purge.timer`). Live writes stay accurate.     |
+| `resume_site_disk_usage_bytes{path="database"}` | `os.stat()` on the SQLite file at scrape time                                           | None — O(1) and always fresh.                                                                                                  |
+
+The photos gauge used to walk the entire photo directory on every
+Prometheus scrape (`os.walk` + `os.path.getsize` per file). At 10 k
+photos that was multiple seconds per scrape, paid by every reader.
+Phase 26.5 caches the running total in the settings table, bumped
+in lockstep with upload / delete by the file-size delta, and
+reconciled to ground truth by `manage.py purge-all` (Phase 25.1).
+The scrape now reads one row from the settings cache — O(1) regardless
+of photo count.
+
+The DB-size gauge stayed put: `os.stat()` on the SQLite file is already
+O(1) and always reflects the live file size, so caching would only add
+drift for no win.
+
 ### Top cyclomatic-complexity hotspots
 
 Advisory — not perf bottlenecks, but cold-path complexity worth watching:

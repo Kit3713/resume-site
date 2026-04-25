@@ -558,6 +558,35 @@ SETTINGS_REGISTRY = {
             'deliberate internal-service dispatch.'
         ),
     },
+    # --- Internal: photo disk-usage cache (Phase 26.5, #36) ---
+    # Auto-maintained — not surfaced in the admin settings UI. Bumped on
+    # every photo upload / delete by the file-size delta and reconciled
+    # by `manage.py purge-all` to a ground-truth directory walk. Lets
+    # /metrics serve the photo-disk gauge in O(1) instead of walking the
+    # tree on every Prometheus scrape. Staleness window between
+    # reconciliations is bounded by the purge-all cadence (typically
+    # 24 h).
+    'photos_disk_usage_bytes': {
+        'type': 'int',
+        'default': '0',
+        'label': 'Photos Disk Usage (bytes, internal)',
+        'category': 'Internal',
+        'description': (
+            'Cached total bytes of the photo storage directory. '
+            'Auto-maintained by upload / delete + reconciled by '
+            "manage.py purge-all. Don't edit by hand."
+        ),
+    },
+    'photos_disk_usage_updated_at': {
+        'type': 'str',
+        'default': '',
+        'label': 'Photos Disk Usage — Last Reconciled (internal)',
+        'category': 'Internal',
+        'description': (
+            'ISO timestamp of the most recent ground-truth reconciliation '
+            'walk written by manage.py purge-all.'
+        ),
+    },
 }
 
 # Ordered list of categories for the admin settings page.

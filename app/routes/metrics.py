@@ -109,7 +109,7 @@ def metrics():
     # Refresh scrape-time gauges (Phase 18.2 deferred batch).
     _refresh_blog_posts_gauge(db)
     _refresh_backup_timestamp_gauge(settings)
-    _refresh_disk_usage_gauge(current_app.config)
+    _refresh_disk_usage_gauge(current_app.config, settings, db)
 
     body = registry.render()
     return body, 200, {'Content-Type': CONTENT_TYPE}
@@ -139,8 +139,21 @@ def _refresh_backup_timestamp_gauge(settings):
         backup_last_success_timestamp.set(dt.replace(tzinfo=UTC).timestamp())
 
 
-def _refresh_disk_usage_gauge(app_config):
-    """Set disk_usage_bytes gauge for the database and photo directories."""
+def _refresh_disk_usage_gauge(app_config, settings, db):
+    """Set disk_usage_bytes gauge for the database and photo directories.
+
+    The DB-size half stays as a one-shot ``os.stat`` of the SQLite file —
+    cheap O(1) regardless of DB size, and there's no equivalent of the
+    photo-tree walk to avoid (Phase 26.5, #36 roadmap note: "leave as-is").
+
+    The photos half reads the cached ``photos_disk_usage_bytes`` setting
+    instead of walking the photo directory. Upload / delete bumps and
+    the ``manage.py purge-all`` reconciliation step keep the value
+    fresh; on a never-reconciled fresh install where the cache is
+    missing or zero we fall back to a single walk and then write the
+    result back so the next scrape is O(1) again. Bounded staleness
+    window is documented in PERFORMANCE.md.
+    """
     import os
 
     with contextlib.suppress(Exception):
@@ -148,12 +161,24 @@ def _refresh_disk_usage_gauge(app_config):
         if db_path and os.path.isfile(db_path):
             disk_usage_bytes.set(os.path.getsize(db_path), label_values=('database',))
 
+    photo_dir = app_config.get('PHOTO_STORAGE', '')
+    cached_raw = settings.get('photos_disk_usage_bytes', '')
+    try:
+        cached = int(cached_raw) if cached_raw else 0
+    except (TypeError, ValueError):
+        cached = 0
+
+    if cached > 0:
+        disk_usage_bytes.set(cached, label_values=('photos',))
+        return
+
+    # Fresh install / never-reconciled: walk once, cache, then serve
+    # the cached value on every subsequent scrape.
     with contextlib.suppress(Exception):
-        photo_dir = app_config.get('PHOTO_STORAGE', '')
-        if photo_dir and os.path.isdir(photo_dir):
-            total = sum(
-                os.path.getsize(os.path.join(dirpath, f))
-                for dirpath, _dirnames, filenames in os.walk(photo_dir)
-                for f in filenames
-            )
-            disk_usage_bytes.set(total, label_values=('photos',))
+        from app.services.photos import _photo_storage_total_bytes
+        from app.services.settings_svc import set_one
+
+        total = _photo_storage_total_bytes(photo_dir)
+        disk_usage_bytes.set(total, label_values=('photos',))
+        if total > 0 and db is not None:
+            set_one(db, 'photos_disk_usage_bytes', total)
