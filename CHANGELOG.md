@@ -42,6 +42,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added — Phase 37.1: API compatibility policy doc
 
 - New `docs/API_COMPATIBILITY.md` — the stated contract between this codebase and any API / webhook consumer. Enumerates what MAY NOT change within a major version prefix (endpoints, field names, field types, error codes, event names, webhook envelope shape), what MAY change non-breakingly (new fields, new codes, new events, stricter validation), and the deprecation process every breaking change must go through (at minimum one release of `Deprecation`/`Sunset`/`Link` headers + CHANGELOG `Deprecated` entry + explicit removal release). Paired with the existing `docs/UPGRADE.md` which guarantees data survival; this doc closes the orthogonal consumer-contract gap.
+- Cross-references to `docs/API_COMPATIBILITY.md` added from `README.md` (Backup / REST API section), `docs/PRODUCTION.md` §9 (Upgrades), and a new `docs/API.md` stub that contextualises the OpenAPI spec — so a reader landing in any of the three entry points can find the compat contract without grepping.
 - Deferred to v0.3.3 or v0.4.0: the `@deprecated` decorator (37.2), OpenAPI spec drift guard (37.3), CHANGELOG-enforcement CI grep (37.4). The policy is the load-bearing piece; the plumbing lands as individual endpoints reach their first deprecation.
 
 ### Security — Phase 25.3: bounded webhook-dispatch thread pool (#47)

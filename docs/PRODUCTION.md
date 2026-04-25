@@ -547,6 +547,12 @@ Every published image is cosign-signed via GitHub's OIDC identity
 was built by the resume-site CI workflow and hasn't been tampered
 with on the registry.
 
+[`docs/UPGRADE.md`](UPGRADE.md) covers data-survival across upgrades
+(migration reversibility, `pre-restore-*` sidecars, rolling-upgrade
+replay). For the orthogonal API-consumer contract — what stays stable
+across `/api/v1/*` and what triggers a `/api/v2/` prefix bump — see
+[`docs/API_COMPATIBILITY.md`](API_COMPATIBILITY.md).
+
 ---
 
 ## 10. Day-2 operations

@@ -372,6 +372,10 @@ mapped to the `resume-site-backups` named volume in both
 `compose.yaml` and the Quadlet unit). Inspect the host-side path with
 `podman volume inspect resume-site-backups`.
 
+For the formal compatibility / deprecation contract covering every
+`/api/v1/*` endpoint and the webhook envelope, see
+[`docs/API_COMPATIBILITY.md`](docs/API_COMPATIBILITY.md).
+
 #### Scheduled (systemd timer)
 
 For Quadlet / systemd deployments, the repository ships
