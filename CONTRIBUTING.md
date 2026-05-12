@@ -31,6 +31,13 @@ Thanks for your interest in contributing to resume-site.
 
 Dead-code detection (`vulture`) is now blocking in CI. Run `vulture app/ manage.py vulture_allowlist.py --min-confidence 80` locally before committing — the pre-commit hook does this automatically. If vulture flags a runtime-dispatched callable (Flask route handler hit only via the URL map, a method invoked by reflection, etc.), add a single-line entry to `vulture_allowlist.py` with an inline comment explaining why the finding is a false positive. Truly dead code should be deleted, not allowlisted.
 
+
+## Edge-Case Test Requirement (v0.3.3+)
+
+If your PR touches a function that accepts user input (HTTP params, JSON body, form fields, headers, cookies, file uploads, token parsing), include edge-case tests derived from `tests/TESTING_STANDARDS.md`.
+
+At minimum, add/adjust tests for applicable categories: empty/null, boundary, type mismatch, Unicode, length, concurrency, and injection.
+
 ## Container Image Changes (v0.3.0+)
 
 If your PR touches `Containerfile`, `requirements.txt`, or anything that ends up baked into the runtime image:

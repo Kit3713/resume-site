@@ -131,7 +131,7 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 - [ ] **OWASP ZAP baseline scan in CI:** New `security-scan` job in `.github/workflows/ci.yml`. Runs `zap-baseline.py` against the container built by `container-build`, seeded with the test content from `seeds/`. Passes if zero MEDIUM+ findings; uploads the HTML report as a CI artifact either way. `needs: [test, container-build]`; blocks `publish` via the existing `needs` chain.
 - [ ] **`zap-config.yaml`:** Tune the ruleset — exclude known-accepted findings (the Server-header fingerprint is fine once v0.3.2 #14 lands; the admin-login form deliberately sends no Cache-Control: no-store because Flask-Login handles it). Every exclusion carries an inline comment with the issue link.
 - [ ] **Authenticated-scan mode:** ZAP logs into the test app via the admin form, follows admin routes, and scans them under authentication. Test admin credentials provisioned by the CI seed step only.
-- [ ] **Report retention:** CI artifact kept 30 days. Runbook in `docs/SECURITY.md` for operators to re-run locally against their own deployment.
+- [x] **Report retention:** CI artifact kept 30 days. Runbook in `docs/SECURITY.md` for operators to re-run locally against their own deployment.
 
 ---
 
@@ -139,7 +139,7 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 *The v0.2.0 deferral that slid through v0.3.0. Playwright is the only way to catch regressions in the GSAP animations, the Quill editor, the theme-editor live preview, and the Sortable.js drag-drop wiring. v0.3.3 also absorbs the two Playwright-dependent v0.3.0 items that were parked waiting on this phase.*
 
-- [ ] **Playwright dev dependency + CI job:** Add `playwright` + `playwright install --with-deps chromium` to the dev setup. New CI job `browser-tests` runs against the built container, `needs: container-build`. Screenshots + video on failure retained as artifacts.
+- [x] **Playwright dev dependency + CI job:** Add `playwright` + `playwright install --with-deps chromium` to the dev setup. New CI job `browser-tests` runs against the built container, `needs: container-build`. Screenshots + video on failure retained as artifacts. (Seed implementation landed: CI job + smoke test for theme persistence.)
 - [ ] **Dark/light mode toggle:** `localStorage.setItem('theme', 'light')` then reload; assert `<html>` carries `data-theme="light"` and the computed `--color-bg` matches the light-theme custom property.
 - [ ] **GSAP scroll animation:** Scroll to each section; assert the fade+slide class has been applied within 2 s; assert no JS errors in the console.
 - [ ] **Quill editor content round-trip:** Admin login → content editor → type + format a paragraph → save → reload → assert content round-tripped byte-for-byte.
@@ -179,7 +179,7 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 - [ ] **`tests/TESTING_STANDARDS.md`:** The edge-case checklist from the v0.3.0 18.13 draft — empty/null, boundary, type mismatch, Unicode, length, concurrency, injection. Each category carries two or three concrete examples drawn from real bugs this codebase has had.
 - [ ] **Retroactive pass (ranked):** Apply the checklist to `tests/test_admin.py`, `tests/test_api.py`, `tests/test_webhooks.py`, `tests/test_photos.py`, `tests/test_reviews.py`, `tests/test_settings.py`, `tests/test_blog_admin.py`. Track per-file completion in `tests/TESTING_STANDARDS.md`. Remaining files carry over as tech-debt issues — don't block v0.3.3 on 100% coverage.
-- [ ] **New-code requirement:** `CONTRIBUTING.md` documents that every PR touching a function accepting user input must include the checklist-derived tests. Code-review checklist template in `.github/pull_request_template.md` references the file.
+- [x] **New-code requirement:** `CONTRIBUTING.md` documents that every PR touching a function accepting user input must include the checklist-derived tests. Code-review checklist template in `.github/pull_request_template.md` references the file.
 - [ ] **Linked to Phase 33:** surviving mutants often reveal the edge cases the test missed. Do 33 and 34 in the same sprint — each informs the other.
 
 ---
