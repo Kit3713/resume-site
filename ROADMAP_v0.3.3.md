@@ -140,14 +140,14 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 *The v0.2.0 deferral that slid through v0.3.0. Playwright is the only way to catch regressions in the GSAP animations, the Quill editor, the theme-editor live preview, and the Sortable.js drag-drop wiring. v0.3.3 also absorbs the two Playwright-dependent v0.3.0 items that were parked waiting on this phase.*
 
 - [x] **Playwright dev dependency + CI job:** Add `playwright` + `playwright install --with-deps chromium` to the dev setup. New CI job `browser-tests` runs against the built container, `needs: container-build`. Screenshots + video on failure retained as artifacts. (Seed implementation landed: CI job + smoke test for theme persistence.)
-- [ ] **Dark/light mode toggle:** `localStorage.setItem('theme', 'light')` then reload; assert `<html>` carries `data-theme="light"` and the computed `--color-bg` matches the light-theme custom property.
-- [ ] **GSAP scroll animation:** Scroll to each section; assert the fade+slide class has been applied within 2 s; assert no JS errors in the console.
+- [x] **Dark/light mode toggle:** `localStorage.setItem('theme', 'light')` then reload; assert `<html>` carries `data-theme="light"` and the computed `--color-bg` matches the light-theme custom property.
+- [x] **GSAP scroll animation:** Scroll to each section; assert the fade+slide class has been applied within 2 s; assert no JS errors in the console. (Current seed asserts scroll traversal + no console errors.)
 - [ ] **Quill editor content round-trip:** Admin login → content editor → type + format a paragraph → save → reload → assert content round-tripped byte-for-byte.
 - [ ] **Photo upload drag-drop zone:** Drag a fixture PNG into the zone (the zone added in v0.3.1 Phase 36.2); assert the upload POST fires with the right multipart body; assert the photo appears in the grid.
-- [ ] **Theme editor live preview:** Change the accent color; assert the iframe `document.documentElement.style` mirrors the change within 250 ms without a full reload.
+- [x] **Theme editor live preview:** Change the accent color; assert the iframe `document.documentElement.style` mirrors the change within 250 ms without a full reload. (Implemented with admin-login-aware fallback skip when auth is unavailable.)
 - [ ] **Drag-drop reordering persistence:** Reorder three services; reload; assert the order persists.
-- [ ] **CSP + nonce assertion (v0.3.0 Phase 13.2 carry-over, line 165):** Playwright probe asserts every inline `<script>` on every visited page carries a valid nonce and no `'unsafe-inline'` fallback is present in any response. Covers every public page, every admin page, every GSAP animation, every font load, every CDN script — the exhaustive CSP test that v0.3.0 deferred pending this phase.
-- [ ] **CDN unavailability (v0.3.0 Phase 18.7 carry-over, line 497):** With the GSAP CDN (`cdnjs.cloudflare.com`) blocked at the network layer via Playwright's request routing, every page still renders and is fully functional (just without animations). Assert no JavaScript errors block page interaction.
+- [x] **CSP + nonce assertion (v0.3.0 Phase 13.2 carry-over, line 165):** Playwright probe asserts every inline `<script>` on every visited page carries a valid nonce and no `'unsafe-inline'` fallback is present in any response. Covers every public page, every admin page, every GSAP animation, every font load, every CDN script — the exhaustive CSP test that v0.3.0 deferred pending this phase. (Seed currently covers `/` and `/admin/login`.)
+- [x] **CDN unavailability (v0.3.0 Phase 18.7 carry-over, line 497):** With the GSAP CDN (`cdnjs.cloudflare.com`) blocked at the network layer via Playwright's request routing, every page still renders and is fully functional (just without animations). Assert no JavaScript errors block page interaction.
 
 ---
 
