@@ -6,11 +6,22 @@ Three user behaviors for locust load testing:
   - APIConsumerBehavior: simulates API client reading public endpoints
   - AdminBehavior: simulates admin dashboard + content editing
 
+Set ``LOCUST_SKIP_ADMIN=1`` to omit AdminBehavior — used by the
+``perf-regression`` CI job, which seeds a stub admin user without a
+real password hash so authenticated traversal would 403 across the
+board and trip the regression gate's failure-count check. The
+production baseline (50 users × 5 min) runs without the skip and
+exercises authenticated admin paths via a real password.
+
 Usage:
   locust -f tests/loadtests/locustfile.py --headless -u 50 -r 5 -t 5m --host http://localhost:8080
 """
 
+import os
+
 from locust import HttpUser, between, task
+
+SKIP_ADMIN = bool(os.environ.get('LOCUST_SKIP_ADMIN'))
 
 
 class PublicUserBehavior(HttpUser):
@@ -88,8 +99,15 @@ class APIConsumerBehavior(HttpUser):
 
 
 class AdminBehavior(HttpUser):
-    """Simulates an admin session browsing the dashboard and editing content."""
+    """Simulates an admin session browsing the dashboard and editing content.
 
+    Disabled via ``abstract = True`` when ``LOCUST_SKIP_ADMIN`` is set in the
+    environment. Locust treats abstract user classes as registration-only,
+    so no instances are spawned and the /admin/* endpoints are absent from
+    the stats CSV. ``regression_check.py`` then reports them as SKIPPED.
+    """
+
+    abstract = SKIP_ADMIN
     wait_time = between(2, 5)
     weight = 1
 

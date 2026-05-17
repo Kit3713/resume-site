@@ -332,6 +332,179 @@ jobs:
             manage.py migrate --dry-run
 
   # -----------------------------------------------------------
+  # Load-test regression gate (Phase 32)
+  #
+  # 20 concurrent users × 60 s against the freshly-built container.
+  # Pass criteria: every endpoint listed in
+  # tests/loadtests/thresholds.json reports p95 <= threshold * 1.20
+  # AND zero failures. The summary table is rendered into the
+  # GitHub step output by ``regression_check.py`` so PR reviewers
+  # see the per-endpoint verdict without expanding the log.
+  #
+  # Memory leak probe: ``memory_probe.py`` reads /proc/<pid>/status
+  # at run start + end and prints the RSS delta. Advisory in
+  # v0.3.3 (does NOT fail the build); ratchets to blocking in
+  # v0.4.0 once the floor is stable across runners.
+  #
+  # The job is intentionally short (60 s) because every PR runs
+  # it. The headline 50-user / 5-minute baseline is the floor
+  # that the thresholds.json values are calibrated against —
+  # captured locally and documented in PERFORMANCE.md.
+  # -----------------------------------------------------------
+  perf-regression:
+    runs-on: ubuntu-latest
+    needs: container-build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install locust
+        run: |
+          python -m pip install --upgrade pip
+          # Pin matches requirements-dev.txt so the gate measurement
+          # is stable across CI runs and developer machines.
+          pip install 'locust==2.43.4'
+
+      - name: Build container image (for perf gate)
+        run: |
+          docker build \
+            --build-arg IMAGE_VERSION="ci-${GITHUB_SHA::7}" \
+            -t ${{ env.IMAGE_NAME }}:perf \
+            -f Containerfile .
+
+      - name: Write perf-gate config + seed blog content
+        run: |
+          # Single-quoted heredoc keeps $-delimiters in the
+          # password_hash literal from undergoing shell expansion.
+          cat > /tmp/perf-config.yaml <<'EOF'
+          secret_key: "perf-regression-key-not-for-production-but-long-enough"
+          database_path: "/app/data/site.db"
+          photo_storage: "/app/photos"
+          session_cookie_secure: false
+          admin:
+            username: "admin"
+            password_hash: "pbkdf2:sha256:600000$perfsalt$0000000000000000000000000000000000000000000000000000000000000000"
+          EOF
+
+      - name: Boot container + seed published blog posts
+        run: |
+          set -e
+          docker run -d --name perf-container \
+            -p 18080:8080 \
+            -v /tmp/perf-config.yaml:/app/config.yaml:ro \
+            ${{ env.IMAGE_NAME }}:perf
+
+          # Poll /readyz until green (init-db + migrate must finish
+          # before locust starts) or fail loudly after 30 s.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:18080/readyz > /dev/null 2>&1; then
+              echo "perf container ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:18080/readyz || (docker logs perf-container && exit 1)
+
+          # Seed enough published blog content for /blog + /api/v1/blog
+          # to return 200 under load. Locustfile hits both — without
+          # seed data they'd 404 and skew the failure-count check.
+          docker exec perf-container python -c "
+          import sqlite3
+          db = sqlite3.connect('/app/data/site.db')
+          db.execute(\"UPDATE settings SET value='true' WHERE key='blog_enabled'\")
+          for i in range(1, 6):
+              db.execute(
+                  \"INSERT OR IGNORE INTO blog_posts(slug, title, summary, content, status, published_at) \"
+                  \"VALUES(?, ?, ?, ?, 'published', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))\",
+                  (f'seed-post-{i}', f'Seed Post {i}', 'Summary.', '<p>Body.</p>')
+              )
+          db.commit()
+          db.close()
+          "
+
+      - name: Capture start RSS (memory probe)
+        id: rss_start
+        run: |
+          # /proc lives on the host kernel; the container shares it.
+          # ``docker top`` gives us the host PID of PID 1 inside the
+          # container, which is the Gunicorn master (the wrapper that
+          # forks workers).
+          PID=$(docker top perf-container -o pid | tail -n +2 | head -1)
+          echo "host_pid=$PID" >> $GITHUB_OUTPUT
+          # The probe script will emit the delta after locust exits.
+          # Capture the start RSS here purely for the job log.
+          if [ -r "/proc/$PID/status" ]; then
+            grep VmRSS "/proc/$PID/status"
+          else
+            echo "WARNING: /proc/$PID/status not readable; probe will skip."
+          fi
+
+      - name: Run locust + memory probe
+        env:
+          # The perf-config above seeds a stub admin user with a bogus
+          # password_hash literal. Authenticated traversal would 403
+          # across the board and the regression gate's failure-count
+          # check would always trip. Skip AdminBehavior in CI; the
+          # production 50×5min baseline runs without this env and
+          # exercises admin paths with real credentials.
+          LOCUST_SKIP_ADMIN: '1'
+        run: |
+          set -e
+          PID="${{ steps.rss_start.outputs.host_pid }}"
+          mkdir -p perf-out
+          python tests/loadtests/memory_probe.py --pid "$PID" -- \
+              locust -f tests/loadtests/locustfile.py --headless \
+                  -u 20 -r 5 -t 60s --host http://localhost:18080 \
+                  --csv=perf-out/run --only-summary
+
+      - name: Regression check (p95 gate)
+        run: |
+          # ``set -o pipefail`` so a non-zero exit from
+          # regression_check.py (regression detected) fails the
+          # pipeline even though ``tee`` itself exits 0. Without
+          # it, a perf regression silently passes the job.
+          set -o pipefail
+          python tests/loadtests/regression_check.py \
+              --stats perf-out/run_stats.csv \
+              --thresholds tests/loadtests/thresholds.json \
+              2>&1 | tee perf-out/summary.md
+          # Append the markdown summary to the GitHub job summary so
+          # reviewers see the per-endpoint table without scrolling
+          # through the full locust output. Runs only on the success
+          # path; on regression the step has already failed above.
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f perf-out/summary.md ]; then
+            cat perf-out/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publish summary on failure
+        if: failure()
+        run: |
+          # Make sure the failed-run summary still reaches the
+          # GitHub UI even though the previous step exited non-zero.
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f perf-out/summary.md ]; then
+            cat perf-out/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload locust artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-regression-stats
+          path: perf-out/
+          retention-days: 14
+
+      - name: Stop perf container
+        if: always()
+        run: |
+          docker logs perf-container || true
+          docker stop perf-container || true
+          docker rm perf-container || true
+
+  # -----------------------------------------------------------
   publish:
     runs-on: ubuntu-latest
     # container-scan must pass before any image is pushed. This is the

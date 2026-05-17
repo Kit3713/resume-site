@@ -1,12 +1,20 @@
 {
-  "_comment": "CI performance regression thresholds (Phase 18.6). Populate after running the baseline load test. p95 values in milliseconds.",
+  "_comment": "CI performance regression thresholds (Phase 32). p95 values in milliseconds, derived from the local 25-user / 60s baseline captured 2026-05-17 + 20% headroom over the measured number. The CI perf-regression job fails when an endpoint's measured p95 exceeds threshold * 1.20 (effectively 1.44x of the original measurement). Endpoints absent from this map are skipped by the regression checker (they're advisory). The production-scale baseline (50 users * 5min) is captured on the CI's dedicated runner and lives in PERFORMANCE.md under 'Load Test Baseline'. When intentional regressions are accepted, bump the threshold in the same PR and cite the justification.",
   "thresholds": {
-    "/": {"p95_ms": null},
-    "/portfolio": {"p95_ms": null},
-    "/blog": {"p95_ms": null},
-    "/services": {"p95_ms": null},
-    "/api/v1/site": {"p95_ms": null},
-    "/api/v1/portfolio": {"p95_ms": null},
-    "/admin/": {"p95_ms": null}
+    "/": {"p95_ms": 70},
+    "/portfolio": {"p95_ms": 90},
+    "/blog": {"p95_ms": 80},
+    "/services": {"p95_ms": 115},
+    "/projects": {"p95_ms": 60},
+    "/testimonials": {"p95_ms": 60},
+    "/contact": {"p95_ms": 50},
+    "/api/v1/site": {"p95_ms": 30},
+    "/api/v1/portfolio": {"p95_ms": 35},
+    "/api/v1/services": {"p95_ms": 70},
+    "/api/v1/stats": {"p95_ms": 50},
+    "/api/v1/blog": {"p95_ms": 90},
+    "/api/v1/testimonials": {"p95_ms": 80},
+    "/api/v1/certifications": {"p95_ms": 55},
+    "/admin/": {"p95_ms": 105}
   }
 }
