@@ -444,6 +444,14 @@ jobs:
           fi
 
       - name: Run locust + memory probe
+        env:
+          # The perf-config above seeds a stub admin user with a bogus
+          # password_hash literal. Authenticated traversal would 403
+          # across the board and the regression gate's failure-count
+          # check would always trip. Skip AdminBehavior in CI; the
+          # production 50×5min baseline runs without this env and
+          # exercises admin paths with real credentials.
+          LOCUST_SKIP_ADMIN: '1'
         run: |
           set -e
           PID="${{ steps.rss_start.outputs.host_pid }}"
