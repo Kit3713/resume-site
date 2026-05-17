@@ -28,6 +28,13 @@ mutmut>=3.2.0
 locust>=2.32.0
 playwright>=1.49.0
 
+# --- Phase 31: Browser-based testing (pytest integration for Playwright) ---
+# `playwright` is the underlying browser-automation library; `pytest-playwright`
+# wires it into the pytest runner via the `page` / `browser_context` fixtures.
+# Both must move together — pinning only one risks an API drift the other half
+# of the stack can't follow.
+pytest-playwright>=0.5.0
+
 # --- pip-tools itself (so pip-compile / pip-sync are always present) ---
 pip-tools>=7.4.1
 

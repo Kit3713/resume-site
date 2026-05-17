@@ -199,6 +199,15 @@ runner = "python -m pytest -x -q"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+# Phase 31: ``tests/browser/`` is OPTED OUT of the default ``pytest tests/``
+# invocation. Those tests require a live HTTP server (Playwright drives a
+# real browser at BASE_URL) which the unit-test runner doesn't provide.
+# CI invokes them in a dedicated ``browser-tests`` job; developers run
+# them locally with ``pytest tests/browser/`` after booting the dev
+# server. The ignore is implemented via the root-level ``tests/conftest.py``
+# ``collect_ignore`` list so we don't replace pytest's default
+# ``norecursedirs`` (which would un-shield ``.hypothesis`` / ``.git`` /
+# ``node_modules``).
 addopts = [
     "-ra",              # Report summary for all non-passing outcomes
     "--strict-markers", # Unregistered @pytest.mark.* fails the suite

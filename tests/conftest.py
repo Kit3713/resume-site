@@ -14,10 +14,30 @@ Fixtures:
 
 import os
 import sqlite3
+import sys
 
 import pytest
 
 from app import create_app
+
+# ---------------------------------------------------------------------------
+# Phase 31 — opt out of browser/ collection from the default ``pytest tests/``
+# invocation. The browser suite drives Playwright against a live HTTP server;
+# the standard unit-test runner has no server to point it at. We deliberately
+# implement this via ``collect_ignore`` (rather than ``norecursedirs`` in
+# pyproject.toml) because the latter REPLACES pytest's default ignore list,
+# which would un-shield ``.hypothesis`` / ``.git`` / ``node_modules`` and so on.
+# Explicit invocations like ``pytest tests/browser/`` bypass this list — only
+# the recursive walk from ``tests/`` skips it.
+# ---------------------------------------------------------------------------
+collect_ignore = ['browser']
+
+# When the user explicitly asked for browser tests (``pytest tests/browser/...``
+# anywhere in argv) we DON'T want collect_ignore to fire, otherwise the
+# explicit invocation collects nothing. The check below preserves the
+# default-skip behaviour while letting targeted runs through.
+if any('browser' in str(arg) for arg in sys.argv[1:]):
+    collect_ignore = []
 
 # ---------------------------------------------------------------------------
 # Config helper

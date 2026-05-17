@@ -146,6 +146,23 @@ def test_headers_present_on_404(client):
     assert response.headers.get('X-Content-Type-Options') == 'nosniff'
 
 
+def test_x_frame_options_relaxed_for_preview_iframe(client):
+    """X-Frame-Options switches to SAMEORIGIN under ``?preview=1`` (Phase 31).
+
+    The admin theme editor embeds the public index in an iframe with
+    ``?preview=1`` so the operator can see colour / font changes live.
+    Unconditional DENY broke that embed silently — same-origin only,
+    so the clickjacking surface is unchanged.
+    """
+    response = client.get('/?preview=1')
+    assert response.status_code == 200
+    assert response.headers.get('X-Frame-Options') == 'SAMEORIGIN'
+    # Without the query string the strict DENY policy still applies —
+    # only the explicit preview opt-in relaxes it.
+    response_no_preview = client.get('/')
+    assert response_no_preview.headers.get('X-Frame-Options') == 'DENY'
+
+
 # ============================================================
 # SECURITY RESPONSE HEADERS — admin pages
 # ============================================================
