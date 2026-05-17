@@ -177,10 +177,10 @@ Expect this release to take multiple sprints. The success criteria are hard numb
 
 *The "3 assertions vs. 15" gap. v0.3.0 shipped lots of tests that verify features work but few that verify boundaries. v0.3.3 codifies the checklist and does the retroactive pass.*
 
-- [ ] **`tests/TESTING_STANDARDS.md`:** The edge-case checklist from the v0.3.0 18.13 draft — empty/null, boundary, type mismatch, Unicode, length, concurrency, injection. Each category carries two or three concrete examples drawn from real bugs this codebase has had.
+- [x] **`tests/TESTING_STANDARDS.md`:** The edge-case checklist from the v0.3.0 18.13 draft — empty/null, boundary, type mismatch, Unicode, length, concurrency, injection. Each category carries two or three concrete examples drawn from real bugs this codebase has had.
 - [ ] **Retroactive pass (ranked):** Apply the checklist to `tests/test_admin.py`, `tests/test_api.py`, `tests/test_webhooks.py`, `tests/test_photos.py`, `tests/test_reviews.py`, `tests/test_settings.py`, `tests/test_blog_admin.py`. Track per-file completion in `tests/TESTING_STANDARDS.md`. Remaining files carry over as tech-debt issues — don't block v0.3.3 on 100% coverage.
-- [ ] **New-code requirement:** `CONTRIBUTING.md` documents that every PR touching a function accepting user input must include the checklist-derived tests. Code-review checklist template in `.github/pull_request_template.md` references the file.
-- [ ] **Linked to Phase 33:** surviving mutants often reveal the edge cases the test missed. Do 33 and 34 in the same sprint — each informs the other.
+- [x] **New-code requirement:** `CONTRIBUTING.md` documents that every PR touching a function accepting user input must include the checklist-derived tests. Code-review checklist template in `.github/pull_request_template.md` references the file.
+- [x] **Linked to Phase 33:** surviving mutants often reveal the edge cases the test missed. Do 33 and 34 in the same sprint — each informs the other.
 
 ---
 
