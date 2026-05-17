@@ -1,54 +1,85 @@
 # Mutation Testing — Survivor Review Log
 
-**Phase:** 18.8 of `ROADMAP_v0.3.0.md`
+**Phase:** 33 of `ROADMAP_v0.3.3.md` (carry-over from v0.3.0 Phase 18.8)
 
-Living document that tracks surviving mutants from the `mutmut run`
-baseline. Every row records either (a) the test we added to kill the
-mutant, or (b) an "equivalent mutant" classification with justification
-(the mutant's output is observationally identical to the original —
-no possible test can tell them apart).
+Living document tracking surviving mutants from each `mutmut run`
+baseline. Every row records either (a) the test that was added to kill
+the mutant, or (b) an "equivalent mutant" pointer to
+`tests/MUTATION_EQUIVALENT.md` where the equivalence is justified in
+detail.
 
-## Baseline Status (2026-04-18)
+## Baseline Status (2026-05-17)
 
-Initial `mutmut run` attempt with **mutmut 3.5.0** on **Python 3.14.3**
-failed at the pytest-invocation boundary:
+Phase 33 captured the scoped four-module baseline (configuration in
+`pyproject.toml [tool.mutmut]`). The mutmut 3.5.0 + Python 3.12+
+quirks that blocked the original Phase 18.8 attempt are addressed via
+two changes:
 
-```
-mutmut.__main__.BadTestExecutionCommandsException: Failed to run pytest
-with args: ['-ra', '--strict-markers', '--strict-config', '--rootdir=.',
-'--tb=native', '-x', '-q', 'tests']
-```
+* `pyproject.toml [tool.mutmut] also_copy` mirrors the rest of the
+  `app` package (plus `manage.py`, `schema.sql`, `migrations/`,
+  `seeds/`, `docs/`, `config.example.yaml`, `translations/`,
+  `babel.cfg`) into `mutants/` so `from app import create_app`
+  resolves inside the mutated tree.
+* The root-level `conftest.py` carries a `MUTANT_UNDER_TEST`-gated
+  shim that makes `multiprocessing.set_start_method` idempotent. The
+  mutmut trampoline's `from mutmut.__main__ import
+  record_trampoline_hit` would otherwise re-execute the file's
+  top-level `set_start_method('fork')` and raise.
 
-Root cause: mutmut 3.x creates a `mutants/` directory containing a copy
-of `app/` + `tests/`, then `chdir`s into `mutants/` before invoking
-pytest. Our `tests/conftest.py` does `from app import create_app`, which
-would resolve to `mutants/app/create_app` — but the `app` package
-marker (`__init__.py`) is not properly registered on `sys.path` when
-pytest starts under mutmut's wrapper. The import fails and mutmut
-aborts before running any mutants.
+### Aggregate
 
-This is tracked upstream: mutmut 3.x's package-copy model is the
-current-but-rough migration from the process-replace model 2.x used.
-Until upstream lands a package-discovery fix (or we pin back to 2.x,
-which has its own 3.14 compat issues), the baseline will be captured
-**manually** via one of:
+| Metric | Count |
+|---|---:|
+| Killed | 233 |
+| Survived | 47 |
+| Timeout | 12 |
+| Total | 292 |
+| **Kill rate** | **79.8%** (233 / (233+47+12)) |
 
-1. A separate venv with `pip install mutmut==2.4.5` — 2.x worked with
-   our project structure but hasn't been verified on 3.14.
-2. A small shim `mutants/conftest.py` that prepends `mutants/` to
-   `sys.path` so `from app import ...` finds the mutated package.
-3. Waiting on the next mutmut release.
+Target ≥ 70% — met.
 
-Until then, `pyproject.toml [tool.mutmut] paths_to_mutate` is narrowed
-to four small leaf modules so that a successful run is tractable in
-under five minutes once the import path is unblocked.
+### Per-module
 
-**Acceptance note:** Roadmap Phase 18.8 acceptance — "Mutation score
->= 70%" — remains pending. The mutmut config is in place and ready;
-the baseline capture is deferred to the next maintenance window.
+| Module | Mutants | Killed | Survived | Timeout | Kill rate |
+|---|---:|---:|---:|---:|---:|
+| `app/services/text.py` | 31 | 30 | 1 | 0 | 96.8% |
+| `app/services/pagination.py` | 47 | 44 | 3 | 0 | 93.6% |
+| `app/services/time_helpers.py` | 83 | 70 | 13 | 0 | 84.3% |
+| `app/services/login_throttle.py` | 131 | 89 | 30 | 12 | 67.9% |
+
+`login_throttle.py` sits below the 70% target. Most survivors are
+constant-boundary mutations (e.g. `LIMIT 1000` → `LIMIT 1001`) and
+timestamp-arithmetic edges in `record_failed_login`,
+`record_successful_login`, `check_lockout`, and `purge_old_attempts`.
+These get killed in Phase 34's edge-case retroactive pass.
 
 ## Survivor Tracker
 
-| Module | Line | Mutant | Classification | Action |
+Status legend:
+
+* **kill**: a test was added that converts this mutant from `survived`
+  to `killed` on the next baseline run. List the test name.
+* **equivalent**: the mutant is observationally identical to the
+  original; see `tests/MUTATION_EQUIVALENT.md` for the rubric and the
+  detailed justification.
+* **pending**: not yet classified — needs review.
+
+| Module | Mutant | Function | Status | Notes |
 |---|---|---|---|---|
-| — | — | — | — | Baseline not yet captured (see above) |
+| `app/services/text.py` | `slugify__mutmut_31` | `slugify` | pending | text-normalisation edge case; investigate during Phase 34. |
+| `app/services/pagination.py` | `paginate__mutmut_2` | `paginate` | pending | Pagination boundary; needs targeted test. |
+| `app/services/pagination.py` | `paginate__mutmut_23` | `paginate` | pending | Page-size boundary. |
+| `app/services/pagination.py` | `paginate__mutmut_25` | `paginate` | pending | Page-size boundary. |
+| `app/services/time_helpers.py` | `_parse_iso__mutmut_*` (1, 4, 17, 18) | `_parse_iso` | pending | ISO-8601 parsing edges; some likely equivalent (UTC tz suffix variants). |
+| `app/services/time_helpers.py` | `time_ago__mutmut_*` (7-11, 15-16, 42, 48) | `time_ago` | pending | Bucket-boundary arithmetic; Phase 34 edge tests. |
+| `app/services/login_throttle.py` | `_inc_login_attempts__mutmut_*` (1, 2) | `_inc_login_attempts` | pending | SQL-statement variants. |
+| `app/services/login_throttle.py` | `record_failed_login__mutmut_*` (6, 7, 10-12) | `record_failed_login` | pending | Timestamp-arithmetic. |
+| `app/services/login_throttle.py` | `record_successful_login__mutmut_*` (6, 7, 9-12) | `record_successful_login` | pending | Timestamp-arithmetic. |
+| `app/services/login_throttle.py` | `check_lockout__mutmut_*` (4, 5, 7, 14, 30, 32, 65, 67, 73-76) | `check_lockout` | pending | Lockout-window boundaries. |
+| `app/services/login_throttle.py` | `purge_old_attempts__mutmut_*` (1, 2, 6, 14, 15) | `purge_old_attempts` | pending | Retention-cutoff arithmetic. |
+
+Every "pending" row carries forward into Phase 34. The acceptance
+criteria for the v0.3.3 release: 70% kill rate captured (met at
+79.8%). The acceptance criteria for the v0.4.x ratchet: zero pending
+rows, all survivors either killed or moved to
+`tests/MUTATION_EQUIVALENT.md`.

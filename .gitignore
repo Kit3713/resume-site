@@ -46,3 +46,7 @@ Thumbs.db
 
 # Container build artifacts
 *.tar
+
+# Mutation testing (Phase 33) — mutmut writes its mutated source tree
+# plus per-file .meta state and stats JSONs into mutants/.
+mutants/

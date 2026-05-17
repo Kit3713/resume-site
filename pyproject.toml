@@ -34,6 +34,7 @@ extend-exclude = [
     "venv",
     "photos",
     "data",
+    "mutants",             # mutmut's working tree of mutated source; never linted
 ]
 
 [tool.ruff.lint]
@@ -151,11 +152,14 @@ ignore_names = [
 # "Test Quality"):
 #   * ``tests_dir`` must be a list, not a scalar string — mutmut parses
 #     the scalar as a character sequence under some invocation paths.
-#   * mutmut 3.5.0 copies ``app/`` into ``mutants/app/`` and runs pytest
-#     from ``mutants/``; our tests' ``from app import create_app`` then
-#     resolves to the mutated tree only if PYTHONPATH / the package
-#     marker survives the copy. Capture the baseline manually or wait
-#     for mutmut's package-discovery fix before wiring into CI.
+#   * mutmut 3.5.0 copies only the ``paths_to_mutate`` subset into
+#     ``mutants/`` and runs pytest from ``mutants/`` — our tests'
+#     ``from app import create_app`` then fails because the rest of the
+#     ``app`` package isn't copied. The ``also_copy`` entry below
+#     mirrors the full ``app/`` tree so the un-mutated rest is
+#     available; ``create_mutants`` runs AFTER ``copy_also_copy_files``
+#     so the mutated subset overlays cleanly. See Phase 33 in
+#     ROADMAP_v0.3.3.md and PERFORMANCE.md §Test Quality.
 [tool.mutmut]
 paths_to_mutate = [
     "app/services/text.py",
@@ -163,7 +167,30 @@ paths_to_mutate = [
     "app/services/time_helpers.py",
     "app/services/login_throttle.py",
 ]
-tests_dir = ["tests"]
+also_copy = [
+    "app",
+    "manage.py",
+    "schema.sql",
+    "migrations",
+    "seeds",
+    "config.example.yaml",
+    "config.schema.json",
+    "translations",
+    "conftest.py",
+    "docs",
+    "babel.cfg",
+]
+# ``tests_dir`` is appended to every pytest invocation, so leaving it on
+# the full ``tests`` directory would run ~600 tests during stats
+# collection alone. Pin it to the four files that exercise the baseline
+# modules instead — mutmut's stats collector still narrows further per
+# mutant via the duration map, but this caps the worst case.
+tests_dir = [
+    "tests/test_text_utils.py",
+    "tests/test_pagination.py",
+    "tests/test_time_helpers.py",
+    "tests/test_login_throttle.py",
+]
 runner = "python -m pytest -x -q"
 
 # ----------------------------------------------------------------
