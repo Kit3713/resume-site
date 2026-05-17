@@ -247,5 +247,30 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
     <script src="{{ static_hashed('js/main.js') }}"></script>
     {% block scripts_extra %}{% endblock %}
+
+    {# Phase 31 — theme-editor live-preview hook (when the page is
+       embedded as ``?preview=1`` from /admin/theme). The parent admin
+       page used to inject a postMessage listener via
+       ``frame.contentDocument.createElement('script')``, but that
+       injected script carried no nonce and was blocked by the iframe's
+       CSP, so the live preview silently never updated. Embedding the
+       listener here (under our own nonce) lets the CSP authorise it
+       and keeps the same-origin contract (#130) intact. #}
+    {% if request.args.get('preview') == '1' %}
+    <script nonce="{{ csp_nonce }}">
+    (function () {
+        window.addEventListener('message', function (e) {
+            // Same checks as the parent's previous injection (#130):
+            // origin AND source — origin alone is bypassable by a
+            // hostile same-origin frame, source alone can be spoofed.
+            if (e.origin !== window.location.origin) { return; }
+            if (e.source !== window.parent) { return; }
+            if (e.data && e.data.type === 'theme-update') {
+                document.documentElement.style.setProperty(e.data.property, e.data.value);
+            }
+        });
+    })();
+    </script>
+    {% endif %}
 </body>
 </html>

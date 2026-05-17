@@ -26,6 +26,13 @@ build/
 coverage.xml
 htmlcov/
 
+# Phase 31 — Playwright test artefacts (videos, screenshots, traces).
+# pytest-playwright writes these under the project root when a test
+# fails; CI uploads them as a job artifact, locally they're disposable.
+test-results/
+playwright-report/
+.hypothesis/
+
 # Local tooling state
 .claude/
 

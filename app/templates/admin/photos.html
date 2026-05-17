@@ -96,9 +96,15 @@
             var ids = Array.from(el.querySelectorAll('[data-id]')).map(function(item) {
                 return parseInt(item.dataset.id, 10);
             });
+            // Phase 31 — CSRF header parity with bulkAction(): without it
+            // Flask-WTF rejects every reorder POST with 400 (CSRF token
+            // missing) and the new sort order silently never persists.
             fetch('{{ url_for("admin.reorder") }}', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token() }}'
+                },
                 body: JSON.stringify({table: 'photos', id_order: ids})
             });
         }

@@ -532,7 +532,16 @@ def create_app(config_path=None):  # noqa: C901 — app factory is inherently se
           long caching for static assets (CSS/JS/images).
         """
         response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['X-Frame-Options'] = 'DENY'
+        # Phase 31 — the theme editor (admin/theme.html) embeds the public
+        # index in an iframe via ``?preview=1`` so the operator can see
+        # accent / font changes live. Unconditional DENY broke that iframe
+        # silently (no JS error, just an empty frame). Same-origin only —
+        # cross-origin framing still blocked, so the clickjacking surface
+        # is unchanged. Caught by tests/browser/test_theme_editor_live.py.
+        if request.args.get('preview') == '1':
+            response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+        else:
+            response.headers['X-Frame-Options'] = 'DENY'
         response.headers['X-XSS-Protection'] = '0'
         response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
         response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'

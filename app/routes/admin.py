@@ -1724,9 +1724,12 @@ def reorder():
         )
     db.commit()
 
-    from app.services.activity_log import log_activity
-
-    log_activity(db, f'Reordered {table_key}', category=table_key, detail=f'{len(id_order)} items')
+    # Phase 31 — caught by tests/browser/test_reorder_persists.py: the
+    # function is named ``log_action`` in app.services.activity_log;
+    # importing ``log_activity`` raised ImportError on every reorder POST.
+    # Render-only tests miss this because the GET path of /admin/services
+    # is fine; the bug only surfaces when the JS actually fires the fetch.
+    log_action(db, f'Reordered {table_key}', category=table_key, detail=f'{len(id_order)} items')
 
     return jsonify({'ok': True})
 
@@ -1919,9 +1922,10 @@ def bulk_action():
         handler(db, ids)
     db.commit()
 
-    from app.services.activity_log import log_activity
-
-    log_activity(db, f'Bulk {action} on {table}', category=table, detail=f'{len(ids)} items')
+    # Phase 31 — same ImportError as in the reorder route above. Caught by
+    # tests/browser/test_reorder_persists.py (the bulk-action JS path
+    # would 500 the moment an operator clicked any bulk button).
+    log_action(db, f'Bulk {action} on {table}', category=table, detail=f'{len(ids)} items')
 
     return jsonify({'ok': True, 'count': len(ids)})
 

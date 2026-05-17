@@ -211,6 +211,128 @@ jobs:
           docker rm test-container
 
   # -----------------------------------------------------------
+  # Browser-Based End-to-End Tests (Phase 31 — Playwright)
+  #
+  # Boots the just-built container, seeds it with the test config +
+  # admin password used by tests/conftest.py, then runs the Playwright
+  # suite (tests/browser/) against it. Catches the regressions the
+  # request-level test suite can't see — GSAP scroll animations, Quill
+  # editor round-trip, Sortable.js drag-drop persistence, CSP nonce
+  # enforcement, CDN unavailability graceful degradation.
+  #
+  # Why a separate job: the unit-test job runs against an in-process
+  # Flask test client, which can't drive a real browser. Building a
+  # container, mounting a config, and driving headless Chromium adds
+  # ~3 min that we don't want to pay on every test invocation.
+  #
+  # Screenshots + videos + traces from any failing test are uploaded as
+  # CI artifacts so a flaky regression can be inspected after the fact
+  # without having to reproduce locally.
+  # -----------------------------------------------------------
+  browser-tests:
+    runs-on: ubuntu-latest
+    needs: container-build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pytest-playwright + browser
+        run: |
+          python -m pip install --upgrade pip
+          # pytest-playwright pulls playwright as a dependency so a single
+          # install line covers both the pytest fixtures and the
+          # browser-automation library. ``playwright install --with-deps``
+          # installs Chromium plus the system shared libs (libnss3, etc.)
+          # the headless browser needs on the Ubuntu runner.
+          pip install pytest pytest-playwright
+          playwright install --with-deps chromium
+
+      - name: Build container image (for browser tests)
+        run: |
+          docker build \
+            --build-arg IMAGE_VERSION="ci-${GITHUB_SHA::7}" \
+            -t ${{ env.IMAGE_NAME }}:browser \
+            -f Containerfile .
+
+      - name: Boot container + seed admin
+        run: |
+          # The Playwright suite logs in as ``admin`` with the password
+          # ``testpassword123`` — its bcrypt'd hash is baked into the
+          # config below. Same value tests/conftest.py uses for its
+          # unit-test fixture (kept in lock-step so a developer running
+          # ``BASE_URL=http://localhost:5000 pytest tests/browser/``
+          # against a fresh ``manage.py init-db`` setup picks up the
+          # same credentials).
+          cat > /tmp/ci-browser-config.yaml <<'EOF'
+          secret_key: "ci-browser-secret-key-not-for-production-but-long-enough-32"
+          database_path: "/app/data/site.db"
+          photo_storage: "/app/photos"
+          session_cookie_secure: false
+          trusted_proxies:
+            - "127.0.0.0/8"
+          admin:
+            username: "admin"
+            password_hash: "pbkdf2:sha256:600000$E1w1VetzHYjJuTHz$4f4ae2fa3c1ad5773b0614ed12ca8776265ba20338ed7783803d300da4b9d38a"
+            allowed_networks:
+              - "127.0.0.0/8"
+          EOF
+
+          docker run -d --name browser-test-app \
+            -p 8080:8080 \
+            -v /tmp/ci-browser-config.yaml:/app/config.yaml:ro \
+            ${{ env.IMAGE_NAME }}:browser
+
+          # Wait until /healthz answers — up to 30 s — so the suite
+          # doesn't start hitting a half-booted Gunicorn.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/healthz > /dev/null 2>&1; then
+              echo "container up after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:8080/healthz || (docker logs browser-test-app && exit 1)
+
+      - name: Run Playwright suite
+        env:
+          BASE_URL: http://localhost:8080
+          ADMIN_USERNAME: admin
+          ADMIN_PASSWORD: testpassword123
+        run: |
+          # ``--video=retain-on-failure`` and ``--screenshot=only-on-failure``
+          # are pytest-playwright CLI flags that capture artefacts only when
+          # a test fails — keeps the artifact upload small on the happy path.
+          pytest tests/browser/ -v \
+            --video=retain-on-failure \
+            --screenshot=only-on-failure \
+            --tracing=retain-on-failure
+
+      - name: Upload Playwright artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failures
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Container logs (on failure)
+        if: failure()
+        run: docker logs browser-test-app
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop browser-test-app || true
+          docker rm browser-test-app || true
+
+  # -----------------------------------------------------------
   # Container CVE Scan (Phase 21.3 — Trivy)
   #
   # Rebuilds the image fresh in this job (the container-build job's
@@ -562,8 +684,18 @@ jobs:
     # Phase 28.3 migration-soundness gate (replaced the stranded
     # upgrade-simulation job, issue #31): a release whose migrations
     # don't even dry-run cleanly never ships. security-scan is the
-    # Phase 30 DAST gate (zero MEDIUM+ findings outside the allowlist).
-    needs: [test, container-build, container-scan, migrate-dryrun, security-scan]
+    # Phase 30 DAST gate (zero MEDIUM+ findings outside the allowlist;
+    # advisory in v0.3.3). browser-tests (Phase 31) gates on the
+    # Playwright suite so a regression in the GSAP / Quill / theme-
+    # editor / drag-drop / CSP / CDN-fallback path can't reach a
+    # release tag (advisory in v0.3.3).
+    needs:
+      - test
+      - container-build
+      - container-scan
+      - migrate-dryrun
+      - security-scan
+      - browser-tests
     if: startsWith(github.ref, 'refs/tags/v')
 
     # `id-token: write` lets cosign request the OIDC token for keyless
@@ -826,12 +958,18 @@ jobs:
   # -----------------------------------------------------------
   publish-main:
     runs-on: ubuntu-latest
-    # Phase 30 — security-scan gates :main publishes too. The image
-    # that backs the rolling :main tag must clear the DAST baseline
-    # for the same reason a tagged release does: operators tracking
-    # :main shouldn't be silently moved to an image that just
-    # regressed a security header check.
-    needs: [test, container-build, container-scan, migrate-dryrun, security-scan]
+    # Same gate set as the tag-publish job: security-scan (Phase 30,
+    # DAST) and browser-tests (Phase 31, Playwright) both run before
+    # the rolling :main image is pushed. Both are continue-on-error
+    # in v0.3.3, so the dependency is structural — :main waits for
+    # them to finish, but never blocks on their conclusion.
+    needs:
+      - test
+      - container-build
+      - container-scan
+      - migrate-dryrun
+      - security-scan
+      - browser-tests
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     # Same OIDC requirement as the tag-publish job — cosign keyless

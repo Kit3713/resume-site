@@ -727,6 +727,93 @@ def test_photos_delete(auth_client, app):
 
 
 # ============================================================
+# REORDER + BULK ACTIONS — POST-PATH IMPORT REGRESSIONS (Phase 31)
+# ============================================================
+#
+# These two routes import their activity-log helper inside the
+# function body so the ImportError only surfaces on the POST path.
+# Render-only fixtures (e.g. ``test_services_page_loads``) GET the
+# admin services page successfully because the import never runs.
+# tests/browser/test_reorder_persists.py originally caught the typo
+# (``log_activity`` does not exist — the function is ``log_action``);
+# the request-level tests below lock it in so a future copy-paste
+# doesn't regress without a CI signal.
+
+
+def test_reorder_services_persists_sort_order(auth_client, app):
+    """POST /admin/reorder updates sort_order and persists to disk."""
+    import sqlite3
+
+    db_path = app.config['DATABASE_PATH']
+    conn = sqlite3.connect(db_path)
+    for title in ('A-service', 'B-service', 'C-service'):
+        conn.execute(
+            'INSERT INTO services (title, description, sort_order) VALUES (?, ?, 0)',
+            (title, ''),
+        )
+    conn.commit()
+    rows = conn.execute(
+        "SELECT id, title FROM services WHERE title LIKE '%-service' ORDER BY id"
+    ).fetchall()
+    conn.close()
+    ids = [r[0] for r in rows]
+
+    # Reverse the order via the same JSON payload Sortable.js would send.
+    new_order = list(reversed(ids))
+    response = auth_client.post(
+        '/admin/reorder',
+        json={'table': 'services', 'id_order': new_order},
+    )
+    assert response.status_code == 200, response.data
+    assert response.get_json() == {'ok': True}
+
+    conn = sqlite3.connect(db_path)
+    sort_orders = dict(
+        conn.execute("SELECT id, sort_order FROM services WHERE title LIKE '%-service'").fetchall()
+    )
+    conn.close()
+    # ``enumerate(new_order)`` is what the route uses, so position 0
+    # → first id in new_order, etc.
+    for position, sid in enumerate(new_order):
+        assert sort_orders[sid] == position, (
+            f'service {sid} expected sort_order={position}, got {sort_orders[sid]}'
+        )
+
+
+def test_reorder_rejects_unknown_table(auth_client):
+    """Non-allowlisted table names are rejected with 400."""
+    response = auth_client.post(
+        '/admin/reorder',
+        json={'table': 'not_a_real_table', 'id_order': [1, 2, 3]},
+    )
+    assert response.status_code == 400
+
+
+def test_bulk_action_delete_photos(auth_client, app):
+    """POST /admin/bulk-action executes the handler without ImportError."""
+    import sqlite3
+
+    db_path = app.config['DATABASE_PATH']
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        'INSERT INTO photos (filename, storage_name, mime_type, width, height, file_size, title, display_tier) '
+        "VALUES ('bulk1.jpg', 'bulk1.jpg', 'image/jpeg', 100, 100, 1000, 'B1', 'grid')"
+    )
+    conn.commit()
+    photo_id = conn.execute("SELECT id FROM photos WHERE filename='bulk1.jpg'").fetchone()[0]
+    conn.close()
+
+    response = auth_client.post(
+        '/admin/bulk-action',
+        json={'table': 'photos', 'action': 'delete', 'ids': [photo_id]},
+    )
+    assert response.status_code == 200, response.data
+    payload = response.get_json()
+    assert payload['ok'] is True
+    assert payload['count'] == 1
+
+
+# ============================================================
 # ADMIN ACTIVITY LOG — APPEND-ONLY ENFORCEMENT (#105)
 # ============================================================
 #
