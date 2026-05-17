@@ -167,39 +167,159 @@ Three user behaviors are defined in `tests/loadtests/locustfile.py`:
 | APIConsumerBehavior | 2 | 0.5-2s | Public API reads with pagination |
 | AdminBehavior | 1 | 2-5s | Dashboard, photos, blog admin, settings |
 
-### Baseline (to be recorded during v0.3.0 release prep)
+### Load Test Baseline (Phase 32)
 
-The table below is intentionally empty pending a run against the
-published GHCR image with the 50-user / 5-minute protocol that matches
-the roadmap's 18.6 "baseline load test" bullet. Capturing these from
-an in-process test client (like the benchmark_routes.py numbers
-above) would be misleading — locust exists specifically to measure
-the realistic network + gunicorn + reverse-proxy path that a real
-user hits, and that path doesn't exist under `flask test_client`.
+Captured 2026-05-17 against `python app.py` (Werkzeug dev server) on the
+test rig listed in §Test rig, seeded with 5 published blog posts and
+the default `seeds/defaults.sql` content. **Local scale, not
+production scale** — the headline 50-user / 5-minute baseline lives on
+the CI runner that owns the `perf-regression` job (see
+`.github/workflows/ci.yml`) and is the canonical floor; the numbers
+below are the developer-machine reproduction step that operators run
+before opening a PR.
 
-Procedure (copy-paste once the v0.3.0-rc image is published):
+Protocol:
 
 ```bash
-pip install locust
-# Start the app (Quadlet, compose, or a quick `podman run`).
+# 1. Init DB + seed a handful of published posts (so /blog returns 200).
+python manage.py init-db
+sqlite3 data/site.db <<'SQL'
+UPDATE settings SET value='true' WHERE key='blog_enabled';
+INSERT OR IGNORE INTO blog_posts(slug, title, summary, content, status, published_at)
+VALUES
+  ('seed-post-1', 'Seed Post One',   'Summary one.',   '<p>Body one.</p>',   'published', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  ('seed-post-2', 'Seed Post Two',   'Summary two.',   '<p>Body two.</p>',   'published', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  ('seed-post-3', 'Seed Post Three', 'Summary three.', '<p>Body three.</p>', 'published', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  ('seed-post-4', 'Seed Post Four',  'Summary four.',  '<p>Body four.</p>',  'published', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  ('seed-post-5', 'Seed Post Five',  'Summary five.',  '<p>Body five.</p>',  'published', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+SQL
+# 2. Boot the dev server.
+RESUME_SITE_DEV=1 python app.py --port 5002 &
+# 3. Run the smoke locust.
 locust -f tests/loadtests/locustfile.py --headless \
-    -u 50 -r 5 -t 5m --host http://localhost:8080 --csv locust-baseline
-# Drop the numbers from locust-baseline_stats.csv below.
+    -u 25 -r 5 -t 60s --host http://localhost:5002 --csv=baseline_stats
+# 4. Compare against the gate.
+python tests/loadtests/regression_check.py \
+    --stats baseline_stats_stats.csv \
+    --thresholds tests/loadtests/thresholds.json
 ```
 
-| Endpoint | p50 | p95 | p99 | Queries | Size |
-|---|---|---|---|---|---|
-| `GET /` | — | — | — | — | — |
-| `GET /portfolio` | — | — | — | — | — |
-| `GET /blog` | — | — | — | — | — |
-| `GET /api/v1/site` | — | — | — | — | — |
-| `GET /admin/` | — | — | — | — | — |
+The 25-user / 60-second smoke is what `perf-regression` runs on every
+PR. The 50-user / 5-minute "production baseline" is the floor that
+the regression check is calibrated against and lives in CI history.
+
+Local 25 user / 60 s smoke — 782 requests, 0 failures:
+
+| Endpoint                             | p50 (ms) | p95 (ms) | p99 (ms) | Reqs |
+|--------------------------------------|---------:|---------:|---------:|-----:|
+| `GET /`                              |       14 |       58 |      150 |  184 |
+| `GET /portfolio`                     |       13 |       72 |       92 |   78 |
+| `GET /blog`                          |       14 |       63 |      170 |   94 |
+| `GET /services`                      |       13 |       94 |      100 |   26 |
+| `GET /projects`                      |       12 |       48 |       75 |   22 |
+| `GET /testimonials`                  |       14 |       48 |       50 |   24 |
+| `GET /contact`                       |       10 |       39 |       52 |   27 |
+| `GET /api/v1/site`                   |        8 |       25 |       61 |   51 |
+| `GET /api/v1/portfolio`              |       10 |       27 |       47 |   46 |
+| `GET /api/v1/services`               |       11 |       58 |       96 |   39 |
+| `GET /api/v1/stats`                  |       11 |       42 |      180 |   43 |
+| `GET /api/v1/blog`                   |       12 |       74 |       76 |   32 |
+| `GET /api/v1/testimonials`           |       11 |       64 |       91 |   22 |
+| `GET /api/v1/certifications`         |       17 |       46 |       46 |   14 |
+| `GET /admin/`                        |       22 |       86 |       86 |   15 |
+
+Per-endpoint p95 + a 20% headroom round-up is the value committed to
+`tests/loadtests/thresholds.json`. The CI gate adds another 20% on top
+via the `GATE_MULTIPLIER` in `regression_check.py`, so the effective
+failure boundary is ~1.44× the local-machine measurement. That headroom
+covers the dev-server vs. Gunicorn difference, runner variance, and
+the production-DB content scale that the local smoke doesn't exercise.
 
 ### CI Regression Gate
 
-Thresholds in `tests/loadtests/thresholds.json` (to be populated after
-baseline). CI `perf-regression` job runs locust with 20 users for 60s
-and fails the build if any endpoint's p95 exceeds its threshold by >20%.
+`.github/workflows/ci.yml::perf-regression` runs 20 concurrent users
+for 60 seconds against the freshly-built container (`needs:
+container-build`), parses the locust CSV with
+`tests/loadtests/regression_check.py`, and fails the build when any
+tracked endpoint's measured p95 exceeds its threshold * 1.20. The job
+emits a markdown summary table into the GitHub step output so PR
+reviewers see the per-endpoint verdict without expanding the log.
+
+When an intentional regression is accepted (e.g. a translations JOIN
+that adds 5 ms to `/blog`), bump the threshold in the same PR and cite
+the justification in the commit message. The threshold is the
+post-bump floor; the next PR's gate is calibrated against it.
+
+A `memory_probe.py` wraps the locust invocation in CI to capture the
+RSS delta of the running Gunicorn master:
+
+```bash
+python tests/loadtests/memory_probe.py --pid "$(pgrep -of gunicorn)" -- \
+    locust -f tests/loadtests/locustfile.py --headless -u 20 -t 60s \
+        --host http://localhost:8080 --csv=ci_run
+```
+
+A run that ends with > 1.5× the start RSS triggers a WARN but does NOT
+fail the build in v0.3.3. Ratchets to blocking in v0.4.0 once the
+floor is stable across runners.
+
+### Stress Test Behaviour (Phase 32)
+
+The 200 concurrent user × 30 s stress methodology is the
+"degrades gracefully — does not corrupt" check, not a perf-regression
+check. We don't run it on every PR — it's heavy enough to swamp a
+shared CI runner without producing actionable signal — but we do
+document the expected behaviour and run a scaled-down version
+locally.
+
+Methodology (production-scale, run manually before a release):
+
+```bash
+# Against the published GHCR image, on a dedicated runner:
+locust -f tests/loadtests/locustfile.py --headless \
+    -u 200 -r 20 -t 30s --host http://<image-host>:8080 --csv stress-200x30
+```
+
+Pass criteria — graceful degradation, not bounded latency:
+
+1. **Zero 500s.** Every request must end in 2xx, 3xx, 4xx, or a
+   client-side timeout. A 500 on the stress path means an unhandled
+   exception under load — that's a bug, not a capacity ceiling.
+2. **No DB corruption.** Run `manage.py integrity-check` after the
+   stress finishes; SQLite's quick-check must report `ok`. WAL
+   checkpoint must complete cleanly.
+3. **No leaked file descriptors / connections.** Process FD count
+   after the run is within ±5 of pre-run.
+4. **Latency is allowed to degrade.** p99 can climb arbitrarily high —
+   the SQLite single-writer lock will serialise writes and that's
+   expected. The goal is "still answering when the surge ends," not
+   "still answering fast during the surge."
+
+Local scaled-down stress — 50 users × 10 s, captured 2026-05-17, same
+seeded DB as the baseline above:
+
+| Metric                    | Value                                   |
+|---------------------------|-----------------------------------------|
+| Total requests            | 215                                     |
+| Failures                  | 0 (0.00%)                               |
+| Aggregated p50            | 16 ms                                   |
+| Aggregated p95            | 120 ms                                  |
+| Aggregated p99            | 550 ms                                  |
+| Aggregated p99.9 / max    | 560 / 563 ms                            |
+| RPS sustained             | ~24 req/s                               |
+| Tail behaviour            | Single-digit requests at 500-600 ms — Werkzeug serialisation under contention, not server-side failure |
+
+The tail latency (550 ms p99) is the dev-server single-threaded
+GIL-serialised request loop; Gunicorn in production with 2 workers
+spreads the same load over two processes and the tail collapses
+closer to the baseline numbers. The point of the local run is to
+verify zero failures + ordered shutdown, not to bound the p99.
+
+Hard upper bound for a single SQLite-backed instance is documented in
+§Capacity tiers below: ~50 sustained writes/sec before `busy_timeout`
+waits dominate. The stress profile is read-heavy (only admin login
+attempts and contact form posts write); the SQLite writer lock is
+exercised but never saturated.
 
 ### Container Startup Time
 
