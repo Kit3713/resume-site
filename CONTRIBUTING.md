@@ -27,6 +27,23 @@ Thanks for your interest in contributing to resume-site.
 - Follow existing code style (PEP 8, 120 char line length).
 - Don't commit `config.yaml`, database files, or personal photos — these are gitignored for a reason.
 
+## Edge-Case Test Requirements (v0.3.3+)
+
+Every PR that touches a function accepting user input must include edge-case tests covering the relevant categories from [`tests/TESTING_STANDARDS.md`](tests/TESTING_STANDARDS.md). The checklist has seven categories — empty/null, boundary, type mismatch, Unicode, length, concurrency, injection — each with concrete examples drawn from real bugs the codebase has shipped.
+
+What this means in practice:
+
+- A new form field needs at least the empty/null, length, and (if free-text) injection tests.
+- A new SQL filter or query parameter needs the type-mismatch and injection tests.
+- A new file-upload path needs the null-byte filename, oversize, and Unicode-filename tests.
+- A new transactional write path needs the concurrency test (`threading.Barrier`-style two-thread race).
+
+Not every category applies to every function — use judgment, and let "would this test have caught the bug example cited under the category?" be the bar.
+
+Code review will check for this. The pull request template (`.github/pull_request_template.md`) carries an "Edge cases covered" checklist with one tick-box per category; please tick the relevant boxes when opening a PR. PRs that touch user-input surfaces with no edge-case test rationale will be sent back for revision.
+
+If a category is not applicable, say so in the PR body rather than leaving the box unticked — explicit "N/A: not a user-input surface" beats silent omission.
+
 ## Dead-code detection (v0.3.3+)
 
 Dead-code detection (`vulture`) is now blocking in CI. Run `vulture app/ manage.py vulture_allowlist.py --min-confidence 80` locally before committing — the pre-commit hook does this automatically. If vulture flags a runtime-dispatched callable (Flask route handler hit only via the URL map, a method invoked by reflection, etc.), add a single-line entry to `vulture_allowlist.py` with an inline comment explaining why the finding is a false positive. Truly dead code should be deleted, not allowlisted.
