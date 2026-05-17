@@ -539,6 +539,16 @@ jobs:
     needs: container-build
     permissions:
       contents: read
+    # v0.3.3 — advisory while the allowlist is tuned against real PR
+    # output. The scaffolding ships now (workflow, runbook, severity
+    # gate, allowlist) so iteration happens against a real signal;
+    # the integration ratchets to blocking in v0.4.0 after one
+    # release cycle of allowlist refinement. Matches Phase 33's
+    # "advisory in v0.3.3, blocking in v0.4.0" pattern. The weekly
+    # cron in security-scan.yml's own schedule trigger remains
+    # blocking-by-default for its own runs — only the per-PR
+    # invocation is advisory here.
+    continue-on-error: true
     uses: ./.github/workflows/security-scan.yml
     with:
       # PR events expose the PR head SHA; push/tag events fall back to

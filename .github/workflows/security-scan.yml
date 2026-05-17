@@ -158,7 +158,6 @@ jobs:
       # ---------------------------------------------------------
       - name: Boot the container against a scratch volume
         run: |
-          mkdir -p /tmp/dast-data /tmp/dast-photos /tmp/dast-backups
           ADMIN_HASH=$(cat /tmp/dast-admin-hash.txt)
           cat > /tmp/dast-config.yaml <<EOF
           secret_key: "dast-run-secret-key-long-enough-for-audit-xxxxxx"
@@ -172,12 +171,16 @@ jobs:
               - "0.0.0.0/0"
           EOF
 
+          # The /app/data, /app/photos, /app/backups dirs in the image
+          # are owned by appuser (UID 1000). Bind-mounting host /tmp/*
+          # dirs over them imports the runner user's UID/permissions,
+          # which blocks appuser from writing the SQLite file and the
+          # entrypoint dies with sqlite3.OperationalError: unable to open
+          # database file. Let the container use its built-in volumes —
+          # the scan is ephemeral, no need for host-side inspection.
           docker run -d --name dast-target \
             -p 8080:8080 \
             -v /tmp/dast-config.yaml:/app/config.yaml:ro \
-            -v /tmp/dast-data:/app/data \
-            -v /tmp/dast-photos:/app/photos \
-            -v /tmp/dast-backups:/app/backups \
             ${{ env.IMAGE_NAME }}:dast
 
           # Readiness gate — ZAP depends on a fully-migrated DB so
@@ -321,7 +324,6 @@ jobs:
 
       - name: Boot the container against a scratch volume
         run: |
-          mkdir -p /tmp/dast-auth-data /tmp/dast-auth-photos /tmp/dast-auth-backups
           ADMIN_HASH=$(cat /tmp/dast-admin-hash.txt)
           cat > /tmp/dast-auth-config.yaml <<EOF
           secret_key: "dast-auth-run-secret-key-long-enough-for-audit-xxxxxx"
@@ -335,12 +337,12 @@ jobs:
               - "0.0.0.0/0"
           EOF
 
+          # See baseline-job comment — drop the /app/data bind mounts so
+          # appuser (UID 1000) can write the SQLite file inside the
+          # image-owned volume.
           docker run -d --name dast-auth-target \
             -p 8080:8080 \
             -v /tmp/dast-auth-config.yaml:/app/config.yaml:ro \
-            -v /tmp/dast-auth-data:/app/data \
-            -v /tmp/dast-auth-photos:/app/photos \
-            -v /tmp/dast-auth-backups:/app/backups \
             ${{ env.IMAGE_NAME }}:dast-auth
 
           for i in $(seq 1 45); do
