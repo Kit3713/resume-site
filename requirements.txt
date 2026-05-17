@@ -160,9 +160,9 @@ markupsafe==3.0.3 \
     #   jinja2
     #   werkzeug
     #   wtforms
-mistune==3.1.3 \
-    --hash=sha256:1a32314113cff28aa6432e99e522677c8587fd83e3d51c29b82a52409c842bd9 \
-    --hash=sha256:a7035c21782b2becb6be62f8f25d3df81ccb4d6fa477a6525b15af06539f02a0
+mistune==3.2.1 \
+    --hash=sha256:78cdb0ba5e938053ccf63651b352508d2efa9411dc8810bfb05f2dc5140c0048 \
+    --hash=sha256:7c8e5501d38bac1582e067e46c8343f17d57ea1aaa735823f3aba1fd59c88a28
     # via -r requirements.in
 nh3==0.2.21 \
     --hash=sha256:087ffadfdcd497658c3adc797258ce0f06be8a537786a7217649fc1c0c60c293 \
