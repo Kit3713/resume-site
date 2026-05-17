@@ -74,6 +74,11 @@ on:
         required: false
         type: string
         default: ''
+      advisory:
+        description: 'When true, both scan jobs run with continue-on-error so the caller is never blocked. v0.3.3 ci.yml passes true while the allowlist is tuned; ratchets to false in v0.4.0. Weekly cron / dispatch leave it default (false) so a regression there still pages the operator.'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -98,6 +103,11 @@ jobs:
     name: OWASP ZAP Baseline
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # advisory=true (passed by ci.yml in v0.3.3) makes this non-blocking
+    # so the per-PR DAST gate doesn't trip on an untuned allowlist while
+    # the policy is still being shaped. Weekly cron / dispatch leave the
+    # default (false) → blocking — that signal pages the operator.
+    continue-on-error: ${{ inputs.advisory || false }}
 
     steps:
       - name: Checkout source
