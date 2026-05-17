@@ -964,21 +964,6 @@ class TestAdminModerationEdgeCases:
         )
         assert response.status_code == 400
 
-    @pytest.mark.xfail(
-        reason=(
-            'Pre-existing bug surfaced by Phase 34.2 edge-case audit: '
-            '/admin/bulk-action imports `log_activity` from '
-            'app.services.activity_log, but the module only exports '
-            '`log_action`. Every bulk action (reviews/blog/contacts/photos) '
-            'currently returns 500 on the happy path. The action itself '
-            'still runs — the DB write commits before the import — but '
-            'the response is an unhandled ImportError. Tracked as the '
-            'admin-route POST-path coverage gap in memory: route-render '
-            'tests caught nothing because they only GET. Fix in a '
-            'follow-up: rename to log_action or add a log_activity alias.'
-        ),
-        strict=True,
-    )
     def test_bulk_approve_with_mixed_valid_and_missing_ids(
         self,
         auth_client,
@@ -988,6 +973,13 @@ class TestAdminModerationEdgeCases:
         """SQL IN (...) with non-existent IDs is a partial no-op, not an error.
 
         The valid IDs flip to approved; the missing ones don't conjure rows.
+
+        History: the v0.3.3 edge-case audit (this file) and Phase 31's
+        Playwright suite both surfaced an ImportError that made the
+        happy path 500 — admin/bulk-action imported ``log_activity``
+        from ``app.services.activity_log`` while the module only
+        exported ``log_action``. Phase 31 landed the rename fix; this
+        test now locks in the post-fix behaviour (status 200).
         """
         valid_id = _seed_review(app, status='pending')
         response = auth_client.post(
@@ -1004,27 +996,28 @@ class TestAdminModerationEdgeCases:
         # The valid review is now approved.
         assert _fetch_review(app, valid_id)['status'] == 'approved'
 
-    def test_bulk_action_import_error_documents_the_bug(
+    def test_bulk_action_happy_path_returns_ok(
         self,
         auth_client,
         app,
         no_rate_limits,
     ):
-        """Companion regression for the xfail above — pins the exact symptom
-        so a future fix flips both tests at once.
+        """Companion for the test above — bulk-action's happy path returns
+        200 with ok=true once the log_activity ImportError fix lands.
 
-        Once log_activity exists (or the route imports log_action), the
-        xfail above will start passing and this 500-status assertion will
-        fail; both should be updated together.
+        Prior to that fix this test pinned the bug (assert status == 500);
+        now it pins the post-fix contract so any regression of the
+        rename surfaces here in the same place.
         """
-        _seed_review(app, status='pending')
+        review_id = _seed_review(app, status='pending')
         response = auth_client.post(
             '/admin/bulk-action',
-            json={'table': 'reviews', 'action': 'approve', 'ids': [1]},
+            json={'table': 'reviews', 'action': 'approve', 'ids': [review_id]},
         )
-        # Bug: the import fails after the DB write succeeds → 500 with an
-        # ImportError. Tests intentionally locks this in until the fix lands.
-        assert response.status_code == 500
+        assert response.status_code == 200
+        body = response.get_json()
+        assert body['ok'] is True
+        assert _fetch_review(app, review_id)['status'] == 'approved'
 
     def test_cli_generate_token_creates_unique_token(self, app):
         """manage.py generate-token uses secrets.token_urlsafe(32) — every
