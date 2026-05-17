@@ -505,14 +505,65 @@ jobs:
           docker rm perf-container || true
 
   # -----------------------------------------------------------
+  # DAST (OWASP ZAP) — Phase 30 (v0.3.3)
+  #
+  # The static-analysis half of v0.3.0 shipped (ruff, bandit, pip-audit,
+  # detect-secrets). The dynamic half didn't — until v0.3.3, ZAP only
+  # ran on a weekly cron and a failure couldn't block a merge.
+  #
+  # This job calls the reusable ``security-scan.yml`` workflow as a
+  # ``workflow_call`` consumer. The reusable workflow runs two scans:
+  #
+  #   * ``zap-baseline``       — passive scan; gated by the ``advisory``
+  #                              input below (advisory in v0.3.3 while the
+  #                              allowlist is tuned, blocking in v0.4.0).
+  #   * ``zap-full-scan-auth`` — authenticated active scan; ADVISORY
+  #                              unconditionally for the first iteration
+  #                              while the auth-context tuning stabilises.
+  #
+  # The reusable workflow accepts a ``target_ref`` input so the PR head
+  # SHA (not just the default branch) is scanned. For pull_request
+  # events GitHub Actions checks out the merge commit by default; we
+  # pass ``github.event.pull_request.head.sha`` explicitly so the scan
+  # reflects the proposed change set on its own, not after the merge.
+  #
+  # ``publish`` and ``publish-main`` declare ``security-scan`` in their
+  # ``needs:`` so the DAST report is always uploaded as a CI artifact
+  # before publish — with ``advisory: true`` the dependency runs but
+  # never blocks; ratcheted to ``advisory: false`` in v0.4.0.
+  #
+  # Operator runbook: docs/SECURITY.md "DAST operator runbook".
+  # -----------------------------------------------------------
+  security-scan:
+    name: DAST (OWASP ZAP)
+    needs: container-build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/security-scan.yml
+    with:
+      # PR events expose the PR head SHA; push/tag events fall back to
+      # the workflow's default (empty -> github.ref inside the callee).
+      target_ref: ${{ github.event.pull_request.head.sha || '' }}
+      # v0.3.3 — advisory while the allowlist is tuned against real PR
+      # output. The scaffolding ships now (workflow, runbook, severity
+      # gate, allowlist) so iteration happens against a real signal;
+      # the integration ratchets to false (blocking) in v0.4.0 after
+      # one release cycle of allowlist refinement. Matches Phase 33's
+      # "advisory in v0.3.3, blocking in v0.4.0" pattern. The weekly
+      # cron in security-scan.yml's own schedule trigger leaves this
+      # default (false) → blocking; only the per-PR caller is advisory.
+      advisory: true
+
+  # -----------------------------------------------------------
   publish:
     runs-on: ubuntu-latest
     # container-scan must pass before any image is pushed. This is the
     # CVE-gate side of the Phase 21.3 contract. migrate-dryrun is the
     # Phase 28.3 migration-soundness gate (replaced the stranded
     # upgrade-simulation job, issue #31): a release whose migrations
-    # don't even dry-run cleanly never ships.
-    needs: [test, container-build, container-scan, migrate-dryrun]
+    # don't even dry-run cleanly never ships. security-scan is the
+    # Phase 30 DAST gate (zero MEDIUM+ findings outside the allowlist).
+    needs: [test, container-build, container-scan, migrate-dryrun, security-scan]
     if: startsWith(github.ref, 'refs/tags/v')
 
     # `id-token: write` lets cosign request the OIDC token for keyless
@@ -775,7 +826,12 @@ jobs:
   # -----------------------------------------------------------
   publish-main:
     runs-on: ubuntu-latest
-    needs: [test, container-build, container-scan, migrate-dryrun]
+    # Phase 30 — security-scan gates :main publishes too. The image
+    # that backs the rolling :main tag must clear the DAST baseline
+    # for the same reason a tagged release does: operators tracking
+    # :main shouldn't be silently moved to an image that just
+    # regressed a security header check.
+    needs: [test, container-build, container-scan, migrate-dryrun, security-scan]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     # Same OIDC requirement as the tag-publish job — cosign keyless

@@ -1,9 +1,11 @@
 # =============================================================
-# OWASP ZAP Baseline Scan Configuration — Phase 13.9
+# OWASP ZAP Baseline Scan Configuration — Phase 13.9 (v0.3.0) +
+# Phase 30 (v0.3.3 — DAST pipeline blocking CI, authenticated mode)
 #
-# Consumed by .github/workflows/security-scan.yml via the
+# Consumed by .github/workflows/security-scan.yml and the
+# ``security-scan`` job in .github/workflows/ci.yml via the
 # ``rules_file_name: zap-config.yaml`` option on the
-# zaproxy/action-baseline action.
+# zaproxy/action-baseline and zaproxy/action-full-scan actions.
 #
 # Format reference:
 #   https://www.zaproxy.org/docs/docker/baseline-scan/#config-file
@@ -33,42 +35,69 @@
 #
 # When adding a new IGNORE, STATE THE REASON on the same line.
 # A rule ID with no justification is a bug, not a policy.
+#
+# Operator runbook for adding / removing entries:
+#   docs/SECURITY.md  "Triage workflow — how to add or remove
+#                      a DAST allowlist entry"
+#
+# FORMAT NOTE:
+# The ZAP action treats this file as line-oriented text (rule ID,
+# action keyword, free-form description in parens). However the
+# CI verification recipe runs ``yaml.safe_load`` on the file as a
+# defence-in-depth syntax check — that loader only succeeds when
+# every data line contains exactly one ``:``. We follow the
+# original v0.3.0 convention: each description embeds a single
+# colon that introduces the rationale clause.
 # =============================================================
 
-# --- Allowlisted (IGNORE) ---
+# --- Documented IGNORE (false positive / accepted risk) ---
 #
-# No entries yet. The list below is a staging area of rules we
-# expect to need to allowlist once the first full scan runs; they
-# are set to WARN (advisory-only) pending that review.
-#
-# 10015   WARN   (Incomplete/No Cache-Control header — audit after first scan)
-# 10020   WARN   (X-Frame-Options header — we set DENY but the meta-tag alternative may surface this as LOW)
-# 10038   WARN   (CSP header — we emit a strict CSP; double-check after first run)
-# 10063   WARN   (Permissions-Policy missing — optional header, audit)
-# 10096   WARN   (Timestamp Disclosure — usually a false positive on Cookie / ETag values)
-# 10109   WARN   (Modern-Web Application — info rule; never fails)
+# Phase 30 — every entry below carries a one-line justification.
+# When adding a new entry, ALSO update the operator runbook at
+# docs/SECURITY.md "Allowlist entries — current contents" so the
+# rationale lives next to the operator-visible documentation.
 
-# --- Explicitly enabled at default severity (FAIL on MEDIUM+) ---
+10037   IGNORE   (Server header version disclosure: engine name only is exposed and operators rely on it for diagnosing reverse-proxy misconfiguration; v0.3.2 issue 14 confirmed keep-as-is.)
+10015   IGNORE   (Cache-Control absent on admin login form GET: Flask-Login bootstrap intentionally lets the empty login HTML cache, downstream admin pages do set no-store via after_request and tests/test_security_headers.py locks that.)
+
+# --- Staging area: rules we expect to need to review after the
+#     first full PR-blocking run lands. These are WARN now so the
+#     scan still completes; flip to IGNORE (with justification) or
+#     fix-to-pass once the first end-to-end run surfaces them.
 #
-# These are the rules we expect the app to pass cleanly. Leaving
-# them un-annotated here makes it obvious in a diff if someone
-# ever tries to downgrade them.
-#
-# (No overrides needed — ZAP enables all applicable rules by default.)
+#     If a rule below fires MEDIUM+, the CI gate's severity filter
+#     will surface it — the WARN here only suppresses LOW noise.
+10020   WARN   (X-Frame-Options policy: we set DENY in after_request, double-check meta-tag fallback doesn't surface this as LOW after the first CI run.)
+10038   WARN   (CSP header policy: we emit a strict CSP from after_request, the modern CSP rule may flag report-only headers separately — review on first run.)
+10063   WARN   (Permissions-Policy header: optional, audit after first run for whether we need an explicit allow-list.)
+10096   WARN   (Timestamp disclosure rule: usually a false positive on Cookie and ETag values that contain epoch-like substrings.)
+10109   WARN   (Modern web application rule: informational only, indicates ZAP couldn't reach JS-only routes from the baseline spider.)
 
 # --- Disabled entirely (IGNORE) ---
 #
-# Rules for technology stacks we don't run. Keeping them IGNORE
-# rather than deleted so future operators see the intent.
+# Rules for technology stacks we don't run, plus active-scan rules
+# that have no meaningful signal on a passive baseline. Keeping
+# them IGNORE rather than deleted so future operators see the intent.
 
-40018   IGNORE   (SQL Injection - SQLite - Time-Based: active-scan rule; baseline is passive)
-40019   IGNORE   (SQL Injection - MySQL: we run SQLite, not MySQL)
-40020   IGNORE   (SQL Injection - Hypersonic: we don't use HSQL)
-40021   IGNORE   (SQL Injection - Oracle: not applicable)
-40022   IGNORE   (SQL Injection - PostgreSQL: we run SQLite)
-40027   IGNORE   (SQL Injection - MsSQL: not applicable)
-90017   IGNORE   (XSLT Injection: we don't use XSLT)
-90019   IGNORE   (Server Side Include: we don't use SSI)
-90020   IGNORE   (Remote OS Command Injection: active-scan rule)
+40018   IGNORE   (SQL Injection - SQLite - Time-Based: active-scan rule; baseline is passive — surfaces only on the full-scan job.)
+40019   IGNORE   (SQL Injection - MySQL: we run SQLite, not MySQL.)
+40020   IGNORE   (SQL Injection - Hypersonic: we don't use HSQL.)
+40021   IGNORE   (SQL Injection - Oracle: not applicable.)
+40022   IGNORE   (SQL Injection - PostgreSQL: we run SQLite — PG migration is a v0.4.0 target.)
+40027   IGNORE   (SQL Injection - MsSQL: not applicable.)
+90017   IGNORE   (XSLT Injection: we don't use XSLT.)
+90019   IGNORE   (Server Side Include: we don't use SSI.)
+90020   IGNORE   (Remote OS Command Injection: active-scan rule with no passive signal.)
+
+# --- Authenticated-scan rules (Phase 30 — full scan only) ---
+#
+# These rules only meaningfully fire under authenticated traversal.
+# The baseline job (passive, unauthenticated) sees nothing to flag;
+# the full-scan-with-auth job exercises them against /admin/*. Listed
+# here so the operator review surface is the same regardless of which
+# job produced the report.
+
+10202   FAIL   (Absence of Anti-CSRF Tokens: admin forms must carry a Flask-WTF token, a regression here would silently break CSRF defence — locked to FAIL and never downgrade without an issue link.)
+10054   FAIL   (Cookie Without SameSite attribute: the session cookie ships SameSite=Lax, if this rule fires the cookie config regressed — locked to FAIL.)
 
 # --- End of file ---

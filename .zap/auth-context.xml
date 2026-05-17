@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+============================================================
+OWASP ZAP authentication context — Phase 30 (v0.3.3 — DAST)
+
+Consumed by the ``zap-full-scan-auth`` job in
+.github/workflows/security-scan.yml (and the mirrored job in
+.github/workflows/ci.yml).
+
+The context tells ZAP:
+
+  1. Which URLs to treat as in-scope (the public site + /admin/*
+     plus REST API roots — the spider stays within these).
+  2. How to log in: POST credentials to /admin/login as
+     application/x-www-form-urlencoded with `username` + `password`
+     plus the Flask-WTF `csrf_token` (extracted dynamically from
+     the login form via a regex on the prior GET response).
+  3. How to detect the login state: an authenticated response
+     contains the admin nav fragment (`<nav class="admin-nav">`);
+     an unauthenticated response 302-redirects to /admin/login.
+  4. A throwaway test admin user whose credentials are injected
+     by the CI workflow via environment-variable substitution
+     (``${ZAP_ADMIN_USERNAME}`` / ``${ZAP_ADMIN_PASSWORD}``) — the
+     literals below are placeholders the workflow rewrites
+     before the scan starts.
+
+WHY AN XML CONTEXT FILE (not the action's `cmd_options`):
+  zaproxy/action-full-scan reads the context via -n CLI flag,
+  which lets us version-control the auth wiring and review it in
+  diffs. Inline `-c` flag soup is opaque to a reviewer six months
+  from now.
+
+OPERATOR NOTE: this file is a STARTING POINT, not a finished
+authenticated-scan context. Real-world ZAP context tuning is an
+iterative loop: run the scan, inspect the logged-in-detection
+samples in the report, refine the loggedInIndicatorRegex /
+loggedOutIndicatorRegex / authentication URL, repeat.
+
+Phase 30 ships the scaffolding. Issues that surface in the first
+real CI run land as follow-up PRs against this file.
+
+References:
+  https://www.zaproxy.org/docs/desktop/start/features/contexts/
+  https://www.zaproxy.org/docs/desktop/start/features/authentication/
+============================================================
+-->
+<configuration>
+  <context>
+    <name>resume-site-admin</name>
+    <desc>Authenticated traversal of the resume-site admin panel for DAST.</desc>
+    <inscope>true</inscope>
+    <incregexes>http://localhost:8080.*</incregexes>
+    <excregexes>http://localhost:8080/admin/logout.*</excregexes>
+    <excregexes>http://localhost:8080/static/.*</excregexes>
+    <excregexes>http://localhost:8080/metrics.*</excregexes>
+    <tech>
+      <include>Db.SQLite</include>
+      <include>Language.Python</include>
+      <include>OS.Linux</include>
+      <include>WS.Flask</include>
+    </tech>
+    <urlparser>
+      <class>org.zaproxy.zap.model.StandardParameterParser</class>
+      <config>{"kvps":"&amp;","kvs":"=","struct":[]}</config>
+    </urlparser>
+    <postparser>
+      <class>org.zaproxy.zap.model.StandardParameterParser</class>
+      <config>{"kvps":"&amp;","kvs":"=","struct":[]}</config>
+    </postparser>
+    <authentication>
+      <type>2</type><!-- form-based authentication -->
+      <strategy>EACH_RESP</strategy>
+      <loggedin>\Qclass="admin-nav"\E</loggedin>
+      <loggedout>302 Found.*Location: .*\/admin\/login</loggedout>
+      <form>
+        <loginurl>http://localhost:8080/admin/login</loginurl>
+        <loginbody>username={%username%}&amp;password={%password%}&amp;csrf_token={%csrf_token%}</loginbody>
+        <loginpageurl>http://localhost:8080/admin/login</loginpageurl>
+      </form>
+    </authentication>
+    <users>
+      <user>1;true;${ZAP_ADMIN_USERNAME_B64};2;username=${ZAP_ADMIN_USERNAME}~password=${ZAP_ADMIN_PASSWORD}</user>
+    </users>
+    <forceduser>1</forceduser>
+    <session>
+      <type>0</type><!-- cookie-based session management -->
+    </session>
+    <authorization>
+      <type>0</type><!-- basic authorization detection (HTTP status) -->
+      <basic>
+        <header></header>
+        <body></body>
+        <logic>AND</logic>
+        <code>-1</code>
+      </basic>
+    </authorization>
+  </context>
+</configuration>
