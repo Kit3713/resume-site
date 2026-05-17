@@ -280,51 +280,101 @@ test.
 * Memory usage at idle and under load (50 concurrent users) — requires
   process monitoring during locust run.
 
-## Test Quality (Phase 18.8 — Mutation Testing)
+## Test Quality (Phase 33 — Mutation Testing)
 
 Mutation score measures whether the test suite would catch a real bug.
-`mutmut` mutates each line of `app/` and re-runs the suite per mutant;
-a "killed" mutant means at least one test failed. Score =
-killed / (killed + survived).
+`mutmut` mutates each line of the configured modules and re-runs the
+suite per mutant; a "killed" mutant means at least one test failed.
+Kill rate = killed / (killed + survived + timeout + suspicious), i.e.
+denominator excludes mutants that were never executed.
 
 **Target:** >= 70% on the priority modules documented in `ROADMAP_v0.3.0.md`
 Phase 18.8 (blog, photos, reviews, settings, admin IP restriction,
-contact honeypot).
+contact honeypot). v0.3.3 captures the scoped four-module baseline; the
+priority modules expand under v0.4.x once the baseline is stable.
 
-### Baseline (2026-04-18) — pending
+### Methodology
 
-**Status:** mutmut 3.5.0 + Python 3.14.3 compatibility issue blocked the
-initial run. See `tests/mutation_review.md` for the root cause and the
-manual-capture workaround.
+`mutmut` is configured via `[tool.mutmut]` in `pyproject.toml`. The
+key choices, with their rationale:
 
-**Scoped subset queued for baseline** (the narrow `paths_to_mutate` in
-`pyproject.toml`):
-
-| Module | LOC | Status |
+| Setting | Value | Why |
 |---|---|---|
-| `app/services/text.py` | 43 | Pending |
-| `app/services/pagination.py` | 93 | Pending |
-| `app/services/time_helpers.py` | 123 | Pending |
-| `app/services/login_throttle.py` | 183 | Pending |
+| `paths_to_mutate` | 4 leaf modules under `app/services/` | Each is small (<200 LOC), pure-Python, and has a dedicated test file — a clean baseline before expanding to surfaces with Flask request context. |
+| `tests_dir` | The 4 matching `tests/test_*.py` files | mutmut appends `tests_dir` to every pytest invocation. Pinning it here caps stats collection at ~150 tests instead of the full ~600. |
+| `also_copy` | `app`, `manage.py`, `schema.sql`, `migrations/`, `seeds/`, `config.example.yaml`, `docs/`, `translations/`, `conftest.py`, `babel.cfg` | mutmut 3.5.0 only copies `paths_to_mutate` into `mutants/`; the rest of the app package must be mirrored or `from app import create_app` fails inside the mutated tree. |
+| `runner` | `python -m pytest -x -q` | First failing test aborts the mutant — kill is decisive, runtime stays bounded. |
 
-Once the scoped baseline runs cleanly the score gets recorded here and
-the top-10 surviving mutants populate `tests/mutation_review.md` with
-one of two classifications per row:
+The root-level `conftest.py` carries a `mutmut`-only shim that makes
+`multiprocessing.set_start_method` idempotent. Background:
+`_mutmut_trampoline` does `from mutmut.__main__ import
+record_trampoline_hit`, which re-executes the module's top-level
+`set_start_method('fork')` and raises `RuntimeError('context has
+already been set')` under Python 3.12+ when the mutmut process tree
+already chose its context. The shim turns the redundant call into a
+no-op without changing the chosen context. It activates only when
+`MUTANT_UNDER_TEST` is in the environment, so normal pytest runs are
+untouched.
 
-* **Action:** Test added — include the test name. Killed on re-run.
-* **Equivalent:** Mutation is observationally identical to the
-  original; document the reasoning so future readers don't try to
-  "fix" it.
+### Baseline subset (Phase 33, captured 2026-05-17)
+
+Aggregate: **233 killed / 47 survived / 12 timeout / 0 suspicious / 0 segfault**
+out of **292 mutants** — kill rate **79.8%** against the documented
+target of ≥ 70%.
+
+| Module | LOC | Mutants | Killed | Survived | Timeout | Kill rate |
+|---|---:|---:|---:|---:|---:|---:|
+| `app/services/text.py` | 43 | 31 | 30 | 1 | 0 | 96.8% |
+| `app/services/pagination.py` | 93 | 47 | 44 | 3 | 0 | 93.6% |
+| `app/services/time_helpers.py` | 123 | 83 | 70 | 13 | 0 | 84.3% |
+| `app/services/login_throttle.py` | 183 | 131 | 89 | 30 | 12 | 67.9% |
+
+`login_throttle.py` is the only module below the 70% target. Most of
+its survivors live inside `record_failed_login`, `record_successful_login`,
+`check_lockout`, and `purge_old_attempts` — predominantly mutations
+around timestamp arithmetic and SQL constants (e.g. `LIMIT N` boundary
+tweaks) where the existing tests assert "rows survive / rows purged"
+but don't pin the exact boundary. v0.4.x edge-case tests close the
+gap; entries land in `tests/mutation_review.md` as they're killed.
+
+Run the baseline locally with:
+
+```sh
+mutmut run                          # ~5-10 min on the subset
+python manage.py mutation-report    # Markdown for the PR description
+```
+
+CI runs the same flow nightly via `.github/workflows/mutation.yml` and
+uploads the per-file `.meta` state as an artifact for 30 days. The
+mutation job is advisory in v0.3.3 (`continue-on-error: true`); a
+later release will ratchet it to blocking once the kill-rate trend has
+been stable.
+
+### Surviving-mutant register
+
+Two files track survivor disposition:
+
+* `tests/mutation_review.md` — every survivor that we *did* kill, with
+  the test that closed it. Entries roll off as the test suite catches
+  up with the baseline.
+* `tests/MUTATION_EQUIVALENT.md` — permanent register of "equivalent
+  mutants" (output is observationally identical to the original; no
+  possible test can distinguish them). Every row carries a one-line
+  justification matched to the rubric in that file.
 
 ### Ratchet plan
 
-1. Capture the scoped baseline (4 leaf modules).
-2. Expand `paths_to_mutate` to include the Phase 18.8 priority list
-   (blog, photos, reviews, settings, admin IP restriction, contact
-   honeypot) once the scoped run is green and the toolchain is stable.
-3. Add `mutmut run --paths-to-mutate=app/` to CI as a
-   non-blocking informational job. Ratchet to blocking once the
-   whole-app score has been >= 70% for two consecutive weeks.
+1. **v0.3.3 (this release):** Capture the scoped four-module baseline
+   and publish the kill rate per module. Run nightly in CI, advisory.
+2. **v0.4.x:** Expand `paths_to_mutate` to include the Phase 18.8
+   priority list (`app/services/{content,photos,webhooks,
+   translations,settings_svc}.py`, `app/routes/{admin,api,contact,
+   blog_admin}.py`, `app/__init__.py`). Re-baseline, drive `survived`
+   to zero or to a documented equivalent class.
+3. **v0.5.x or later:** Once the kill rate has held >= 70% for two
+   consecutive baselines, ratchet `.github/workflows/mutation.yml` to
+   blocking (`continue-on-error: false`). Surviving mutants that are
+   not equivalent become a release blocker.
 
 ---
 

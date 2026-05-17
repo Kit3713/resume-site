@@ -1145,32 +1145,212 @@ def translations_import(args):
     print(f'Imported {count} translations for locale "{locale}".')
 
 
-def mutation_report(args):
-    """Run mutmut and generate a summary report.
+# ---------------------------------------------------------------------------
+# Phase 33 (#143-equiv) — mutation-testing report.
+#
+# Reads mutmut's per-file ``mutants/<path>.meta`` JSON state and renders a
+# Markdown summary suitable for pasting into a PR description. Falls back
+# to "no data yet" messaging if mutmut hasn't been run.
+# ---------------------------------------------------------------------------
 
-    Requires mutmut to be installed (pip install mutmut). Runs mutation
-    testing against the configured paths_to_mutate in pyproject.toml and
-    prints a summary of killed/survived/timeout mutants.
+
+# Mirrors mutmut.__main__.status_by_exit_code (pinned to the 3.5.0 table).
+# Listed here so we never import mutmut.__main__ in normal CLI runs (that
+# import has side effects — see conftest.py at the repo root).
+_MUTMUT_EXIT_CODE_STATUS = {
+    1: 'killed',
+    3: 'killed',
+    -24: 'timeout',  # SIGXCPU — kept as timeout (the live table is contradictory)
+    24: 'timeout',
+    152: 'timeout',
+    255: 'timeout',
+    0: 'survived',
+    5: 'no_tests',
+    33: 'no_tests',
+    2: 'interrupted',
+    34: 'skipped',
+    35: 'suspicious',
+    36: 'timeout',
+    37: 'caught_by_type_check',
+    -11: 'segfault',
+    -9: 'segfault',
+}
+
+
+def _classify_exit_code(code):
+    """Return mutmut's bucket label for a per-mutant exit code."""
+    if code is None:
+        return 'not_checked'
+    return _MUTMUT_EXIT_CODE_STATUS.get(code, 'suspicious')
+
+
+def _read_mutmut_meta_files(mutants_root='mutants'):
+    """Yield ``(path_str, meta_dict)`` for every ``.meta`` file mutmut left.
+
+    The meta files live at ``mutants/<source>.meta`` where ``<source>`` is
+    the original path (e.g. ``app/services/text.py``). Each file stores a
+    JSON dict with at least ``exit_code_by_key`` mapping mutant id to
+    pytest exit code (``None`` when never executed).
     """
-    import subprocess as _sp
+    import json
+    from pathlib import Path
 
-    print('Running mutmut... (this may take several minutes)')
-    result = _sp.run(
-        ['mutmut', 'run', '--no-progress'],  # noqa: S603, S607
-        capture_output=True,
-        text=True,
-    )
-    print(result.stdout)
-    if result.stderr:
-        print(result.stderr, file=sys.stderr)
+    root = Path(mutants_root)
+    if not root.is_dir():
+        return
 
-    print('\n=== Mutation Testing Results ===')
-    results = _sp.run(
-        ['mutmut', 'results'],  # noqa: S603, S607
-        capture_output=True,
-        text=True,
+    for meta_path in sorted(root.rglob('*.meta')):
+        try:
+            with open(meta_path) as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        source_rel = str(meta_path.relative_to(root))[: -len('.meta')]
+        yield source_rel, data
+
+
+def _mutant_name_to_function(mutant_name):
+    """Strip mutmut's ``__mutmut_N`` suffix from a mutant id.
+
+    ``app.services.text.x_slugify__mutmut_4`` → ``app.services.text.slugify``.
+    The leading ``x_`` is mutmut's per-function prefix; we drop it so the
+    resulting identifier matches the source.
+    """
+    base = mutant_name.rsplit('__mutmut_', 1)[0]
+    # mutmut prepends ``x_`` to every mutated symbol; trim it back off.
+    if '.x_' in base:
+        head, _, tail = base.rpartition('.x_')
+        return f'{head}.{tail}'
+    if base.startswith('x_'):
+        return base[2:]
+    return base
+
+
+def _collect_mutation_summary(mutants_root='mutants'):
+    """Aggregate per-module and per-survivor data from mutmut meta files.
+
+    Returns a dict with ``totals`` (Counter mapping status -> count),
+    ``modules`` (path -> Counter), and ``survivors`` (list of dicts with
+    ``module``, ``mutant``, ``function``). Empty when no meta files exist.
+    """
+    from collections import Counter
+
+    totals = Counter()
+    modules = {}
+    survivors = []
+
+    for source_path, meta in _read_mutmut_meta_files(mutants_root):
+        per_module = Counter()
+        for mutant_name, exit_code in meta.get('exit_code_by_key', {}).items():
+            label = _classify_exit_code(exit_code)
+            totals[label] += 1
+            per_module[label] += 1
+            if label == 'survived':
+                survivors.append(
+                    {
+                        'module': source_path,
+                        'mutant': mutant_name,
+                        'function': _mutant_name_to_function(mutant_name),
+                    }
+                )
+        if per_module:
+            modules[source_path] = per_module
+
+    return {'totals': totals, 'modules': modules, 'survivors': survivors}
+
+
+def _format_mutation_markdown(summary):
+    """Render the aggregated summary as PR-ready Markdown."""
+    totals = summary['totals']
+    modules = summary['modules']
+    survivors = summary['survivors']
+
+    killed = totals['killed']
+    survived = totals['survived']
+    timeout = totals['timeout']
+    suspicious = totals['suspicious']
+    total = sum(totals.values())
+
+    # Kill rate denominator: anything actually executed (excludes
+    # not_checked / no_tests / skipped — the rate is meaningful only for
+    # mutants the suite had a chance to catch).
+    eligible = killed + survived + timeout + suspicious
+    kill_rate = (killed / eligible * 100) if eligible else 0.0
+
+    lines = ['## Mutation Testing Report', '']
+    if total == 0:
+        lines.append('No mutmut state found under ``mutants/``. Run ``mutmut run`` first.')
+        return '\n'.join(lines) + '\n'
+
+    lines.extend(
+        [
+            '### Summary',
+            '',
+            '| Metric | Count |',
+            '|---|---:|',
+            f'| Killed | {killed} |',
+            f'| Survived | {survived} |',
+            f'| Timeout | {timeout} |',
+            f'| Suspicious | {suspicious} |',
+            f'| No tests | {totals["no_tests"]} |',
+            f'| Not checked | {totals["not_checked"]} |',
+            f'| Skipped | {totals["skipped"]} |',
+            f'| Caught by type check | {totals["caught_by_type_check"]} |',
+            f'| Segfault | {totals["segfault"]} |',
+            f'| **Total mutants** | **{total}** |',
+            f'| **Kill rate** | **{kill_rate:.1f}%** ({killed}/{eligible} eligible) |',
+            '',
+        ]
     )
-    print(results.stdout)
+
+    if modules:
+        lines.extend(
+            [
+                '### Per-module breakdown',
+                '',
+                '| Module | Killed | Survived | Other | Kill rate |',
+                '|---|---:|---:|---:|---:|',
+            ]
+        )
+        for module_path in sorted(modules):
+            stats = modules[module_path]
+            k, s, t, su = stats['killed'], stats['survived'], stats['timeout'], stats['suspicious']
+            other = stats.total() - k - s
+            eligible_m = k + s + t + su
+            rate = (k / eligible_m * 100) if eligible_m else 0.0
+            lines.append(f'| `{module_path}` | {k} | {s} | {other} | {rate:.1f}% |')
+        lines.append('')
+
+    if survivors:
+        lines.extend(
+            ['### Surviving mutants', '', '| Module | Mutant | Function |', '|---|---|---|']
+        )
+        for row in survivors:
+            lines.append(f'| `{row["module"]}` | `{row["mutant"]}` | `{row["function"]}` |')
+        lines.append('')
+        lines.extend(
+            [
+                'Each survivor needs either a new test (kill it) or an entry in '
+                '``tests/MUTATION_EQUIVALENT.md`` with a one-line equivalence '
+                'justification. See ``ROADMAP_v0.3.3.md`` Phase 33.',
+                '',
+            ]
+        )
+
+    return '\n'.join(lines) + '\n'
+
+
+def mutation_report(args):  # noqa: ARG001 — argparse passes args even when unused
+    """Emit a Markdown summary of the most recent ``mutmut run`` baseline.
+
+    Reads mutmut's per-file ``mutants/<source>.meta`` JSON state and
+    aggregates killed / survived / timeout counts plus per-module kill
+    rate and a survivor table. Output is paste-ready for a PR
+    description; when no baseline exists yet, prints a placeholder block
+    pointing the operator at ``mutmut run``.
+    """
+    summary = _collect_mutation_summary()
+    sys.stdout.write(_format_mutation_markdown(summary))
 
 
 def _connect_db():

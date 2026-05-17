@@ -1,0 +1,124 @@
+# =============================================================
+# Nightly Mutation-Testing Baseline — Phase 33
+#
+# Runs mutmut against the small ``paths_to_mutate`` subset documented in
+# ``pyproject.toml [tool.mutmut]`` once per day. The aim in v0.3.3 is
+# *advisory* coverage — a stable kill-rate trendline that lets a future
+# release ratchet the gate to blocking (see ROADMAP_v0.3.3.md Phase 33
+# "Ratchet plan").
+#
+# Why a separate workflow file (not a job in ci.yml):
+#   * Different cadence — nightly cron rather than per-PR.
+#   * Different failure semantics — never blocks merges in v0.3.3.
+#   * Different timing budget — mutmut can run 5-15 min on the baseline
+#     subset; CI's quality gate is sub-minute and we keep it that way.
+#
+# What this workflow does NOT do (intentionally):
+#   * Fail the build on a regression. ``continue-on-error: true`` is the
+#     v0.3.3 contract; ratchet to blocking once two consecutive baselines
+#     stay above 70% killed.
+#   * Run against ``app/`` in full. The full mutation surface takes
+#     30-60 min and is not yet wired in. Update ``paths_to_mutate`` in
+#     ``pyproject.toml`` to expand the scan; ``mutation-report`` will
+#     pick up the wider data automatically.
+# =============================================================
+
+name: Mutation Baseline (advisory)
+
+on:
+  schedule:
+    # 03:00 UTC — quiet window for the runner pool; non-blocking job so
+    # an occasional miss does not matter.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    # Manual dispatch lets a maintainer re-run the baseline after a
+    # ``paths_to_mutate`` change without waiting for the cron tick.
+
+permissions:
+  contents: read
+
+jobs:
+  mutation:
+    name: mutmut baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true  # Advisory in v0.3.3 — see Phase 33 ratchet plan.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install runtime + dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      # ---------------------------------------------------------
+      # Sanity-check the test suite first — mutmut bails on stats
+      # collection if the un-mutated tests can't even run. A clean
+      # ``pytest -x -q`` here gives us a clear "tests broken" vs
+      # "mutmut quirk" signal in the workflow log.
+      # ---------------------------------------------------------
+      - name: Sanity-check tests on the baseline subset
+        run: |
+          python -m pytest -x -q \
+            tests/test_text_utils.py \
+            tests/test_pagination.py \
+            tests/test_time_helpers.py \
+            tests/test_login_throttle.py
+
+      # ---------------------------------------------------------
+      # mutmut 3.5.0 + Python 3.12 quirks documented in
+      # ``pyproject.toml [tool.mutmut]`` and ``conftest.py``. The
+      # ``also_copy`` entry there mirrors the rest of the app package
+      # into ``mutants/`` so ``from app import create_app`` resolves
+      # inside the mutated tree. The ``conftest.py`` shim makes
+      # ``multiprocessing.set_start_method`` idempotent when the
+      # mutmut trampoline re-imports ``mutmut.__main__``.
+      # ---------------------------------------------------------
+      - name: Run mutmut against the baseline subset
+        id: mutmut_run
+        run: |
+          python -m mutmut run || echo "mutmut exited non-zero (advisory only)"
+
+      - name: Generate Markdown report
+        id: report
+        run: |
+          python manage.py mutation-report > mutation-report.md
+          cat mutation-report.md
+
+      # ---------------------------------------------------------
+      # Surface the report in the workflow summary so operators see
+      # the kill-rate trend at a glance without downloading an artifact.
+      # ---------------------------------------------------------
+      - name: Publish report to job summary
+        if: always()
+        run: |
+          {
+            echo "# Mutation Baseline — $(date -u +%Y-%m-%d)"
+            echo ""
+            cat mutation-report.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ---------------------------------------------------------
+      # Upload the per-file ``.meta`` JSON state so a maintainer can
+      # rerun ``mutmut show <mutant>`` locally to inspect specific
+      # survivors. The artifact is also a useful baseline-of-baselines
+      # for the ratchet-to-blocking decision in a later release.
+      # ---------------------------------------------------------
+      - name: Upload mutmut state artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutmut-state
+          path: |
+            mutants/**/*.meta
+            mutants/mutmut-stats.json
+            mutants/mutmut-cicd-stats.json
+            mutation-report.md
+          if-no-files-found: ignore
+          retention-days: 30
