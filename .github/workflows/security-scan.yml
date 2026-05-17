@@ -1,31 +1,55 @@
 # =============================================================
-# Weekly Dynamic Application Security Testing (DAST) — Phase 13.9
+# Dynamic Application Security Testing (DAST) — Phase 13.9 +
+# Phase 30 (v0.3.3 — DAST pipeline blocking CI, authenticated mode)
 #
-# Runs every Monday at 04:00 UTC (no traffic, Python cutting edge not
-# yet spun up for weekday work). Can also be triggered on demand via
-# the "Run workflow" button on the Actions tab.
+# Triggers:
 #
-# The scan flow:
+#   * ``schedule`` — weekly cron, Mondays 04:00 UTC. Catches drift in
+#     dependencies / base-image security posture even on quiet weeks.
+#   * ``workflow_dispatch`` — operators can scan an arbitrary ref
+#     (branch / tag / SHA) on demand from the Actions tab.
+#   * ``workflow_call`` (Phase 30) — invoked by ``.github/workflows/ci.yml``
+#     so every PR / push to main runs DAST before publishing.
+#
+# Two jobs:
+#
+#   1. ``zap-baseline``         — passive baseline scan; unauthenticated.
+#                                 ~10 min. Always runs. Allowlist filter +
+#                                 MEDIUM+ severity gating built in.
+#   2. ``zap-full-scan-auth``   — authenticated active scan; logs in via
+#                                 /admin/login with a CI-generated admin
+#                                 hash and crawls /admin/* under auth.
+#                                 ~20 min. The context file lives at
+#                                 ``.zap/auth-context.xml``; the CI
+#                                 workflow injects credentials via env.
+#
+# Both jobs upload their HTML report as a CI artifact with 30-day
+# retention (Phase 30 retention policy — see docs/SECURITY.md).
+#
+# The scan flow (baseline):
 #   1. Build the current HEAD image (we test WHAT WE'D SHIP, not just
 #      what's tagged :main — a freshly merged exploit shouldn't wait
 #      a week to be caught).
 #   2. Boot the container against an ephemeral config + data volume,
-#      with a test admin account whose credentials ZAP will be told.
-#   3. Seed a minimal content set so the spider has something to crawl
-#      (empty site gives only 4-5 routes, misses real-world surface).
-#   4. Run the OWASP ZAP baseline scan (passive, no attack payloads).
+#      with a test admin account whose credentials are CI-generated.
+#   3. Run the OWASP ZAP baseline scan (passive, no attack payloads).
 #      Rules are customised via zap-config.yaml — we turn OFF checks
 #      for technologies we're not running (e.g. ASP.NET, PHP) and
 #      allowlist documented false positives with justifications.
-#   5. Upload the full HTML report as a build artifact so operators
+#   4. Upload the full HTML report as a build artifact so operators
 #      can review findings even when the job passes.
-#   6. Fail the build on any MEDIUM-or-higher finding that isn't in
+#   5. Fail the build on any MEDIUM-or-higher finding that isn't in
 #      the allowlist. LOW / INFO are advisory only.
 #
-# This workflow is intentionally separate from ci.yml so failures
-# here don't block merges — a DAST regression is important but not
-# as time-critical as a broken test suite, and the cron cadence
-# already means we're not scanning every PR.
+# The scan flow (authenticated):
+#   1-2. Same as baseline (reuses the same container build step).
+#   3.  Pass the .zap/auth-context.xml context to ZAP so it
+#       authenticates against /admin/login before crawling /admin/*.
+#   4.  Same report upload + severity gating.
+#
+# Phase 30: this workflow is now reachable from ci.yml via
+# workflow_call, so DAST failures CAN block merges. The weekly cron
+# still runs as a safety net.
 # =============================================================
 
 name: Security Scan (DAST)
@@ -40,6 +64,16 @@ on:
         description: 'Git ref to scan (branch / tag / SHA). Defaults to the default branch.'
         required: false
         default: ''
+  # Phase 30 — let ci.yml invoke this as a reusable workflow on every
+  # PR / push to main. Inputs let the caller specify which ref to scan
+  # so the PR head is exercised, not just the default branch.
+  workflow_call:
+    inputs:
+      target_ref:
+        description: 'Git ref the caller wants scanned (PR head SHA, merge commit, tag).'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -50,6 +84,14 @@ permissions:
 
 env:
   IMAGE_NAME: kit3713/resume-site
+  # Phase 30 — credentials used by the authenticated-scan job. The
+  # password is provisioned at runtime via werkzeug.security.generate_password_hash
+  # and injected into the container's config.yaml; ZAP gets the
+  # plaintext via env-var substitution into the context XML. Neither
+  # value is a real credential — the admin lockout/allowlist makes
+  # the ephemeral container internet-unreachable anyway.
+  ZAP_ADMIN_USERNAME: 'admin'
+  ZAP_ADMIN_PASSWORD: 'ci-dast-test-pw-not-a-real-secret'  # pragma: allowlist secret
 
 jobs:
   zap-baseline:
@@ -61,13 +103,15 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
         with:
-          # Pull the ref the operator asked for; default branch otherwise.
-          ref: ${{ github.event.inputs.target_ref || github.ref }}
+          # Pull the ref the caller asked for; default branch otherwise.
+          # workflow_call passes ``inputs.target_ref``; workflow_dispatch
+          # passes ``github.event.inputs.target_ref``; both default empty.
+          ref: ${{ inputs.target_ref || github.event.inputs.target_ref || github.ref }}
 
       # ---------------------------------------------------------
       # Build the image we'll scan. We don't pull :main from GHCR
       # here on purpose — a scan should reflect the exact commit
-      # a dispatcher chose, not whatever :main was last push.
+      # a dispatcher / PR chose, not whatever :main was last push.
       # ---------------------------------------------------------
       - name: Build container image
         run: |
@@ -77,24 +121,53 @@ jobs:
             -f Containerfile .
 
       # ---------------------------------------------------------
-      # Boot the image with a scenario config. The admin hash below
-      # is a throwaway generated from the password "ci-dast-test-pw"
-      # and never goes anywhere but this ephemeral container.
+      # Generate a real password hash for the ephemeral admin
+      # account. Phase 13.9 used a placeholder hash on the
+      # assumption the baseline scan would never log in; Phase 30
+      # adds the authenticated-scan job which needs an actually-
+      # working credential pair. We run werkzeug here (cheap;
+      # rest of the CI install is already pulled) so the hash is
+      # deterministic-per-run but rotates with every CI invocation.
+      # ---------------------------------------------------------
+      - name: Set up Python (for password hash generation)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install werkzeug for password hash generation
+        run: pip install --quiet 'werkzeug>=3,<4'
+
+      - name: Generate admin password hash
+        env:
+          ZAP_ADMIN_PASSWORD: ${{ env.ZAP_ADMIN_PASSWORD }}
+        run: |
+          # Read the password from os.environ inside the Python process
+          # rather than shell-interpolating it into the -c argument: the
+          # latter would mis-handle any password containing a single quote
+          # or shell metacharacter. Defence-in-depth even though the test
+          # password is a known-tame literal.
+          python -c "import os; from werkzeug.security import generate_password_hash; print(generate_password_hash(os.environ['ZAP_ADMIN_PASSWORD']))" \
+              > /tmp/dast-admin-hash.txt
+
+      # ---------------------------------------------------------
+      # Boot the image with a scenario config. Admin allowlist is
+      # opened to 0.0.0.0/0 because the container is on the runner's
+      # localhost — ZAP must be able to reach /admin/* from the
+      # docker host even when the runner's network doesn't satisfy
+      # the production RFC-1918 default.
       # ---------------------------------------------------------
       - name: Boot the container against a scratch volume
         run: |
           mkdir -p /tmp/dast-data /tmp/dast-photos /tmp/dast-backups
-          # Use the pbkdf2 hash format werkzeug.security.generate_password_hash
-          # produces; any well-formed hash is fine because we're not logging
-          # in — the ZAP scan exercises anonymous access.
-          cat > /tmp/dast-config.yaml <<'EOF'
+          ADMIN_HASH=$(cat /tmp/dast-admin-hash.txt)
+          cat > /tmp/dast-config.yaml <<EOF
           secret_key: "dast-run-secret-key-long-enough-for-audit-xxxxxx"
           database_path: "/app/data/site.db"
           photo_storage: "/app/photos"
           session_cookie_secure: false
           admin:
-            username: "admin"
-            password_hash: "pbkdf2:sha256:600000$dastsaltdastsal$0000000000000000000000000000000000000000000000000000000000000000"
+            username: "${{ env.ZAP_ADMIN_USERNAME }}"
+            password_hash: "${ADMIN_HASH}"
             allowed_networks:
               - "0.0.0.0/0"
           EOF
@@ -155,65 +228,7 @@ jobs:
       # ---------------------------------------------------------
       - name: Apply allowlist and fail on MEDIUM+ findings
         if: always()
-        run: |
-          set -e
-          if [ ! -f report_json.json ]; then
-            echo "ZAP did not produce report_json.json — scan likely failed to start"
-            exit 1
-          fi
-
-          python3 <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          # Severity string → numeric rank for comparison.
-          SEVERITY_RANK = {
-              'Informational': 0,
-              'Low': 1,
-              'Medium': 2,
-              'High': 3,
-          }
-          FAIL_AT = SEVERITY_RANK['Medium']
-
-          # Rule IDs we've reviewed and decided NOT to action. Every entry
-          # must carry a justification; zap-config.yaml is the source of
-          # truth (this list is parsed on the action side too). Keeping
-          # a copy here means the filter works even if zap-config.yaml
-          # parsing silently drops an entry.
-          ALLOWLIST = {
-              # Rule IDs listed in zap-config.yaml as IGNORE — duplicated
-              # here defensively. The scan step is authoritative.
-          }
-
-          data = json.loads(Path('report_json.json').read_text())
-          findings = []
-          for site in data.get('site', []):
-              for alert in site.get('alerts', []):
-                  rule_id = alert.get('pluginid') or alert.get('alertRef', '')
-                  severity = alert.get('riskdesc', '').split(' ')[0]
-                  rank = SEVERITY_RANK.get(severity, 0)
-                  if rank < FAIL_AT:
-                      continue
-                  if rule_id in ALLOWLIST:
-                      continue
-                  findings.append({
-                      'rule_id': rule_id,
-                      'severity': severity,
-                      'name': alert.get('name'),
-                      'urls': [i.get('uri') for i in alert.get('instances', [])][:5],
-                  })
-
-          if findings:
-              print(f'FAIL: {len(findings)} MEDIUM+ finding(s) not in allowlist:')
-              for f in findings:
-                  print(f'  - [{f["severity"]}] {f["rule_id"]}: {f["name"]}')
-                  for url in f['urls']:
-                      print(f'      {url}')
-              sys.exit(1)
-
-          print('OK: no MEDIUM+ findings outside the documented allowlist')
-          PY
+        run: python3 .zap/filter_findings.py
 
       # ---------------------------------------------------------
       # Teardown — always runs so a failed scan doesn't leave the
@@ -229,8 +244,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dast-container-logs
+          name: dast-container-logs-baseline
           path: dast-container.log
+          # Phase 30 — 30-day retention for the operator review window.
+          retention-days: 30
           if-no-files-found: ignore
 
       - name: Stop scanner target
@@ -238,3 +255,172 @@ jobs:
         run: |
           docker stop dast-target 2>/dev/null || true
           docker rm dast-target 2>/dev/null || true
+
+  # =============================================================
+  # zap-full-scan-auth — authenticated traversal of /admin/*
+  #
+  # Phase 30: the baseline job only sees public surface (the spider
+  # gets bounced at /admin/login). The authenticated job logs in as
+  # the ephemeral admin user provisioned above and crawls every
+  # /admin/* route. This catches issues the baseline can't see — XSS
+  # in admin forms, missing CSRF on state-changing endpoints, IDOR
+  # in admin-only data exposure routes.
+  #
+  # NOTE — ZAP authenticated-scan context tuning is iterative. This
+  # job ships the scaffolding (context file + workflow wiring + CI
+  # gate). Real-world tuning happens in follow-up PRs after the first
+  # CI run surfaces the actual issues. If the auth probe fails (login
+  # form structure changed, CSRF token extraction regex breaks),
+  # the job is marked continue-on-error in the FIRST iteration —
+  # flip to blocking once the context is stable. See
+  # docs/SECURITY.md "Authenticated vs baseline scan trade-offs".
+  # =============================================================
+  zap-full-scan-auth:
+    name: OWASP ZAP Full Scan (Authenticated)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Phase 30: not blocking on the FIRST iteration — the context XML
+    # is a starting point, not a finished spec, and a structural change
+    # in /admin/login (csrf-token field name, redirect target) would
+    # otherwise wedge the entire CI pipeline. Flip continue-on-error
+    # to false once the context is stable and the first 2-3 CI runs
+    # produce a clean report. Tracked: TODO follow-up issue once Phase
+    # 30 merges. The baseline job IS blocking — the authenticated job
+    # is the second pass.
+    continue-on-error: true
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref || github.event.inputs.target_ref || github.ref }}
+
+      - name: Build container image
+        run: |
+          docker build \
+            --build-arg IMAGE_VERSION="dast-auth-${GITHUB_SHA::7}" \
+            -t ${{ env.IMAGE_NAME }}:dast-auth \
+            -f Containerfile .
+
+      - name: Set up Python (for password hash generation)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install werkzeug for password hash generation
+        run: pip install --quiet 'werkzeug>=3,<4'
+
+      - name: Generate admin password hash
+        env:
+          ZAP_ADMIN_PASSWORD: ${{ env.ZAP_ADMIN_PASSWORD }}
+        run: |
+          # Same approach as the baseline job — pass the password via the
+          # process env, not the shell-substituted -c argument.
+          python -c "import os; from werkzeug.security import generate_password_hash; print(generate_password_hash(os.environ['ZAP_ADMIN_PASSWORD']))" \
+              > /tmp/dast-admin-hash.txt
+
+      - name: Boot the container against a scratch volume
+        run: |
+          mkdir -p /tmp/dast-auth-data /tmp/dast-auth-photos /tmp/dast-auth-backups
+          ADMIN_HASH=$(cat /tmp/dast-admin-hash.txt)
+          cat > /tmp/dast-auth-config.yaml <<EOF
+          secret_key: "dast-auth-run-secret-key-long-enough-for-audit-xxxxxx"
+          database_path: "/app/data/site.db"
+          photo_storage: "/app/photos"
+          session_cookie_secure: false
+          admin:
+            username: "${{ env.ZAP_ADMIN_USERNAME }}"
+            password_hash: "${ADMIN_HASH}"
+            allowed_networks:
+              - "0.0.0.0/0"
+          EOF
+
+          docker run -d --name dast-auth-target \
+            -p 8080:8080 \
+            -v /tmp/dast-auth-config.yaml:/app/config.yaml:ro \
+            -v /tmp/dast-auth-data:/app/data \
+            -v /tmp/dast-auth-photos:/app/photos \
+            -v /tmp/dast-auth-backups:/app/backups \
+            ${{ env.IMAGE_NAME }}:dast-auth
+
+          for i in $(seq 1 45); do
+            if curl -fsS http://localhost:8080/readyz > /dev/null 2>&1; then
+              echo "Target is ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS http://localhost:8080/admin/login \
+            || (docker logs dast-auth-target && exit 1)
+
+      # ---------------------------------------------------------
+      # Inject credentials into the context XML. The committed file
+      # carries ``${ZAP_ADMIN_USERNAME}`` / ``${ZAP_ADMIN_PASSWORD}``
+      # placeholders so the credentials never live in git; ZAP itself
+      # does not perform shell-style env-var substitution on context
+      # files, so we do it here. The ZAP context format encodes the
+      # username in base64 in the ``<user>`` line (mirroring the
+      # serialisation the desktop UI produces).
+      # ---------------------------------------------------------
+      - name: Inject test credentials into ZAP context
+        env:
+          ZAP_ADMIN_USERNAME: ${{ env.ZAP_ADMIN_USERNAME }}
+          ZAP_ADMIN_PASSWORD: ${{ env.ZAP_ADMIN_PASSWORD }}
+        run: |
+          mkdir -p /tmp/zap-wrk
+          export ZAP_ADMIN_USERNAME_B64="$(printf '%s' "$ZAP_ADMIN_USERNAME" | base64 -w0)"
+          envsubst < .zap/auth-context.xml > /tmp/zap-wrk/auth-context.xml
+          echo "--- Rendered context file (credentials redacted) ---"
+          grep -v '<user>' /tmp/zap-wrk/auth-context.xml || true
+
+      - name: Run ZAP full scan (authenticated)
+        uses: zaproxy/action-full-scan@v0.12.0
+        with:
+          target: 'http://localhost:8080'
+          rules_file_name: 'zap-config.yaml'
+          # -n <context>  : load the authentication context
+          # -U <user>     : forced user inside that context (matches <forceduser>)
+          # -j            : use the AJAX spider for JS-heavy admin pages
+          # -m 5          : 5-min spider cap; full scan is ~20 min total
+          # -T 10         : 10-min per-page max active-scan time
+          cmd_options: '-n /zap/wrk/auth-context.xml -U 1 -j -m 5 -T 10'
+          fail_action: false
+          allow_issue_writing: false
+          artifact_name: zap-full-scan-auth-report
+
+      - name: Apply allowlist and fail on MEDIUM+ findings (auth scan)
+        if: always()
+        run: |
+          # The auth context is iterative — a tuning regression that
+          # prevents ZAP from producing a report shouldn't wedge CI on
+          # this advisory job. The continue-on-error at job level
+          # protects the workflow either way; this explicit early-out
+          # produces a clearer log message than a generic crash.
+          if [ ! -f report_json.json ]; then
+            echo "ZAP did not produce report_json.json — scan likely failed to start"
+            echo "This is expected on the first iteration of the auth context"
+            echo "(see docs/SECURITY.md 'Authenticated vs baseline scan trade-offs')"
+            exit 0
+          fi
+          python3 .zap/filter_findings.py
+
+      - name: Capture container logs
+        if: always()
+        run: |
+          docker logs dast-auth-target > dast-auth-container.log 2>&1 || true
+
+      - name: Upload container logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dast-container-logs-auth
+          path: dast-auth-container.log
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Stop scanner target
+        if: always()
+        run: |
+          docker stop dast-auth-target 2>/dev/null || true
+          docker rm dast-auth-target 2>/dev/null || true
